@@ -1,0 +1,16 @@
+[package]
+name = "nagaicode"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "nagaicode"
+path = "src/main.rs"
+
+[dependencies]
+crossterm = "0.28"
+smol = "2"
+dirs = "5"
+rusqlite = { version = "0.32", features = ["bundled"] }
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.2"
