@@ -1,6 +1,8 @@
-/// RGB color
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct Color(u8, u8, u8);
+use crossterm::style::Color;
+
+pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
+    Color::Rgb { r, g, b }
+}
 
 /// Text appearance
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -55,19 +57,19 @@ pub enum ThemeStyleName {
 }
 
 // Stock Tailwind CSS colors
-const WHITE: Color = Color(255, 255, 255);
-const GREY_50: Color = Color(249, 250, 251);
-const GREY_100: Color = Color(243, 244, 246);
-const GREY_200: Color = Color(229, 231, 235);
-const GREY_300: Color = Color(209, 213, 219);
-const GREY_400: Color = Color(156, 163, 175);
-const GREY_500: Color = Color(107, 114, 128);
-const GREY_600: Color = Color(75, 85, 99);
-const GREY_700: Color = Color(55, 65, 81);
-const GREY_800: Color = Color(31, 41, 55);
-const GREY_900: Color = Color(17, 24, 39);
-const GREY_950: Color = Color(3, 7, 18);
-const BLACK: Color = Color(0, 0, 0);
+const WHITE: Color = rgb(255, 255, 255);
+const GREY_50: Color = rgb(249, 250, 251);
+const GREY_100: Color = rgb(243, 244, 246);
+const GREY_200: Color = rgb(229, 231, 235);
+const GREY_300: Color = rgb(209, 213, 219);
+const GREY_400: Color = rgb(156, 163, 175);
+const GREY_500: Color = rgb(107, 114, 128);
+const GREY_600: Color = rgb(75, 85, 99);
+const GREY_700: Color = rgb(55, 65, 81);
+const GREY_800: Color = rgb(31, 41, 55);
+const GREY_900: Color = rgb(17, 24, 39);
+const GREY_950: Color = rgb(3, 7, 18);
+const BLACK: Color = rgb(0, 0, 0);
 
 /// Only available theme for now
 pub const THEME_DARK: Theme = Theme {
