@@ -38,8 +38,11 @@ struct Subline {
     unicode_end: usize,
     /// Grapheme segmentation
     graphemes: Vec<Grapheme>,
-    /// Total width in columns
+    /// Total width in columns (including tab carry)
     columns: usize,
+    /// Tab stop is allowed to span a line break. This is the number of
+    /// spaces carried over from an overflowing tab.
+    tab_carry: usize,
     /// Unicode stream of line, present on the first subline of a line
     unicode: Option<String>,
 }
@@ -70,10 +73,10 @@ impl Subline {
         if col >= self.columns {
             return self.final_pos().grapheme;
         }
-        let mut col_so_far = 0;
+        let mut cur_col = self.tab_carry;
         for (i, ch) in self.graphemes.iter().enumerate() {
-            col_so_far += ch.width as usize;
-            if col < col_so_far {
+            cur_col += ch.width as usize;
+            if col < cur_col {
                 return i;
             }
         }
@@ -168,6 +171,7 @@ mod tests {
                 .map(|g| grapheme(g.width() as u8))
                 .collect(),
             columns: line.width(),
+            tab_carry: 0,
             unicode: Some(line.to_string()),
         }
     }
@@ -207,5 +211,11 @@ mod tests {
 
         let sl = subline("", true);
         assert_eq!(sl.grapheme_at_col(0), 0);
+
+        let mut sl = subline("asdf", true);
+        sl.tab_carry = 1;
+        assert_eq!(sl.grapheme_at_col(0), 0);
+        assert_eq!(sl.grapheme_at_col(1), 0);
+        assert_eq!(sl.grapheme_at_col(2), 1);
     }
 }
