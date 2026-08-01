@@ -1,5 +1,8 @@
 use std::iter::iter;
 
+use crossterm::cursor::{MoveTo, MoveToNextLine};
+use crossterm::style::{ContentStyle, PrintStyledContent, StyledContent};
+use crossterm::{QueueableCommand};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -138,12 +141,75 @@ fn truncate_text(max_width: usize, line: &str) -> String {
 
 /// Preformatted text, suitable for rendering. Preformatted text may be
 /// translated or clipped to a vertical window, but resizing horizontally
-/// or changing text styles requires a recomputation.
+/// or changing styles requires a recomputation.
 #[derive(Debug)]
 pub struct Preformatted {
-    lines: Vec<String>,
+    lines: Vec<Vec<StyledContent<String>>>,
     width: usize,
-    height: usize,
+}
+
+impl Preformatted {
+    pub fn wrapped(
+        max_width: usize,
+        text: &str,
+        style: ContentStyle,
+    ) -> Self {
+        let lines = wrap_text(max_width, text)
+            .into_iter()
+            .map(|line| vec![StyledContent::new(style, line)])
+            .collect();
+        Self {
+            lines,
+            width: max_width,
+        }
+    }
+
+    pub fn truncated(
+        max_width: usize,
+        text: &str,
+        style: ContentStyle,
+    ) -> Self {
+        let lines = text.lines()
+            .map(|line| vec![StyledContent::new(style, truncate_text(max_width, line))])
+            .collect();
+        Self {
+            lines,
+            width: max_width,
+        }
+    }
+
+    pub fn height(&self) -> usize {
+        self.lines.len()
+    }
+
+    pub fn width(&self) -> usize {
+        self.width
+    }
+}
+
+#[derive(Debug)]
+pub struct DrawPreformatted<'p> {
+    pub pre: &'p Preformatted,
+    pub x: usize,
+    pub y: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+impl<'p> crossterm::Command for DrawPreformatted<'p> {
+    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+        let x = self.x;
+        let mut y = self.y;
+        for line in self.pre.lines[self.start_line..self.end_line].iter() {
+            crossterm::Command::write_ansi(&MoveTo(x as u16, y as u16), f)?;
+            for styled in line.iter() {
+                let sc = StyledContent::new(*styled.style(), styled.content().as_str());
+                crossterm::Command::write_ansi(&PrintStyledContent(sc), f)?;
+            }
+            y += 1;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

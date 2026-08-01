@@ -1,59 +1,70 @@
-use crossterm::style::Color;
+use crossterm::style::{Attribute, Color, ContentStyle};
 
 pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb { r, g, b }
 }
 
-/// Text appearance
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct TextStyle {
-    pub color: Color,
-    pub bold: bool,
+macro_rules! text_style {
+    (
+        $($attrib:ident: $value:expr),*
+        $(; $($deco:expr),*)?
+        $(,)?
+    ) => {{
+        let mut style = crossterm::style::ContentStyle {
+            foreground_color: None,
+            background_color: None,
+            underline_color: None,
+            attributes: crossterm::style::Attributes::none(),
+        };
+        $(style.$attrib = Some($value);)*
+        $($(style.attributes = style.attributes.with($deco);)*)?
+        style
+    }};
 }
 
-/// Consistent set of color and style choices for content on a given
-/// background. Used for UI, not code highlighting.
-#[derive(Clone, Copy, Debug)]
-pub struct Palette {
-    /// Background color
-    pub bg: Color,
-    /// Default text
-    pub base: TextStyle,
-    /// Header
-    pub header: TextStyle,
-    /// Faint or faded text
-    pub subtle: TextStyle,
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+pub enum BackgroundColorName {
+    Base,
+    Collapsible,
+    CollapsibleHover,
+    InputBox,
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub enum TextStyleName {
     Base,
     Header,
-    Faded,
-}
-
-impl Palette {
-    pub fn get_style(&self, name: TextStyleName) -> &TextStyle {
-        match name {
-            TextStyleName::Base => &self.base,
-            TextStyleName::Header => &self.header,
-            TextStyleName::Faded => &self.subtle,
-        }
-    }
+    Subtle,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Theme {
-    pub content: Palette,
-    pub collapsible: Palette,
-    pub input_box: Palette,
+    pub bg_base: Color,
+    pub bg_collapsible: Color,
+    pub bg_collapsible_hover: Color,
+    pub bg_input_box: Color,
+    pub text_base: ContentStyle,
+    pub text_header: ContentStyle,
+    pub text_subtle: ContentStyle,
 }
 
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub enum ThemeStyleName {
-    Content,
-    Collapsible,
-    InputBox,
+impl Theme {
+    pub fn get_text_style(&self, name: TextStyleName) -> ContentStyle {
+        match name {
+            TextStyleName::Base => self.text_base,
+            TextStyleName::Header => self.text_header,
+            TextStyleName::Subtle => self.text_subtle,
+        }
+    }
+
+    pub fn get_background_color(&self, name: BackgroundColorName) -> Color {
+        match name {
+            BackgroundColorName::Base => self.bg_base,
+            BackgroundColorName::Collapsible => self.bg_collapsible,
+            BackgroundColorName::CollapsibleHover => self.bg_collapsible_hover,
+            BackgroundColorName::InputBox => self.bg_input_box,
+        }
+    }
 }
 
 // Stock Tailwind CSS colors
@@ -73,24 +84,13 @@ const BLACK: Color = rgb(0, 0, 0);
 
 /// Only available theme for now
 pub const THEME_DARK: Theme = Theme {
-    content: Palette {
-        bg: BLACK,
-        base: TextStyle { color: WHITE, bold: false },
-        header: TextStyle { color: WHITE, bold: true },
-        subtle: TextStyle { color: GREY_400, bold: false },
-    },
-    collapsible: Palette {
-        bg: GREY_800,
-        base: TextStyle { color: WHITE, bold: false },
-        header: TextStyle { color: WHITE, bold: true },
-        subtle: TextStyle { color: GREY_400, bold: false },
-    },
-    input_box: Palette {
-        bg: GREY_600,
-        base: TextStyle { color: WHITE, bold: false },
-        header: TextStyle { color: WHITE, bold: true },
-        subtle: TextStyle { color: GREY_400, bold: false },
-    },
+    text_base: text_style! { foreground_color: WHITE },
+    text_header: text_style! { foreground_color: WHITE; Attribute::Bold },
+    text_subtle: text_style! { foreground_color: GREY_400 },
+    bg_base: BLACK,
+    bg_collapsible: GREY_800,
+    bg_collapsible_hover: GREY_700,
+    bg_input_box: GREY_600,
 };
 
 #[derive(Debug)]
