@@ -1,26 +1,27 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// Position within a subline. May point to either column of a character
+/// Position within a subline. May point to either column of a grapheme
 /// which spans multiple columns. May point one past the end of the final
 /// subline of a line.
 #[derive(Debug, Clone, Copy)]
 struct SublinePos {
-    /// Index into character array
-    character: usize,
+    /// Index into grapheme array
+    grapheme: usize,
     // Column within subline
     column: usize,
 }
 
-/// Character encoded as a grapheme cluster
+/// Single grapheme, a.k.a. grapheme cluster. Multiple codepoints representing
+/// one character.
 #[derive(Debug)]
-struct Character {
+struct Grapheme {
     /// Position in UTF-8 stream of this subline
     offset: u16,
-    /// Length in bytes (equal to chars[i + 1].offset - chars[i].offset)
+    /// Length in bytes (equal to graphemes[i + 1].offset - graphemes[i].offset)
     len: u8,
     /// Width in columns (XXX: should always be 1 or 2; combining and
-    /// zero-width characters should be rendered as at least one column wide).
+    /// zero-width graphemes should be rendered as at least one column wide).
     width: u8,
 }
 
@@ -35,8 +36,8 @@ struct Subline {
     unicode_start: usize,
     /// Offset one past last codepoint
     unicode_end: usize,
-    /// Character segmentation
-    characters: Vec<Character>,
+    /// Grapheme segmentation
+    graphemes: Vec<Grapheme>,
     /// Total width in columns
     columns: usize,
     /// Unicode stream of line, present on the first subline of a line
@@ -52,31 +53,31 @@ impl Subline {
     fn final_pos(&self) -> SublinePos {
         if self.last {
             SublinePos {
-                character: self.characters.len(),
+                grapheme: self.graphemes.len(),
                 column: self.columns,
             }
         } else {
             SublinePos {
-                character: self.characters.len().saturating_sub(1),
+                grapheme: self.graphemes.len().saturating_sub(1),
                 column: self.columns.saturating_sub(1),
             }
         }
     }
 
-    /// Finds the character index at a given column within a subline, or the
+    /// Finds the grapheme index at a given column within a subline, or the
     /// final position in the subline if the column is past the end.
-    fn char_at_col(&self, col: usize) -> usize {
+    fn grapheme_at_col(&self, col: usize) -> usize {
         if col >= self.columns {
-            return self.final_pos().character;
+            return self.final_pos().grapheme;
         }
         let mut col_so_far = 0;
-        for (i, ch) in self.characters.iter().enumerate() {
+        for (i, ch) in self.graphemes.iter().enumerate() {
             col_so_far += ch.width as usize;
             if col < col_so_far {
                 return i;
             }
         }
-        self.final_pos().character
+        self.final_pos().grapheme
     }
 }
 
@@ -117,13 +118,13 @@ impl InputBox {
         todo!()
     }
 
-    /// Moves the cursor left by one character. If at the start of a subline,
+    /// Moves the cursor left by one grapheme. If at the start of a subline,
     /// goes to the end of the previous subline.
     fn move_left(&mut self) {
         todo!()
     }
 
-    /// Moves the cursor right by one character. If at the end of a subline,
+    /// Moves the cursor right by one grapheme. If at the end of a subline,
     /// goes to the start of the next subline.
     fn move_right(&mut self) {
         todo!()
@@ -148,8 +149,8 @@ impl InputBox {
 mod tests {
     use super::*;
 
-    fn character(width: u8) -> Character {
-        Character {
+    fn grapheme(width: u8) -> Grapheme {
+        Grapheme {
             offset: 0,
             len: 1,
             width,
@@ -162,9 +163,9 @@ mod tests {
             last,
             unicode_start: 0,
             unicode_end: line.len(),
-            characters: line
+            graphemes: line
                 .graphemes(true)
-                .map(|g| character(g.width() as u8))
+                .map(|g| grapheme(g.width() as u8))
                 .collect(),
             columns: line.width(),
             unicode: Some(line.to_string()),
@@ -172,39 +173,39 @@ mod tests {
     }
 
     #[test]
-    fn char_at_col_basic() {
+    fn grapheme_at_col_basic() {
         let sl = subline("abc", true);
-        assert_eq!(sl.char_at_col(0), 0);
-        assert_eq!(sl.char_at_col(1), 1);
-        assert_eq!(sl.char_at_col(2), 2);
-        assert_eq!(sl.char_at_col(3), 3);
-        assert_eq!(sl.char_at_col(4), 3);
+        assert_eq!(sl.grapheme_at_col(0), 0);
+        assert_eq!(sl.grapheme_at_col(1), 1);
+        assert_eq!(sl.grapheme_at_col(2), 2);
+        assert_eq!(sl.grapheme_at_col(3), 3);
+        assert_eq!(sl.grapheme_at_col(4), 3);
 
         let sl = subline("a界b", true);
-        assert_eq!(sl.char_at_col(0), 0);
-        assert_eq!(sl.char_at_col(1), 1);
-        assert_eq!(sl.char_at_col(2), 1);
-        assert_eq!(sl.char_at_col(3), 2);
-        assert_eq!(sl.char_at_col(4), 3);
+        assert_eq!(sl.grapheme_at_col(0), 0);
+        assert_eq!(sl.grapheme_at_col(1), 1);
+        assert_eq!(sl.grapheme_at_col(2), 1);
+        assert_eq!(sl.grapheme_at_col(3), 2);
+        assert_eq!(sl.grapheme_at_col(4), 3);
 
         let sl = subline("a장b", true);
-        assert_eq!(sl.char_at_col(0), 0);
-        assert_eq!(sl.char_at_col(1), 1);
-        assert_eq!(sl.char_at_col(2), 1);
-        assert_eq!(sl.char_at_col(3), 2);
-        assert_eq!(sl.char_at_col(4), 3);
+        assert_eq!(sl.grapheme_at_col(0), 0);
+        assert_eq!(sl.grapheme_at_col(1), 1);
+        assert_eq!(sl.grapheme_at_col(2), 1);
+        assert_eq!(sl.grapheme_at_col(3), 2);
+        assert_eq!(sl.grapheme_at_col(4), 3);
 
         let sl = subline("q\u{308}x", true);
-        assert_eq!(sl.char_at_col(0), 0);
-        assert_eq!(sl.char_at_col(1), 1);
-        assert_eq!(sl.char_at_col(2), 2);
+        assert_eq!(sl.grapheme_at_col(0), 0);
+        assert_eq!(sl.grapheme_at_col(1), 1);
+        assert_eq!(sl.grapheme_at_col(2), 2);
 
         let sl = subline("ab", false);
-        assert_eq!(sl.char_at_col(0), 0);
-        assert_eq!(sl.char_at_col(1), 1);
-        assert_eq!(sl.char_at_col(2), 1);
+        assert_eq!(sl.grapheme_at_col(0), 0);
+        assert_eq!(sl.grapheme_at_col(1), 1);
+        assert_eq!(sl.grapheme_at_col(2), 1);
 
         let sl = subline("", true);
-        assert_eq!(sl.char_at_col(0), 0);
+        assert_eq!(sl.grapheme_at_col(0), 0);
     }
 }
