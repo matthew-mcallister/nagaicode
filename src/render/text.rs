@@ -1,8 +1,7 @@
 use std::iter::iter;
 
-use crossterm::cursor::{MoveTo, MoveToNextLine};
+use crossterm::cursor::MoveTo;
 use crossterm::style::{ContentStyle, PrintStyledContent, StyledContent};
-use crossterm::{QueueableCommand};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
