@@ -6,6 +6,7 @@ mod db;
 pub mod error;
 mod render;
 mod style;
+mod ui;
 
 fn main() -> AnyResult<()> {
     Ok(())

@@ -58,6 +58,16 @@ impl Buffer {
     }
 }
 
+/// Returns true if the text is larger than `columns` in width.
+fn overflows(text: &str, columns: usize) -> bool {
+    let mut width = 0;
+    for g in text.graphemes(true) {
+        width += g.width();
+        if width > columns { return true; }
+    }
+    false
+}
+
 /// Wraps given text at word boundaries to fit within the maximum allowed
 /// width. Returns each resulting line as a string. Tabs will be expanded to
 /// spaces.
@@ -65,9 +75,9 @@ impl Buffer {
 /// Details:
 /// - Whitespace is preserved and will cause a line break where it overflows
 /// - Tabs are expanded to spaces
-/// - Overflowing words will be placed on the next line, if they fit
-/// - Words too long to fit on one line will be broken exactly where they
-///   overflow the margin
+/// - Overflowing words will be placed on the next line
+/// - Words too long to fit on one line will be broken where they overflow the
+///   margin
 fn wrap_text(max_width: usize, text: &str) -> Vec<String> {
     assert!(max_width >= 2);
 
@@ -89,17 +99,16 @@ fn wrap_text(max_width: usize, text: &str) -> Vec<String> {
                 .unwrap_or(line.len());
             let word = &line[..end];
             if !word.is_empty() {
-                let word_width = word.width();
                 line = &line[end..];
-                src_col += word_width;
 
-                if word_width <= max_width {
-                    buffer.push(word, word_width);
-                } else {
-                    // Word is too long to fit on one line
-                    for g in word.graphemes(true) {
-                        buffer.push(g, g.width());
-                    }
+                if buffer.width > 0 && overflows(&word, max_width - buffer.width) {
+                    buffer.flush();
+                }
+
+                for g in word.graphemes(true) {
+                    let w = g.width();
+                    buffer.push(g, w);
+                    src_col += w;
                 }
             }
 
@@ -190,8 +199,8 @@ impl Preformatted {
 #[derive(Debug)]
 pub struct DrawPreformatted<'p> {
     pub pre: &'p Preformatted,
-    pub x: usize,
-    pub y: usize,
+    pub x: u16,
+    pub y: u16,
     pub start_line: usize,
     pub end_line: usize,
 }
@@ -201,7 +210,7 @@ impl<'p> crossterm::Command for DrawPreformatted<'p> {
         let x = self.x;
         let mut y = self.y;
         for line in self.pre.lines[self.start_line..self.end_line].iter() {
-            crossterm::Command::write_ansi(&MoveTo(x as u16, y as u16), f)?;
+            crossterm::Command::write_ansi(&MoveTo(x, y), f)?;
             for styled in line.iter() {
                 let sc = StyledContent::new(*styled.style(), styled.content().as_str());
                 crossterm::Command::write_ansi(&PrintStyledContent(sc), f)?;
@@ -226,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_input() {
+    fn test_cases() {
         assert_eq!(wrap(10, ""), "");
         assert_eq!(wrap(10, "hello"), "hello\n");
         assert_eq!(wrap(20, "hello world "), "hello world \n");
@@ -237,7 +246,7 @@ mod tests {
         assert_eq!(wrap(2, "abcdef"), "ab\ncd\nef\n");
         assert_eq!(
             wrap(10, "hello aabbaabbaabbaabbaabbaabb"),
-            "hello aabb\naabbaabbaa\nbbaabbaabb\n",
+            "hello \naabbaabbaa\nbbaabbaabb\naabb\n",
         );
         assert_eq!(wrap(5, "hello"), "hello\n");
         assert_eq!(wrap(10, "      "), "      \n");
