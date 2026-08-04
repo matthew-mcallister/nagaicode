@@ -11,6 +11,15 @@ const SPACES: &'static str = const {
     s
 };
 
+/// Removes trailing '\r' from a string.
+pub fn strip_cr(s: &str) -> &str {
+    if s.ends_with('\r') {
+        return &s[..s.len() - 1];
+    } else {
+        return s;
+    }
+}
+
 /// Single grapheme; generally corresponds to a unicode grapheme cluster. Tabs
 /// are treated as variable width graphemes and rendered as spaces
 #[derive(Debug)]

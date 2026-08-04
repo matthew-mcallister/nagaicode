@@ -1,7 +1,7 @@
 use compact_str::CompactString;
 
 use crate::arena::{Arena, Id};
-use crate::text::{wrap_line, Row};
+use crate::text::{Row, strip_cr, wrap_line};
 
 #[derive(Debug)]
 struct InputLine {
@@ -83,6 +83,12 @@ struct InputRow {
     preformatted: String,
     /// True if row is last in its line
     is_last: bool,
+}
+
+impl std::fmt::Display for InputRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.preformatted)
+    }
 }
 
 impl InputRow {
@@ -176,10 +182,7 @@ struct InputBox {
 }
 
 impl InputBox {
-    fn new(
-        width: usize,
-        max_height: usize,
-    ) -> Self {
+    fn new(width: usize, max_height: usize) -> Self {
         let mut lines = Arena::new();
         let mut rows = Arena::new();
 
@@ -228,19 +231,21 @@ impl InputBox {
         self.lines.len()
     }
 
-    fn iter_range<'a>(&'a self, start: Id<InputRow>, end: Id<InputRow>) -> InputRowIter<'a> {
-        InputRowIter { input: self, start, end }
+    /// Iterate over a range of rows. `prev` is not inclusive; `last` is
+    /// inclusive.
+    fn iter_range<'a>(&'a self, prev: Id<InputRow>, last: Id<InputRow>) -> InputRowIter<'a> {
+        InputRowIter { input: self, prev, last }
     }
 
     fn iter_rows<'a>(&'a self) -> InputRowIter<'a> {
-        self.iter_range(self.first_row(), self.head)
+        self.iter_range(self.head, self.last_row())
     }
 
     fn iter_line<'a>(&'a self, line: Id<InputLine>) -> InputRowIter<'a> {
         let line = &self.lines[line];
-        let start = line.first_row;
-        let end = self.rows[line.last_row].next;
-        self.iter_range(start, end)
+        let prev = self.rows[line.first_row].prev;
+        let last = line.last_row;
+        self.iter_range(prev, last)
     }
 
     fn first_row(&self) -> Id<InputRow> {
@@ -252,8 +257,10 @@ impl InputBox {
     }
 
     fn set_first_visible_row(&mut self, first_visible_row: Id<InputRow>) {
+        let prev = self.rows[first_visible_row].prev;
         self.first_visible_row = first_visible_row;
-        self.last_visible_row = self.iter_range(first_visible_row, self.head)
+        self.last_visible_row = self
+            .iter_range(prev, self.last_row())
             .nth(self.max_height - 1)
             .map(|(id, _)| id)
             .unwrap_or(self.last_row());
@@ -261,7 +268,8 @@ impl InputBox {
 
     fn set_last_visible_row(&mut self, last_visible_row: Id<InputRow>) {
         self.last_visible_row = last_visible_row;
-        self.first_visible_row = self.iter_range(self.first_row(), self.rows[self.last_visible_row].next)
+        self.first_visible_row = self
+            .iter_range(self.head, self.last_visible_row)
             .rev()
             .nth(self.max_height - 1)
             .map(|(id, _)| id)
@@ -319,40 +327,10 @@ impl InputBox {
         self.rows[next].prev = line_last;
     }
 
-    /// Helper for recomputing window/cursor rows.
-    fn save_rows(&self) -> (Id<InputRow>, usize, usize) {
-        // Slightly tricky design. We could just calculate absolute position,
-        // but it's slightly faster to calculate relative to a nearby stable
-        // base. Since we can never edit a line *before* the first visible
-        // line, this choice is guaranteed to be stable.
-        let base_line = self.rows[self.first_visible_row].line;
-        let base = self.rows[self.lines[base_line].first_row].prev;
-        let mut i = 0;
-        let mut cur = base;
-        while cur != self.first_visible_row { cur = self.rows[cur].next; i += 1; }
-        let first = i;
-        while cur != self.cursor_row { cur = self.rows[cur].next; i += 1; }
-        (base, first, i)
-    }
-
-    /// Helper for recomputing window/cursor rows. Restores rows from offset
-    /// relative to base row.
-    fn restore_rows(&mut self, state: (Id<InputRow>, usize, usize)) {
-        let base = state.0;
-        let mut i = 0;
-        let mut cur = base;
-        while i < state.1 { cur = self.rows[cur].next; i += 1; }
-        let first_visible = cur;
-        while i < state.2 { cur = self.rows[cur].next; i += 1; }
-        self.cursor_row = cur;
-        self.set_first_visible_row(first_visible);
-    }
-
     /// Inserts arbitrary text as new lines at a given position. The text may
-    /// have line breaks; each source line will become its own input line.
-    fn insert_text(&mut self, prev: Id<InputRow>, text: &str) {
-        let mut prev = prev;
-        for line_text in text.lines() {
+    /// have line breaks; each line break will insert an extra line.
+    fn insert_text(&mut self, mut prev: Id<InputRow>, text: &str) {
+        for line_text in text.split('\n').map(strip_cr) {
             let line = InputLine::from_str(&mut self.lines, &mut self.rows, self.width, line_text);
             self.link_line(prev, line);
             prev = self.lines[line].last_row;
@@ -361,22 +339,30 @@ impl InputBox {
 
     /// Pastes raw text at the cursor position.
     fn paste(&mut self, pasted_text: &str) {
-        let line = self.rows[self.cursor_row].line;
-        let line_first = self.lines[line].first_row;
-        let prev = self.rows[line_first].prev;
+        if pasted_text.is_empty() { return; }
 
-        let saved = self.save_rows();
+        let line = self.rows[self.cursor_row].line;
+        let prev = self.rows[self.lines[line].first_row].prev;
+        let last_visible_row_offset = self.iter_range(prev, self.last_visible_row).count() - 1;
 
         // Buffer the graphemes of the original line, splicing in the pasted
         // text when the cursor position is reached.
         let mut out = String::new();
-        for (cur, cur_row) in self.iter_line(line) {
+        let (mut cursor_row_offset, mut cursor_byte) = (usize::MAX, usize::MAX);
+        for (i, (cur, cur_row)) in self.iter_line(line).enumerate() {
             if cur == self.cursor_row {
                 let index = cur_row.grapheme_at_col(self.cursor_col);
                 for g in &cur_row.graphemes[..index] {
                     out.push_str(&g.data);
                 }
+
                 out.push_str(pasted_text);
+
+                // Calculate # added lines and cursor offset
+                let (added_lines, last_line) = pasted_text.split('\n').enumerate().last().unwrap();
+                cursor_byte = strip_cr(last_line).len();
+                cursor_row_offset = i + added_lines;
+
                 for g in &cur_row.graphemes[index..] {
                     out.push_str(&g.data);
                 }
@@ -390,7 +376,27 @@ impl InputBox {
         self.remove_line(line);
         self.insert_text(prev, &out);
 
-        self.restore_rows(saved);
+        // Recompute cursor row/column
+        self.cursor_row = self.iter_range(prev, self.last_row())
+            .nth(cursor_row_offset)
+            .map(|(id, _)| id)
+            .unwrap();
+        let mut byte = 0;
+        self.cursor_col = self.rows[self.cursor_row].graphemes.iter()
+            .map(|g| {
+                byte += g.data.len();
+                (byte, g.column as usize)
+            })
+            .find(|&(byte, _)| byte > cursor_byte)
+            .map_or(self.rows[self.cursor_row].width, |(_, column)| column);
+
+        // Recompute view window
+        let last_visible_row_offset = last_visible_row_offset.max(cursor_row_offset);
+        let last_visible_row = self.iter_range(prev, self.last_row())
+            .nth(last_visible_row_offset)
+            .map(|(id, _)| id)
+            .unwrap();
+        self.set_last_visible_row(last_visible_row);
     }
 
     /// Scrolls the visible window up one row. If the cursor is at the final
@@ -500,35 +506,34 @@ impl InputBox {
 #[derive(Clone, Copy, Debug)]
 struct InputRowIter<'i> {
     input: &'i InputBox,
-    start: Id<InputRow>,
-    end: Id<InputRow>,
+    prev: Id<InputRow>,
+    last: Id<InputRow>,
 }
 
 impl<'i> Iterator for InputRowIter<'i> {
     type Item = (Id<InputRow>, &'i InputRow);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.start == self.end {
+        if self.prev == self.last {
             return None;
         }
-        let id = self.start;
-        let row = &self.input.rows[id];
-        self.start = row.next;
-        Some((id, row))
+        let id = self.input.rows[self.prev].next;
+        self.prev = id;
+        Some((id, &self.input.rows[id]))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        ((self.start != self.end) as usize, None)
+        ((self.prev != self.last) as usize, None)
     }
 }
 
 impl<'i> DoubleEndedIterator for InputRowIter<'i> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.start == self.end {
+        if self.prev == self.last {
             return None;
         }
-        let id = self.input.rows[self.end].prev;
-        self.end = id;
+        let id = self.last;
+        self.last = self.input.rows[self.last].prev;
         Some((id, &self.input.rows[id]))
     }
 }
@@ -539,8 +544,8 @@ impl<'i> std::iter::ExactSizeIterator for InputRowIter<'i> {}
 
 #[cfg(test)]
 mod tests {
-    use crate::text::truncate_line;
     use super::*;
+    use crate::text::truncate_line;
 
     const SAMPLE: &'static str = r"Is it for fear to wet a widow's eye,
 That thou consum'st thy self in single life?
@@ -609,7 +614,10 @@ That on himself such murd'rous shame commits.
         input.insert_text(id, "a line that is way too long");
         assert_eq!(input.num_rows(), 7);
         assert_eq!(input.num_lines(), 6);
-        assert_eq!(input.get_text(), "first\nmiddle\nsecond\nlast\na line that is way too long\n\n");
+        assert_eq!(
+            input.get_text(),
+            "first\nmiddle\nsecond\nlast\na line that is way too long\n\n"
+        );
     }
 
     #[test]
@@ -649,13 +657,15 @@ That on himself such murd'rous shame commits.
         assert_eq!(input.last_visible_row, rows[13]);
 
         input.cursor_row = rows[7];
+        input.cursor_col = 0;
         input.set_first_visible_row(rows[2]);
         assert_eq!(input.last_visible_row, rows[9]);
         input.paste(SAMPLE);
         assert_eq!(input.num_rows(), 28);
         let rows = row_ids(&input);
-        assert_eq!(input.first_visible_row, rows[13]);
-        assert_eq!(input.last_visible_row, rows[20]);
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[21], 0));
+        assert_eq!(input.first_visible_row, rows[14]);
+        assert_eq!(input.last_visible_row, rows[21]);
     }
 
     fn row_ids(input: &InputBox) -> Vec<Id<InputRow>> {
@@ -696,9 +706,13 @@ That on himself such murd'rous shame commits.
         let rows = row_ids(&input);
         assert_eq!(rows.len(), 14);
 
-        assert_eq!(input.last_visible_row, rows[3]);
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
+        assert_eq!(input.first_visible_row, rows[10]);
+        assert_eq!(input.last_visible_row, rows[13]);
 
+        input.cursor_row = rows[0];
         input.cursor_col = 10;
+        input.set_first_visible_row(rows[0]);
         input.move_left();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 9));
         input.move_right();
@@ -708,26 +722,44 @@ That on himself such murd'rous shame commits.
         input.cursor_col = 10;
         input.move_up();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
-        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[0], rows[3]));
+        assert_eq!(
+            (input.first_visible_row, input.last_visible_row),
+            (rows[0], rows[3])
+        );
         input.move_up();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
-        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[0], rows[3]));
+        assert_eq!(
+            (input.first_visible_row, input.last_visible_row),
+            (rows[0], rows[3])
+        );
         input.move_left();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
-        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[0], rows[3]));
+        assert_eq!(
+            (input.first_visible_row, input.last_visible_row),
+            (rows[0], rows[3])
+        );
 
         // Test last row
         input.cursor_row = rows[13];
         input.set_first_visible_row(rows[10]);
         input.move_down();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
-        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[10], rows[13]));
+        assert_eq!(
+            (input.first_visible_row, input.last_visible_row),
+            (rows[10], rows[13])
+        );
         input.move_down();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
-        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[10], rows[13]));
+        assert_eq!(
+            (input.first_visible_row, input.last_visible_row),
+            (rows[10], rows[13])
+        );
         input.move_right();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
-        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[10], rows[13]));
+        assert_eq!(
+            (input.first_visible_row, input.last_visible_row),
+            (rows[10], rows[13])
+        );
 
         // Test scrolling
         input.cursor_row = rows[1];
@@ -735,14 +767,20 @@ That on himself such murd'rous shame commits.
         input.set_first_visible_row(rows[1]);
         input.move_up();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
-        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[0], rows[3]));
+        assert_eq!(
+            (input.first_visible_row, input.last_visible_row),
+            (rows[0], rows[3])
+        );
 
         input.cursor_row = rows[12];
         input.cursor_col = 0;
         input.set_first_visible_row(rows[9]);
         input.move_down();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 0));
-        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[10], rows[13]));
+        assert_eq!(
+            (input.first_visible_row, input.last_visible_row),
+            (rows[10], rows[13])
+        );
 
         // Test line endings
         input.cursor_row = rows[0];
