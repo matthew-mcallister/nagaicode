@@ -170,8 +170,7 @@ struct InputBox {
     /// Head of circularly linked list. Contains no real data.
     head: Id<InputRow>,
     first_visible_row: Id<InputRow>,
-    /// Cached value
-    last_visible_row: Option<Id<InputRow>>,
+    last_visible_row: Id<InputRow>,
     cursor_row: Id<InputRow>,
     cursor_col: usize,
 }
@@ -214,7 +213,7 @@ impl InputBox {
             max_height,
             head,
             first_visible_row: first,
-            last_visible_row: Some(first),
+            last_visible_row: first,
             cursor_row: first,
             cursor_col: 0,
         }
@@ -252,16 +251,21 @@ impl InputBox {
         self.rows[self.head].prev
     }
 
-    /// Computes and caches the last visible row
-    fn last_visible_row(&mut self) -> Id<InputRow> {
-        if let Some(last) = self.last_visible_row {
-            return last;
-        }
-        let (id, _) = self.iter_range(self.first_visible_row, self.head)
-            .nth(self.height() - 1)
-            .unwrap();
-        self.last_visible_row = Some(id);
-        id
+    fn set_first_visible_row(&mut self, first_visible_row: Id<InputRow>) {
+        self.first_visible_row = first_visible_row;
+        self.last_visible_row = self.iter_range(first_visible_row, self.head)
+            .nth(self.max_height - 1)
+            .map(|(id, _)| id)
+            .unwrap_or(self.last_row());
+    }
+
+    fn set_last_visible_row(&mut self, last_visible_row: Id<InputRow>) {
+        self.last_visible_row = last_visible_row;
+        self.first_visible_row = self.iter_range(self.first_row(), self.rows[self.last_visible_row].next)
+            .rev()
+            .nth(self.max_height - 1)
+            .map(|(id, _)| id)
+            .unwrap_or(self.first_row());
     }
 
     fn height(&self) -> usize {
@@ -301,7 +305,6 @@ impl InputBox {
         }
 
         self.lines.remove(line);
-        self.last_visible_row = None;
     }
 
     /// Links an unlinked line.
@@ -314,7 +317,6 @@ impl InputBox {
         self.rows[line_first].prev = prev;
         self.rows[line_last].next = next;
         self.rows[next].prev = line_last;
-        self.last_visible_row = None;
     }
 
     /// Helper for recomputing window/cursor rows.
@@ -340,10 +342,10 @@ impl InputBox {
         let mut i = 0;
         let mut cur = base;
         while i < state.1 { cur = self.rows[cur].next; i += 1; }
-        self.first_visible_row = cur;
+        let first_visible = cur;
         while i < state.2 { cur = self.rows[cur].next; i += 1; }
         self.cursor_row = cur;
-        self.last_visible_row = None;
+        self.set_first_visible_row(first_visible);
     }
 
     /// Inserts arbitrary text as new lines at a given position. The text may
@@ -399,19 +401,19 @@ impl InputBox {
             return;
         }
 
-        let last_visible = self.last_visible_row();
+        let last_visible = self.last_visible_row;
         if self.cursor_row == last_visible {
             self.cursor_row = self.rows[self.cursor_row].prev;
         }
         self.first_visible_row = self.rows[self.cursor_row].prev;
-        self.last_visible_row = Some(self.rows[last_visible].prev);
+        self.last_visible_row = self.rows[last_visible].prev;
     }
 
     /// Scrolls the visible window up one row. If the cursor is at the first
     /// visible row, move the cursor down one row. Does nothing if already at
     /// the last overall row.
     fn scroll_down(&mut self) {
-        let last_visible = self.last_visible_row();
+        let last_visible = self.last_visible_row;
         if last_visible == self.last_row() {
             return;
         }
@@ -420,7 +422,7 @@ impl InputBox {
             self.cursor_row = self.rows[self.cursor_row].next;
         }
         self.first_visible_row = self.rows[self.first_visible_row].next;
-        self.last_visible_row = Some(self.rows[last_visible].next);
+        self.last_visible_row = self.rows[last_visible].next;
     }
 
     /// Moves the cursor up one row. Preserves the column of the cursor. If
@@ -433,9 +435,9 @@ impl InputBox {
         }
 
         if self.cursor_row == self.first_visible_row {
-            let last_visible = self.last_visible_row();
+            let last_visible = self.last_visible_row;
             self.first_visible_row = self.rows[self.first_visible_row].prev;
-            self.last_visible_row = Some(self.rows[last_visible].prev);
+            self.last_visible_row = self.rows[last_visible].prev;
         }
         self.cursor_row = self.rows[self.cursor_row].prev;
     }
@@ -450,10 +452,10 @@ impl InputBox {
         }
 
         let cursor_row = self.cursor_row;
-        let last_visible = self.last_visible_row();
+        let last_visible = self.last_visible_row;
         if cursor_row == last_visible {
             self.first_visible_row = self.rows[self.first_visible_row].next;
-            self.last_visible_row = Some(self.rows[last_visible].next);
+            self.last_visible_row = self.rows[last_visible].next;
         }
         self.cursor_row = self.rows[cursor_row].next;
     }
@@ -615,8 +617,7 @@ That on himself such murd'rous shame commits.
         let mut input = InputBox::new(20, 8);
 
         input.insert_text(input.head, "abcdef");
-        input.first_visible_row = input.first_row();
-        input.last_visible_row = None;
+        input.set_first_visible_row(input.first_row());
         assert_eq!(input.get_text(), "abcdef\n\n");
 
         // Paste at the beginning of the line.
@@ -645,17 +646,16 @@ That on himself such murd'rous shame commits.
         assert_eq!(input.num_rows(), 14);
         let rows = row_ids(&input);
         assert_eq!(input.first_visible_row, rows[6]);
-        assert_eq!(input.last_visible_row(), rows[13]);
+        assert_eq!(input.last_visible_row, rows[13]);
 
         input.cursor_row = rows[7];
-        input.first_visible_row = rows[2];
-        input.last_visible_row = None;
-        assert_eq!(input.last_visible_row(), rows[9]);
+        input.set_first_visible_row(rows[2]);
+        assert_eq!(input.last_visible_row, rows[9]);
         input.paste(SAMPLE);
         assert_eq!(input.num_rows(), 28);
         let rows = row_ids(&input);
         assert_eq!(input.first_visible_row, rows[13]);
-        assert_eq!(input.last_visible_row(), rows[20]);
+        assert_eq!(input.last_visible_row, rows[20]);
     }
 
     fn row_ids(input: &InputBox) -> Vec<Id<InputRow>> {
@@ -666,22 +666,21 @@ That on himself such murd'rous shame commits.
     fn test_scroll() {
         let mut input = InputBox::new(80, 2);
         input.insert_text(input.head, "one\ntwo\nthree\nfour");
-        input.first_visible_row = input.first_row();
-        input.last_visible_row = None;
+        input.set_first_visible_row(input.first_row());
 
         let rows = row_ids(&input);
         input.cursor_row = rows[0];
-        assert_eq!(input.last_visible_row(), rows[1]);
+        assert_eq!(input.last_visible_row, rows[1]);
 
         input.scroll_down();
         assert_eq!(input.first_visible_row, rows[1]);
-        assert_eq!(input.last_visible_row(), rows[2]);
+        assert_eq!(input.last_visible_row, rows[2]);
         assert_eq!(input.cursor_row, rows[1]);
 
         input.cursor_row = rows[2];
         input.scroll_up();
         assert_eq!(input.first_visible_row, rows[0]);
-        assert_eq!(input.last_visible_row(), rows[1]);
+        assert_eq!(input.last_visible_row, rows[1]);
         assert_eq!(input.cursor_row, rows[1]);
 
         input.scroll_up();
@@ -697,7 +696,7 @@ That on himself such murd'rous shame commits.
         let rows = row_ids(&input);
         assert_eq!(rows.len(), 14);
 
-        assert_eq!(input.last_visible_row(), rows[3]);
+        assert_eq!(input.last_visible_row, rows[3]);
 
         input.cursor_col = 10;
         input.move_left();
@@ -709,50 +708,46 @@ That on himself such murd'rous shame commits.
         input.cursor_col = 10;
         input.move_up();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
-        assert_eq!((input.first_visible_row, input.last_visible_row()), (rows[0], rows[3]));
+        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[0], rows[3]));
         input.move_up();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
-        assert_eq!((input.first_visible_row, input.last_visible_row()), (rows[0], rows[3]));
+        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[0], rows[3]));
         input.move_left();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
-        assert_eq!((input.first_visible_row, input.last_visible_row()), (rows[0], rows[3]));
+        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[0], rows[3]));
 
         // Test last row
         input.cursor_row = rows[13];
-        input.first_visible_row = rows[10];
-        input.last_visible_row = None;
+        input.set_first_visible_row(rows[10]);
         input.move_down();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
-        assert_eq!((input.first_visible_row, input.last_visible_row()), (rows[10], rows[13]));
+        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[10], rows[13]));
         input.move_down();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
-        assert_eq!((input.first_visible_row, input.last_visible_row()), (rows[10], rows[13]));
+        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[10], rows[13]));
         input.move_right();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
-        assert_eq!((input.first_visible_row, input.last_visible_row()), (rows[10], rows[13]));
+        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[10], rows[13]));
 
         // Test scrolling
         input.cursor_row = rows[1];
         input.cursor_col = 0;
-        input.first_visible_row = rows[1];
-        input.last_visible_row = None;
+        input.set_first_visible_row(rows[1]);
         input.move_up();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
-        assert_eq!((input.first_visible_row, input.last_visible_row()), (rows[0], rows[3]));
+        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[0], rows[3]));
 
         input.cursor_row = rows[12];
         input.cursor_col = 0;
-        input.first_visible_row = rows[9];
-        input.last_visible_row = None;
+        input.set_first_visible_row(rows[9]);
         input.move_down();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 0));
-        assert_eq!((input.first_visible_row, input.last_visible_row()), (rows[10], rows[13]));
+        assert_eq!((input.first_visible_row, input.last_visible_row), (rows[10], rows[13]));
 
         // Test line endings
         input.cursor_row = rows[0];
         input.cursor_col = 35;
-        input.first_visible_row = rows[0];
-        input.last_visible_row = None;
+        input.set_first_visible_row(rows[0]);
         input.move_right();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 36));
         input.move_right();
