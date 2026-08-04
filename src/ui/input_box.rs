@@ -128,21 +128,23 @@ impl InputRow {
     /// in the line. For the last row, the final position is one past the final
     /// column in the row. For all other rows, the final position is at the
     /// final column in the row.
-    fn final_pos(&self) -> usize {
+    fn final_grapheme(&self) -> usize {
         if self.is_last {
             self.graphemes.len()
         } else {
-            self.graphemes.len().saturating_sub(1)
+            // Only last row can be empty
+            self.graphemes.len() - 1
         }
     }
 
     /// Finds the grapheme index at a given column within a row. If the column
-    /// is past the end, then returns the final position in the row.
+    /// is past the end, then returns the final grapheme index in the row (may
+    /// be one past the end).
     fn grapheme_at_col(&self, col: usize) -> usize {
         self.graphemes
             .iter()
             .position(|grapheme| col < grapheme.column as usize + grapheme.width as usize)
-            .unwrap_or_else(|| self.final_pos())
+            .unwrap_or_else(|| self.final_grapheme())
     }
 }
 
@@ -151,11 +153,13 @@ struct InputBox {
     lines: Arena<InputLine>,
     rows: Arena<InputRow>,
     width: usize,
+    /// Maximum number of visible rows
     max_height: usize,
     /// Head of circularly linked list. Contains no real data.
     head: Id<InputRow>,
     first_visible_row: Id<InputRow>,
-    last_visible_row: Id<InputRow>,
+    /// Cached value
+    last_visible_row: Option<Id<InputRow>>,
     cursor_row: Id<InputRow>,
     cursor_col: usize,
 }
@@ -198,7 +202,7 @@ impl InputBox {
             max_height,
             head,
             first_visible_row: first,
-            last_visible_row: first,
+            last_visible_row: Some(first),
             cursor_row: first,
             cursor_col: 0,
         }
@@ -213,8 +217,13 @@ impl InputBox {
         self.lines.len()
     }
 
+    fn iter_from<'a>(&'a self, start: Id<InputRow>) -> InputRowIter<'a> {
+        let end = self.head;
+        InputRowIter { input: self, start, end }
+    }
+
     fn iter_rows<'a>(&'a self) -> InputRowIter<'a> {
-        let start = self.rows[self.head].next;
+        let start = self.first_row();
         let end = self.head;
         InputRowIter { input: self, start, end }
     }
@@ -224,6 +233,29 @@ impl InputBox {
         let start = line.first_row;
         let end = self.rows[line.last_row].next;
         InputRowIter { input: self, start, end }
+    }
+
+    fn first_row(&self) -> Id<InputRow> {
+        self.rows[self.head].next
+    }
+
+    fn last_row(&self) -> Id<InputRow> {
+        self.rows[self.head].prev
+    }
+
+    /// Computes and caches the last visible row
+    fn last_visible_row(&mut self) -> Id<InputRow> {
+        if let Some(last) = self.last_visible_row {
+            return last;
+        }
+
+        let (id, _) = self.iter_from(self.first_visible_row).nth(self.height() - 1).unwrap();
+        self.last_visible_row = Some(id);
+        id
+    }
+
+    fn height(&self) -> usize {
+        std::cmp::min(self.max_height, self.rows.len())
     }
 
     /// Computes text of all lines.
@@ -260,6 +292,7 @@ impl InputBox {
         debug_assert_eq!(cur, next);
 
         self.lines.remove(line);
+        self.last_visible_row = None;
     }
 
     /// Links an unlinked line.
@@ -272,6 +305,7 @@ impl InputBox {
         self.rows[line_first].prev = prev;
         self.rows[line_last].next = next;
         self.rows[next].prev = line_last;
+        self.last_visible_row = None;
     }
 
     /// Inserts arbitrary text as new lines at a given position. The text may
@@ -319,6 +353,38 @@ impl InputBox {
 
         self.remove_line(line);
         self.insert_text(prev, &out);
+    }
+
+    /// Scrolls the visible window up one row. If the cursor is at the final
+    /// visible row, move the cursor up one row. Does nothing if already at the
+    /// first overall row.
+    fn scroll_up(&mut self) {
+        if self.first_visible_row == self.first_row() {
+            return;
+        }
+
+        let last_visible = self.last_visible_row();
+        if self.cursor_row == last_visible {
+            self.cursor_row = self.rows[self.cursor_row].prev;
+        }
+        self.first_visible_row = self.rows[self.cursor_row].prev;
+        self.last_visible_row = Some(self.rows[last_visible].prev);
+    }
+
+    /// Scrolls the visible window up one row. If the cursor is at the first
+    /// visible row, move the cursor down one row. Does nothing if already at
+    /// the last overall row.
+    fn scroll_down(&mut self) {
+        let last_visible = self.last_visible_row();
+        if last_visible == self.last_row() {
+            return;
+        }
+
+        if self.cursor_row == self.first_visible_row {
+            self.cursor_row = self.rows[self.cursor_row].next;
+        }
+        self.first_visible_row = self.rows[self.first_visible_row].next;
+        self.last_visible_row = Some(self.rows[last_visible].next);
     }
 
     /// Moves the cursor up one row. Preserves the column of the cursor. If
@@ -400,14 +466,6 @@ mod tests {
     }
 
     #[test]
-    fn test_final_pos() {
-        assert_eq!(row(true, "").final_pos(), 0);
-        assert_eq!(row(false, "").final_pos(), 0);
-        assert_eq!(row(true, "ab").final_pos(), 2);
-        assert_eq!(row(false, "ab").final_pos(), 1);
-    }
-
-    #[test]
     fn test_grapheme_at_col() {
         let final_row = row(true, "a界c");
         assert_eq!(final_row.grapheme_at_col(0), 0);
@@ -422,11 +480,6 @@ mod tests {
         assert_eq!(wrapped_row.grapheme_at_col(usize::MAX), 2);
 
         assert_eq!(row(true, "").grapheme_at_col(0), 0);
-        assert_eq!(row(false, "").grapheme_at_col(0), 0);
-    }
-
-    fn row_ids(input: &InputBox) -> Vec<Id<InputRow>> {
-        input.iter_rows().map(|(id, _)| id).collect()
     }
 
     #[test]
@@ -486,5 +539,36 @@ mod tests {
         input.cursor_col = input.rows[first].width;
         input.paste("XY");
         assert_eq!(input.get_text(), "XYabXYcdefXY\n\n");
+    }
+
+    fn row_ids(input: &InputBox) -> Vec<Id<InputRow>> {
+        input.iter_rows().map(|(id, _)| id).collect()
+    }
+
+    #[test]
+    fn test_scroll() {
+        let mut input = InputBox::new(80, 2);
+        input.insert_text(input.head, "one\ntwo\nthree\nfour");
+        input.first_visible_row = input.first_row();
+        input.last_visible_row = None;
+
+        let rows = row_ids(&input);
+        input.cursor_row = rows[0];
+        assert_eq!(input.last_visible_row(), rows[1]);
+
+        input.scroll_down();
+        assert_eq!(input.first_visible_row, rows[1]);
+        assert_eq!(input.last_visible_row(), rows[2]);
+        assert_eq!(input.cursor_row, rows[1]);
+
+        input.cursor_row = rows[2];
+        input.scroll_up();
+        assert_eq!(input.first_visible_row, rows[0]);
+        assert_eq!(input.last_visible_row(), rows[1]);
+        assert_eq!(input.cursor_row, rows[1]);
+
+        input.scroll_up();
+        assert_eq!(input.first_visible_row, rows[0]);
+        assert_eq!(input.cursor_row, rows[1]);
     }
 }
