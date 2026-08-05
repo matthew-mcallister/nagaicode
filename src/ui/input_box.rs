@@ -248,20 +248,22 @@ impl InputBox {
         InputGraphemeIter { input: self, start_row, start_grapheme, end_row, end_grapheme }
     }
 
-    /// O(n) row lookup relative to base row. Unspecified result if offset
-    /// goes out of bounds.
-    fn row_offset(&self, base: Id<InputRow>, offset: isize) -> Id<InputRow> {
+    /// O(n) row lookup relative to base row. Returns None if the offset is
+    /// out of bounds.
+    fn row_offset(&self, base: Id<InputRow>, offset: isize) -> Option<Id<InputRow>> {
         let mut row = base;
-        if offset > 0 {
+        if offset >= 0 {
             for _ in 0..offset {
                 row = self.rows[row].next;
+                if row == self.head { return None; }
             }
         } else {
             for _ in 0..-offset {
                 row = self.rows[row].prev;
+                if row == self.head { return None; }
             }
         }
-        row
+        Some(row)
     }
 
     /// O(n) row distance relative to base. base must come before other.
@@ -303,7 +305,7 @@ impl InputBox {
     }
 
     fn height(&self) -> usize {
-        std::cmp::min(self.max_height, self.rows.len())
+        std::cmp::min(self.max_height, self.num_rows())
     }
 
     /// Computes text of all lines.
@@ -364,6 +366,8 @@ impl InputBox {
         self.remove_line(self.rows[self.first_row()].line);
         self.insert_text(self.head, text);
         self.set_first_visible_row(self.first_row());
+        self.cursor_row = self.first_row();
+        self.cursor_col = 0;
     }
 
     /// Deletes a range of graphemes and replaces them with new text. If
@@ -441,10 +445,9 @@ impl InputBox {
 
         // Recompute view window
         let cursor_row_offset = self.row_diff(prev, self.cursor_row);
-        let last_visible_row_offset = cursor_row_offset
-            .max(last_visible_row_offset)
-            .min(self.rows.len() as isize - 1);
-        self.set_last_visible_row(self.row_offset(prev, last_visible_row_offset));
+        let last_visible_row_offset = cursor_row_offset.max(last_visible_row_offset);
+        let row = self.row_offset(prev, last_visible_row_offset).unwrap_or(self.last_row());
+        self.set_last_visible_row(row);
     }
 
     /// Pastes raw text at the cursor position.
@@ -839,24 +842,66 @@ That on himself such murd'rous shame commits.
     }
 
     #[test]
-    fn test_paste_visible_lines() {
-        let mut input = InputBox::new(80, 8);
-        input.paste(&SAMPLE[..SAMPLE.len() - 1]);
+    fn test_splice_scrolling() {
+        // Cursor moves out of window
+        let mut input = InputBox::new(80, 4);
+        input.set_text(&SAMPLE[..SAMPLE.len() - 1]);
         assert_eq!(input.num_rows(), 14);
         let rows = row_ids(&input);
-        assert_eq!(input.first_visible_row, rows[6]);
+        assert_eq!(input.last_visible_row, rows[3]);
+
+        input.paste(SAMPLE);
+        let rows = row_ids(&input);
+        assert_eq!(rows.len(), 28);
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[14], 0));
+        assert_eq!(input.first_visible_row, rows[11]);
+        assert_eq!(input.last_visible_row, rows[14]);
+
+        // Deletion scrolls window up
+        let mut input = InputBox::new(80, 4);
+        input.set_text(&SAMPLE[..SAMPLE.len() - 1]);
+        assert_eq!(input.num_rows(), 14);
+        let rows = row_ids(&input);
+        input.cursor_row = rows[13];
+        input.cursor_col = 0;
+        input.set_first_visible_row(rows[10]);
+        assert_eq!(input.first_visible_row, rows[10]);
         assert_eq!(input.last_visible_row, rows[13]);
 
-        input.cursor_row = rows[7];
-        input.cursor_col = 0;
-        input.set_first_visible_row(rows[2]);
-        assert_eq!(input.last_visible_row, rows[9]);
-        input.paste(SAMPLE);
-        assert_eq!(input.num_rows(), 28);
+        splice(&mut input, 6, 0, 13, 0, "");
+        assert_eq!(input.num_rows(), 7);
         let rows = row_ids(&input);
-        assert_eq!((input.cursor_row, input.cursor_col), (rows[21], 0));
-        assert_eq!(input.first_visible_row, rows[14]);
-        assert_eq!(input.last_visible_row, rows[21]);
+        assert_eq!(input.cursor_row, rows[6]);
+        assert_eq!(rows.len(), 7);
+        assert_eq!(input.first_visible_row, rows[3]);
+        assert_eq!(input.last_visible_row, rows[6]);
+
+        // No scrolling
+        let mut input = InputBox::new(80, 10);
+        input.set_text(&SAMPLE[..SAMPLE.len() - 1]);
+        let rows = row_ids(&input);
+        assert_eq!(rows.len(), 14);
+
+        input.paste("hello\n");
+        let rows = row_ids(&input);
+        assert_eq!(rows.len(), 15);
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 0));
+        assert_eq!(input.first_visible_row, rows[0]);
+        assert_eq!(input.last_visible_row, rows[9]);
+
+        splice(&mut input, 0, 0, 1, 0, "");
+        assert_eq!(input.num_rows(), 14);
+        let rows = row_ids(&input);
+        assert_eq!(input.first_visible_row, rows[0]);
+        assert_eq!(input.last_visible_row, rows[9]);
+        assert_eq!(input.get_text(), SAMPLE);
+
+        // Shrink height
+        splice(&mut input, 3, 0, 13, 0, "");
+        assert_eq!(input.num_rows(), 4);
+        let rows = row_ids(&input);
+        assert_eq!(input.first_visible_row, rows[0]);
+        assert_eq!(input.last_visible_row, rows[3]);
     }
 
     fn row_ids(input: &InputBox) -> Vec<Id<InputRow>> {
