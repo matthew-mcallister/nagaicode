@@ -305,6 +305,18 @@ impl InputBox {
         }
     }
 
+    /// Deletes a range of graphemes and replaces them with new text.
+    fn splice(
+        &mut self,
+        start_row: Id<InputRow>,
+        start_grapheme: usize,
+        end_row: Id<InputRow>,
+        end_grapheme: usize,
+        inserted_text: &str,
+    ) {
+        todo!();
+    }
+
     /// Pastes raw text at the cursor position.
     fn paste(&mut self, pasted_text: &str) {
         if pasted_text.is_empty() { return; }
@@ -319,16 +331,24 @@ impl InputBox {
         let (mut cursor_row_offset, mut cursor_byte) = (usize::MAX, usize::MAX);
         for (i, (cur, cur_row)) in self.iter_line(line).enumerate() {
             if cur == self.cursor_row {
+                cursor_byte = 0;
+
                 let index = cur_row.grapheme_at_col(self.cursor_col);
                 for g in &cur_row.graphemes[..index] {
                     out.push_str(&g.data);
+                    cursor_byte += g.data.len();
                 }
 
                 out.push_str(pasted_text);
 
                 // Calculate # added lines and cursor offset
                 let (added_lines, last_line) = pasted_text.split('\n').enumerate().last().unwrap();
-                cursor_byte = strip_cr(last_line).len();
+                let m = strip_cr(last_line).len();
+                if added_lines > 0 {
+                    cursor_byte = m;
+                } else {
+                    cursor_byte += m;
+                }
                 cursor_row_offset = i + added_lines;
 
                 for g in &cur_row.graphemes[index..] {
