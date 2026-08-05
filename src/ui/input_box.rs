@@ -1,3 +1,5 @@
+use std::slice::SliceIndex;
+
 use compact_str::CompactString;
 
 use crate::arena::{Arena, Id};
@@ -101,6 +103,13 @@ impl InputRow {
         }
     }
 
+    fn data<I>(&self, range: I) -> impl Iterator<Item = &'_ str> + '_
+    where
+        I: SliceIndex<[InputGrapheme], Output = [InputGrapheme]>,
+    {
+        self.graphemes[range].iter().map(|g| &g.data[..])
+    }
+
     fn from_row(row: Row) -> Self {
         let mut graphemes = Vec::with_capacity(row.graphemes.len());
         let mut column: u32 = 0;
@@ -202,6 +211,14 @@ impl InputBox {
         self.lines.len()
     }
 
+    fn first_row(&self) -> Id<InputRow> {
+        self.rows[self.head].next
+    }
+
+    fn last_row(&self) -> Id<InputRow> {
+        self.rows[self.head].prev
+    }
+
     /// Iterate over a range of rows. `prev` is not inclusive; `last` is
     /// inclusive.
     fn iter_range<'a>(&'a self, prev: Id<InputRow>, last: Id<InputRow>) -> InputRowIter<'a> {
@@ -219,12 +236,50 @@ impl InputBox {
         self.iter_range(prev, last)
     }
 
-    fn first_row(&self) -> Id<InputRow> {
-        self.rows[self.head].next
+    /// Iterates over graphemes between two arbitrary points. `end_grapheme` is
+    /// not included in the iterator range.
+    fn iter_graphemes<'a>(
+        &'a self,
+        start_row: Id<InputRow>,
+        start_grapheme: usize,
+        end_row: Id<InputRow>,
+        end_grapheme: usize,
+    ) -> InputGraphemeIter<'a> {
+        InputGraphemeIter { input: self, start_row, start_grapheme, end_row, end_grapheme }
     }
 
-    fn last_row(&self) -> Id<InputRow> {
-        self.rows[self.head].prev
+    /// O(n) row lookup relative to base row. Unspecified result if offset
+    /// goes out of bounds.
+    fn row_offset(&self, base: Id<InputRow>, offset: isize) -> Id<InputRow> {
+        let mut row = base;
+        if offset > 0 {
+            for _ in 0..offset {
+                row = self.rows[row].next;
+            }
+        } else {
+            for _ in 0..-offset {
+                row = self.rows[row].prev;
+            }
+        }
+        row
+    }
+
+    /// O(n) row distance relative to base. base must come before other.
+    /// Unspecified result if base comes after other.
+    fn row_diff(&self, base: Id<InputRow>, other: Id<InputRow>) -> isize {
+        let mut row = base;
+        let mut diff = 0;
+        while row != other {
+            row = self.rows[row].next;
+            diff += 1;
+        }
+        diff
+    }
+
+    /// Returns the line after `line`. Result is unspecified if `line` is the
+    /// last line in the input.
+    fn next_line(&self, line: Id<InputLine>) -> Id<InputLine> {
+        self.rows[self.rows[self.lines[line].last_row].next].line
     }
 
     fn set_first_visible_row(&mut self, first_visible_row: Id<InputRow>) {
@@ -305,7 +360,16 @@ impl InputBox {
         }
     }
 
-    /// Deletes a range of graphemes and replaces them with new text.
+    /// Deletes a range of graphemes and replaces them with new text. If
+    /// `inserted_text` is empty, graphemes will still be deleted without
+    /// inserting any new text. `start_grapheme` is inclusive while
+    /// `end_grapheme` is not: `end_grapheme` may equal `graphemes.len()`. If
+    /// the deletion range contains a trailing newline, the newline will be
+    /// deleted and consecutive lines merged.
+    ///
+    /// The cursor will be placed after the inserted text and the scroll window
+    /// updated appropriately.
+    // XXX: Don't think this handles case end_grapheme == graphemes.len() correctly
     fn splice(
         &mut self,
         start_row: Id<InputRow>,
@@ -314,80 +378,75 @@ impl InputBox {
         end_grapheme: usize,
         inserted_text: &str,
     ) {
-        todo!();
+        let start_line = self.rows[start_row].line;
+        let end_line = self.rows[end_row].line;
+        let prev = self.rows[self.lines[start_line].first_row].prev;
+        let next = self.rows[self.lines[end_line].last_row].next;
+
+        // Assume splice start point comes before last visible row
+        let last_visible_row_offset = self.row_diff(prev, self.last_visible_row);
+
+        // Cursor byte offset relative to end of last line.
+        // Why byte offset? In some cases, pasted codepoints will alter the
+        // grapheme segmentation of the rest of the line. This ensures the
+        // cursor still points to the same codepoint it did previously.
+        let cursor_grapheme = self.rows[self.cursor_row].grapheme_at_col(self.cursor_col);
+        let cursor_offset: usize = self.iter_graphemes(self.cursor_row, cursor_grapheme, next, 0)
+            .map(|(_, _, g)| g.data.len())
+            .sum();
+
+        // Splice strings
+        let mut out = String::new();
+        out.extend(
+            self.iter_graphemes(self.lines[start_line].first_row, 0, start_row, start_grapheme)
+                .map(|(_, _, g)| &g.data[..])
+        );
+        out.push_str(inserted_text);
+        out.extend(
+            self.iter_graphemes(end_row, end_grapheme, next, 0)
+                .map(|(_, _, g)| &g.data[..])
+        );
+
+        // Remove trailing newline
+        if out.ends_with('\n') { out.pop(); }
+
+        // Delete all affected lines
+        let mut line = start_line;
+        loop {
+            let next_line = self.next_line(line);
+            self.remove_line(line);
+            if line == end_line { break; }
+            line = next_line;
+        }
+
+        // Insert new text
+        self.insert_text(prev, &out);
+
+        // Recompute cursor position
+        let mut bytes = 0;
+        let (row, _, g) = self.iter_graphemes(self.first_row(), 0, next, 0)
+            .rev()
+            .find(|(_, _, g)| {
+                bytes += g.data.len();
+                bytes >= cursor_offset
+            })
+            .unwrap();
+        self.cursor_col = g.column as _;
+        self.cursor_row = row;
+
+        // Recompute view window
+        let cursor_row_offset = self.row_diff(prev, self.cursor_row);
+        let last_visible_row_offset = cursor_row_offset
+            .max(last_visible_row_offset)
+            .min(self.rows.len() as isize - 1);
+        self.set_last_visible_row(self.row_offset(prev, last_visible_row_offset));
     }
 
     /// Pastes raw text at the cursor position.
     fn paste(&mut self, pasted_text: &str) {
         if pasted_text.is_empty() { return; }
-
-        let line = self.rows[self.cursor_row].line;
-        let prev = self.rows[self.lines[line].first_row].prev;
-        let last_visible_row_offset = self.iter_range(prev, self.last_visible_row).count() - 1;
-
-        // Buffer the graphemes of the original line, splicing in the pasted
-        // text when the cursor position is reached.
-        let mut out = String::new();
-        let (mut cursor_row_offset, mut cursor_byte) = (usize::MAX, usize::MAX);
-        for (i, (cur, cur_row)) in self.iter_line(line).enumerate() {
-            if cur == self.cursor_row {
-                cursor_byte = 0;
-
-                let index = cur_row.grapheme_at_col(self.cursor_col);
-                for g in &cur_row.graphemes[..index] {
-                    out.push_str(&g.data);
-                    cursor_byte += g.data.len();
-                }
-
-                out.push_str(pasted_text);
-
-                // Calculate # added lines and cursor offset
-                let (added_lines, last_line) = pasted_text.split('\n').enumerate().last().unwrap();
-                let m = strip_cr(last_line).len();
-                if added_lines > 0 {
-                    cursor_byte = m;
-                } else {
-                    cursor_byte += m;
-                }
-                cursor_row_offset = i + added_lines;
-
-                for g in &cur_row.graphemes[index..] {
-                    out.push_str(&g.data);
-                }
-            } else {
-                for g in &cur_row.graphemes {
-                    out.push_str(&g.data);
-                }
-            }
-        }
-
-        self.remove_line(line);
-        // Remove the line's trailing newline grapheme
-        debug_assert!(out.ends_with('\n'));
-        out.pop();
-        self.insert_text(prev, &out);
-
-        // Recompute cursor row/column
-        self.cursor_row = self.iter_range(prev, self.last_row())
-            .nth(cursor_row_offset)
-            .map(|(id, _)| id)
-            .unwrap();
-        let mut byte = 0;
-        self.cursor_col = self.rows[self.cursor_row].graphemes.iter()
-            .map(|g| {
-                byte += g.data.len();
-                (byte, g.column as usize)
-            })
-            .find(|&(byte, _)| byte > cursor_byte)
-            .map_or(self.rows[self.cursor_row].width, |(_, column)| column);
-
-        // Recompute view window
-        let last_visible_row_offset = last_visible_row_offset.max(cursor_row_offset);
-        let last_visible_row = self.iter_range(prev, self.last_row())
-            .nth(last_visible_row_offset)
-            .map(|(id, _)| id)
-            .unwrap();
-        self.set_last_visible_row(last_visible_row);
+        let index = self.rows[self.cursor_row].grapheme_at_col(self.cursor_col);
+        self.splice(self.cursor_row, index, self.cursor_row, index, pasted_text);
     }
 
     /// Scrolls the visible window up one row. If the cursor is at the final
@@ -527,7 +586,50 @@ impl<'i> DoubleEndedIterator for InputRowIter<'i> {
 
 impl<'i> std::iter::FusedIterator for InputRowIter<'i> {}
 
-impl<'i> std::iter::ExactSizeIterator for InputRowIter<'i> {}
+#[derive(Clone, Copy, Debug)]
+struct InputGraphemeIter<'i> {
+    input: &'i InputBox,
+    start_row: Id<InputRow>,
+    start_grapheme: usize,
+    end_row: Id<InputRow>,
+    end_grapheme: usize,
+}
+
+impl<'i> Iterator for InputGraphemeIter<'i> {
+    type Item = (Id<InputRow>, usize, &'i InputGrapheme);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.start_row == self.end_row && self.start_grapheme >= self.end_grapheme {
+            return None;
+        }
+        let id = self.start_row;
+        let index = self.start_grapheme;
+        let grapheme = &self.input.rows[id].graphemes[index];
+        self.start_grapheme += 1;
+        if self.start_grapheme == self.input.rows[id].graphemes.len() {
+            self.start_row = self.input.rows[id].next;
+            self.start_grapheme = 0;
+        }
+        Some((id, index, grapheme))
+    }
+}
+
+impl<'i> DoubleEndedIterator for InputGraphemeIter<'i> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.start_row == self.end_row && self.start_grapheme >= self.end_grapheme {
+            return None;
+        }
+        if self.end_grapheme == 0 {
+            self.end_row = self.input.rows[self.end_row].prev;
+            self.end_grapheme = self.input.rows[self.end_row].graphemes.len();
+        }
+        let id = self.end_row;
+        self.end_grapheme -= 1;
+        Some((id, self.end_grapheme, &self.input.rows[id].graphemes[self.end_grapheme]))
+    }
+}
+
+impl<'i> std::iter::FusedIterator for InputGraphemeIter<'i> {}
 
 #[cfg(test)]
 mod tests {
@@ -560,6 +662,28 @@ That on himself such murd'rous shame commits.
             });
         }
         row
+    }
+
+    #[test]
+    fn test_grapheme_iter() {
+        let mut input = InputBox::new(10, 8);
+        input.insert_text(input.head, "abcdefgabcdefgabcdefgabcdefg");
+        input.remove_line(input.rows[input.last_row()].line);
+        let start = input.first_row();
+        let start_grapheme = 3;
+        let end = input.last_row();
+        let end_grapheme = 4;
+
+        let s: String = input.iter_graphemes(start, start_grapheme, end, end_grapheme)
+            .map(|(_, _, g)| &g.data[..])
+            .collect();
+        assert_eq!(s, "defgabcdefgabcdefgabc");
+
+        let t: String = input.iter_graphemes(start, start_grapheme, end, end_grapheme)
+            .rev()
+            .map(|(_, _, g)| &g.data[..])
+            .collect();
+        assert_eq!(t, "cbagfedcbagfedcbagfed");
     }
 
     #[test]
