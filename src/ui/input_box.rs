@@ -360,6 +360,11 @@ impl InputBox {
         }
     }
 
+    fn set_text(&mut self, text: &str) {
+        self.remove_line(self.rows[self.first_row()].line);
+        self.insert_text(self.head, text);
+    }
+
     /// Deletes a range of graphemes and replaces them with new text. If
     /// `inserted_text` is empty, graphemes will still be deleted without
     /// inserting any new text. `start_grapheme` is inclusive while
@@ -667,8 +672,7 @@ That on himself such murd'rous shame commits.
     #[test]
     fn test_grapheme_iter() {
         let mut input = InputBox::new(10, 8);
-        input.insert_text(input.head, "abcdefgabcdefgabcdefgabcdefg");
-        input.remove_line(input.rows[input.last_row()].line);
+        input.set_text("abcdefgabcdefgabcdefgabcdefg");
         let start = input.first_row();
         let start_grapheme = 3;
         let end = input.last_row();
@@ -741,27 +745,27 @@ That on himself such murd'rous shame commits.
     fn test_paste() {
         let mut input = InputBox::new(20, 8);
 
-        input.insert_text(input.head, "abcdef");
+        input.set_text("abcdef");
         input.set_first_visible_row(input.first_row());
-        assert_eq!(input.get_text(), "abcdef\n\n");
+        assert_eq!(input.get_text(), "abcdef\n");
 
         // Paste at the beginning of the line.
         input.cursor_row = input.first_row();
         input.cursor_col = 0;
         input.paste("XY");
-        assert_eq!(input.get_text(), "XYabcdef\n\n");
+        assert_eq!(input.get_text(), "XYabcdef\n");
 
         // Paste in the middle of the line.
         input.cursor_row = input.first_row();
         input.cursor_col = 4;
         input.paste("XY");
-        assert_eq!(input.get_text(), "XYabXYcdef\n\n");
+        assert_eq!(input.get_text(), "XYabXYcdef\n");
 
         // Paste at the end of the line (one column past the last row).
         input.cursor_row = input.first_row();
         input.cursor_col = input.rows[input.first_row()].width;
         input.paste("XY");
-        assert_eq!(input.get_text(), "XYabXYcdefXY\n\n");
+        assert_eq!(input.get_text(), "XYabXYcdefXY\n");
     }
 
     #[test]
@@ -792,7 +796,7 @@ That on himself such murd'rous shame commits.
     #[test]
     fn test_scroll() {
         let mut input = InputBox::new(80, 2);
-        input.insert_text(input.head, "one\ntwo\nthree\nfour");
+        input.set_text("one\ntwo\nthree\nfour");
         input.set_first_visible_row(input.first_row());
 
         let rows = row_ids(&input);
