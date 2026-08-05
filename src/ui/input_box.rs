@@ -555,6 +555,33 @@ impl InputBox {
             self.cursor_col = self.rows[self.cursor_row].graphemes[index + 1].column as usize;
         }
     }
+
+    /// Deletes the grapheme under the cursor. Does nothing if the cursor is
+    /// on the last grapheme of the last line.
+    fn delete(&mut self) {
+        let row = self.cursor_row;
+        let index = self.rows[row].grapheme_at_col(self.cursor_col);
+        let last = self.last_row();
+        let last_len = self.rows[last].graphemes.len();
+        if row == last && index == last_len - 1 {
+            return;
+        }
+        let (end_row, end_grapheme, _) =
+            self.iter_graphemes(row, index, last, last_len).nth(1).unwrap();
+        self.splice(row, index, end_row, end_grapheme, "");
+    }
+
+    /// Deletes the grapheme preceding the one under the cursor. Does nothing
+    /// if the cursor is on the first grapheme of the first line.
+    fn backspace(&mut self) {
+        let row = self.cursor_row;
+        let index = self.rows[row].grapheme_at_col(self.cursor_col);
+        if let Some((prev_row, prev_grapheme, _)) =
+            self.iter_graphemes(self.first_row(), 0, row, index).rev().next()
+        {
+            self.splice(prev_row, prev_grapheme, row, index, "");
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -839,6 +866,66 @@ That on himself such murd'rous shame commits.
         input.cursor_col = input.rows[input.first_row()].width;
         input.paste("XY");
         assert_eq!(input.get_text(), "XYabXYcdefXY\n");
+    }
+
+    #[test]
+    fn test_delete() {
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abcde");
+        input.set_first_visible_row(input.first_row());
+        assert_eq!(input.get_text(), "abcde\n");
+
+        // Delete a grapheme in the middle of a line.
+        input.cursor_row = input.first_row();
+        input.cursor_col = 2;
+        input.delete();
+        assert_eq!(input.get_text(), "abde\n");
+
+        // Delete at the end of the last line does nothing.
+        input.cursor_col = input.rows[input.first_row()].width;
+        input.delete();
+        assert_eq!(input.get_text(), "abde\n");
+
+        // Delete a newline, merging lines.
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abc\ndef");
+        input.set_first_visible_row(input.first_row());
+        let rows = row_ids(&input);
+        input.cursor_row = rows[0];
+        input.cursor_col = input.rows[rows[0]].width;
+        input.delete();
+        assert_eq!(input.get_text(), "abcdef\n");
+        assert_eq!(input.num_lines(), 1);
+    }
+
+    #[test]
+    fn test_backspace() {
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abcde");
+        input.set_first_visible_row(input.first_row());
+        assert_eq!(input.get_text(), "abcde\n");
+
+        // Backspace a grapheme in the middle of a line.
+        input.cursor_row = input.first_row();
+        input.cursor_col = 3;
+        input.backspace();
+        assert_eq!(input.get_text(), "abde\n");
+
+        // Backspace at the start of the first line does nothing.
+        input.cursor_col = 0;
+        input.backspace();
+        assert_eq!(input.get_text(), "abde\n");
+
+        // Backspace at the start of a line merges with the previous line.
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abc\ndef");
+        input.set_first_visible_row(input.first_row());
+        let rows = row_ids(&input);
+        input.cursor_row = rows[1];
+        input.cursor_col = 0;
+        input.backspace();
+        assert_eq!(input.get_text(), "abcdef\n");
+        assert_eq!(input.num_lines(), 1);
     }
 
     #[test]
