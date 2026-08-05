@@ -50,7 +50,6 @@ impl InputLine {
             num_rows += 1;
         }
 
-        rows[last_row].is_last = true;
         lines[line].first_row = first_row;
         lines[line].last_row = last_row;
         lines[line].num_rows = num_rows;
@@ -75,14 +74,13 @@ struct InputRow {
     next: Id<InputRow>,
     /// Previous visual row
     prev: Id<InputRow>,
-    /// Graphemes
+    /// Graphemes. The final row of a line ends with a zero-width newline
+    /// grapheme.
     graphemes: Vec<InputGrapheme>,
     /// Width in columns
     width: usize,
     /// Text for rendering
     preformatted: String,
-    /// True if row is last in its line
-    is_last: bool,
 }
 
 impl std::fmt::Display for InputRow {
@@ -100,7 +98,6 @@ impl InputRow {
             graphemes: vec![],
             width: 0,
             preformatted: String::new(),
-            is_last: false,
         }
     }
 
@@ -125,44 +122,18 @@ impl InputRow {
             graphemes,
             width: column as usize,
             preformatted,
-            is_last: false,
-        }
-    }
-
-    /// Returns the index of the final grapheme in the row which is visitable
-    /// with the movement keys. For the last row in a line, this is one past
-    /// the last grapheme in the row. Else, it is the last grapheme in the row.
-    fn final_visitable_grapheme(&self) -> usize {
-        if self.is_last {
-            self.graphemes.len()
-        } else {
-            // Only last row can be empty
-            self.graphemes.len() - 1
-        }
-    }
-
-    /// Returns the final column in the row which is visitable with the
-    /// movement keys. For the last row in a line, this will be the column
-    /// after the last grapheme. For other rows, this is the first column of
-    /// the last grapheme.
-    fn final_visitable_column(&self) -> usize {
-        if self.is_last {
-            self.width
-        } else {
-            // Only last row can be empty
-            self.graphemes.last().unwrap().column as usize
         }
     }
 
     /// Finds the index of the grapheme at a given column within a row. If the
-    /// column is past the end, then the final grapheme in the row. For the
-    /// final row in the line, this returns one past the end of the grapheme
-    /// array, which is the logical index of the newline.
+    /// column is past the end, returns the final visitable grapheme in the
+    /// row. (The zero-width newline is never matched directly, since it
+    /// occupies no columns.)
     fn grapheme_at_col(&self, col: usize) -> usize {
         self.graphemes
             .iter()
             .position(|grapheme| col < grapheme.column as usize + grapheme.width as usize)
-            .unwrap_or_else(|| self.final_visitable_grapheme())
+            .unwrap_or_else(|| self.graphemes.len() - 1)
     }
 }
 
@@ -198,7 +169,7 @@ impl InputBox {
         });
         let first = rows.insert(InputRow {
             line,
-            is_last: true,
+            graphemes: vec![InputGrapheme { data: "\n".into(), column: 0, width: 0 }],
             ..InputRow::new()
         });
 
@@ -287,9 +258,6 @@ impl InputBox {
             for g in &row.graphemes {
                 out.push_str(&g.data);
             }
-            if row.is_last {
-                out.push('\n');
-            }
         }
         out
     }
@@ -374,6 +342,9 @@ impl InputBox {
         }
 
         self.remove_line(line);
+        // Remove the line's trailing newline grapheme
+        debug_assert!(out.ends_with('\n'));
+        out.pop();
         self.insert_text(prev, &out);
 
         // Recompute cursor row/column
@@ -475,7 +446,7 @@ impl InputBox {
                 return;
             }
             self.cursor_row = self.rows[self.cursor_row].prev;
-            self.cursor_col = self.rows[self.cursor_row].final_visitable_column();
+            self.cursor_col = self.rows[self.cursor_row].graphemes.len() - 1;
         } else {
             self.cursor_col = self.rows[self.cursor_row].graphemes[index - 1].column as usize;
         }
@@ -486,7 +457,7 @@ impl InputBox {
     fn move_right(&mut self) {
         let row = &self.rows[self.cursor_row];
         let index = row.grapheme_at_col(self.cursor_col);
-        if index == row.final_visitable_grapheme() {
+        if index == row.graphemes.len() - 1 {
             if self.cursor_row == self.last_row() {
                 return;
             }
@@ -494,11 +465,7 @@ impl InputBox {
             self.cursor_col = 0;
             return;
         } else {
-            // Handles case of moving one past end of final row
-            self.cursor_col = self.rows[self.cursor_row]
-                .graphemes
-                .get(index + 1)
-                .map_or(self.rows[self.cursor_row].width, |g| g.column as usize);
+            self.cursor_col = self.rows[self.cursor_row].graphemes[index + 1].column as usize;
         }
     }
 }
@@ -565,7 +532,13 @@ That on himself such murd'rous shame commits.
 
     fn row(is_last: bool, text: &str) -> InputRow {
         let mut row = InputRow::from_row(truncate_line(80, text));
-        row.is_last = is_last;
+        if is_last {
+            row.graphemes.push(InputGrapheme {
+                data: "\n".into(),
+                column: row.width as u32,
+                width: 0,
+            });
+        }
         row
     }
 

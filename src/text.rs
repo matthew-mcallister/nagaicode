@@ -31,11 +31,19 @@ pub struct Grapheme {
 }
 
 impl Grapheme {
+    /// Zero-width newline grapheme. Marks the end of a line.
+    pub fn newline() -> Self {
+        Self {
+            data: CompactString::new("\n"),
+            width: 0,
+        }
+    }
+
     pub fn formatted(&self) -> &str {
-        if self.data == "\t" {
-            &SPACES[..self.width as usize]
-        } else {
-            &self.data
+        match &self.data[..] {
+            "\t" => &SPACES[..self.width as usize],
+            "\n" => "",
+            _ => &self.data,
         }
     }
 }
@@ -170,6 +178,7 @@ fn find_break_points(line: &str) -> VecDeque<Breakpoint> {
 /// - Overflowing words will be placed on the next line, unless they are
 ///   already at the beginning of the line
 /// - Words too long to fit on one line will be broken where they overflow
+/// - The final row ends with a zero-width newline grapheme
 pub fn wrap_line(max_width: usize, line: &str) -> Vec<Row> {
     assert!(max_width >= TAB_WIDTH);
     let break_points = find_break_points(line);
@@ -178,7 +187,9 @@ pub fn wrap_line(max_width: usize, line: &str) -> Vec<Row> {
     for g in line.graphemes(true) {
         seg.push(g);
     }
-    seg.finish()
+    let mut rows = seg.finish();
+    rows.last_mut().unwrap().graphemes.push(Grapheme::newline());
+    rows
 }
 
 /// Truncates a single line to fit within the maximum width. Also expands tabs.
