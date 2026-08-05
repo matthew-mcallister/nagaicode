@@ -372,8 +372,8 @@ impl InputBox {
     /// the deletion range contains a trailing newline, the newline will be
     /// deleted and consecutive lines merged.
     ///
-    /// The cursor will be placed after the inserted text and the scroll window
-    /// updated appropriately.
+    /// The cursor will be placed after the inserted/deleted text and the
+    /// scroll window updated appropriately.
     // XXX: Don't think this handles case end_grapheme == graphemes.len() correctly
     fn splice(
         &mut self,
@@ -395,8 +395,7 @@ impl InputBox {
         // Why byte offset? In some cases, pasted codepoints will alter the
         // grapheme segmentation of the rest of the line. This ensures the
         // cursor still points to the same codepoint it did previously.
-        let cursor_grapheme = self.rows[self.cursor_row].grapheme_at_col(self.cursor_col);
-        let cursor_offset: usize = self.iter_graphemes(self.cursor_row, cursor_grapheme, next, 0)
+        let cursor_offset: usize = self.iter_graphemes(end_row, end_grapheme, next, 0)
             .map(|(_, _, g)| g.data.len())
             .sum();
 
@@ -739,6 +738,29 @@ That on himself such murd'rous shame commits.
             input.get_text(),
             "first\nmiddle\nsecond\nlast\na line that is way too long\n\n"
         );
+    }
+
+    #[test]
+    fn test_splice_delete_newline() {
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abc\ndef");
+        input.set_first_visible_row(input.first_row());
+        assert_eq!(input.get_text(), "abc\ndef\n");
+        assert_eq!(input.num_lines(), 2);
+        assert_eq!(input.num_rows(), 2);
+
+        let rows = row_ids(&input);
+        // Newline grapheme is the final (zero-width) grapheme of the first row.
+        let start_row = rows[0];
+        let start_grapheme = input.rows[start_row].graphemes.len() - 1;
+        let end_row = rows[1];
+        let end_grapheme = 0;
+
+        input.splice(start_row, start_grapheme, end_row, end_grapheme, "");
+
+        assert_eq!(input.get_text(), "abcdef\n");
+        assert_eq!(input.num_lines(), 1);
+        assert_eq!(input.num_rows(), 1);
     }
 
     #[test]
