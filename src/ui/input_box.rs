@@ -363,6 +363,7 @@ impl InputBox {
     fn set_text(&mut self, text: &str) {
         self.remove_line(self.rows[self.first_row()].line);
         self.insert_text(self.head, text);
+        self.set_first_visible_row(self.first_row());
     }
 
     /// Deletes a range of graphemes and replaces them with new text. If
@@ -759,6 +760,53 @@ That on himself such murd'rous shame commits.
         input.splice(start_row, start_grapheme, end_row, end_grapheme, "");
 
         assert_eq!(input.get_text(), "abcdef\n");
+        assert_eq!(input.num_lines(), 1);
+        assert_eq!(input.num_rows(), 1);
+    }
+
+    fn splice(
+        input: &mut InputBox,
+        start_row: usize,
+        start_grapheme: usize,
+        end_row: usize,
+        end_grapheme: usize,
+        inserted_text: &str,
+    ) -> String {
+        let rows = row_ids(input);
+        input.splice(
+            rows[start_row],
+            start_grapheme,
+            rows[end_row],
+            end_grapheme,
+            inserted_text,
+        );
+        input.get_text()
+    }
+
+    #[test]
+    fn test_splice() {
+        // Replace within a single row
+        let mut input = InputBox::new(20, 8);
+        input.set_text("abcdefg");
+        assert_eq!(input.get_text(), "abcdefg\n");
+        assert_eq!(splice(&mut input, 0, 2, 0, 4, "XY"), "abXYefg\n");
+        assert_eq!(input.num_lines(), 1);
+        assert_eq!(input.num_rows(), 1);
+
+        // Replace spanning two rows
+        let mut input = InputBox::new(10, 8);
+        input.set_text("abcdefghijklmnopqrst");
+        assert_eq!(input.num_rows(), 2);
+        assert_eq!(input.get_text(), "abcdefghijklmnopqrst\n");
+        assert_eq!(splice(&mut input, 0, 2, 1, 2, "ZZ"), "abZZmnopqrst\n");
+        assert_eq!(input.num_lines(), 1);
+        assert_eq!(input.num_rows(), 2);
+
+        // Replace spanning two lines
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abcd\ndefg");
+        assert_eq!(input.get_text(), "abcd\ndefg\n");
+        assert_eq!(splice(&mut input, 0, 3, 1, 2, "XY"), "abcXYfg\n");
         assert_eq!(input.num_lines(), 1);
         assert_eq!(input.num_rows(), 1);
     }
