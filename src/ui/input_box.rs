@@ -167,7 +167,7 @@ impl InputRow {
 }
 
 #[derive(Debug)]
-struct InputBox {
+pub struct InputBox {
     lines: Arena<InputLine>,
     rows: Arena<InputRow>,
     width: usize,
@@ -182,7 +182,7 @@ struct InputBox {
 }
 
 impl InputBox {
-    fn new(width: usize, max_height: usize) -> Self {
+    pub fn new(width: usize, max_height: usize) -> Self {
         let mut lines = Arena::new();
         let mut rows = Arena::new();
 
@@ -221,12 +221,12 @@ impl InputBox {
         }
     }
 
-    fn num_rows(&self) -> usize {
+    pub fn num_rows(&self) -> usize {
         // Subtract header node
         self.rows.len() - 1
     }
 
-    fn num_lines(&self) -> usize {
+    pub fn num_lines(&self) -> usize {
         self.lines.len()
     }
 
@@ -323,12 +323,12 @@ impl InputBox {
             .unwrap_or(self.first_row());
     }
 
-    fn height(&self) -> usize {
+    pub fn height(&self) -> usize {
         std::cmp::min(self.max_height, self.num_rows())
     }
 
     /// Computes text of all lines.
-    fn get_text(&self) -> String {
+    pub fn get_text(&self) -> String {
         let mut out = String::new();
         for (_, row) in self.iter_rows() {
             for g in &row.graphemes {
@@ -462,7 +462,7 @@ impl InputBox {
     }
 
     /// Pastes raw text at the cursor position.
-    fn paste(&mut self, pasted_text: &str) {
+    pub fn paste(&mut self, pasted_text: &str) {
         if pasted_text.is_empty() { return; }
         let pos = self.cursor_pos();
         self.splice(pos, pos, pasted_text);
@@ -471,7 +471,7 @@ impl InputBox {
     /// Scrolls the visible window up one row. If the cursor is at the final
     /// visible row, move the cursor up one row. Does nothing if already at the
     /// first overall row.
-    fn scroll_up(&mut self) {
+    pub fn scroll_up(&mut self) {
         if self.first_visible_row == self.first_row() {
             return;
         }
@@ -487,7 +487,7 @@ impl InputBox {
     /// Scrolls the visible window up one row. If the cursor is at the first
     /// visible row, move the cursor down one row. Does nothing if already at
     /// the last overall row.
-    fn scroll_down(&mut self) {
+    pub fn scroll_down(&mut self) {
         let last_visible = self.last_visible_row;
         if last_visible == self.last_row() {
             return;
@@ -503,7 +503,7 @@ impl InputBox {
     /// Moves the cursor up one row. Preserves the column of the cursor. If
     /// already at the very first row, moves to the start of the line. Scrolls
     /// the visible window if at the top.
-    fn move_up(&mut self) {
+    pub fn move_up(&mut self) {
         if self.cursor_row == self.first_row() {
             self.cursor_col = 0;
             return;
@@ -520,7 +520,7 @@ impl InputBox {
     /// Moves the cursor down one row. Preserves the column of the cursor. If
     /// already at the very last row, moves to the end of the line. Scrolls the
     /// visible window if at the bottom.
-    fn move_down(&mut self) {
+    pub fn move_down(&mut self) {
         if self.cursor_row == self.last_row() {
             self.cursor_col = self.rows[self.cursor_row].width;
             return;
@@ -537,7 +537,7 @@ impl InputBox {
 
     /// Moves the cursor left by one grapheme. If at the start of a row, goes
     /// to the end of the previous row.
-    fn move_left(&mut self) {
+    pub fn move_left(&mut self) {
         let pos = self.cursor_pos();
         if let Some((prev, g)) =
             self.iter_graphemes(GraphemePos(self.first_row(), 0), pos).rev().next()
@@ -550,7 +550,7 @@ impl InputBox {
 
     /// Moves the cursor right by one grapheme. If at the end of a row, goes to
     /// the start of the next row.
-    fn move_right(&mut self) {
+    pub fn move_right(&mut self) {
         let pos = self.cursor_pos();
         let end = GraphemePos(self.last_row(), self.rows[self.last_row()].graphemes.len());
         if let Some((next, g)) = self.iter_graphemes(pos, end).nth(1) {
@@ -562,7 +562,7 @@ impl InputBox {
 
     /// Deletes the grapheme under the cursor. Does nothing if the cursor is
     /// on the last grapheme of the last line.
-    fn delete(&mut self) {
+    pub fn delete(&mut self) {
         let last = self.last_row();
         let last_len = self.rows[last].graphemes.len();
         let start = self.cursor_pos();
@@ -575,7 +575,7 @@ impl InputBox {
 
     /// Deletes the grapheme preceding the one under the cursor. Does nothing
     /// if the cursor is on the first grapheme of the first line.
-    fn backspace(&mut self) {
+    pub fn backspace(&mut self) {
         let pos = self.cursor_pos();
         if let Some((prev_pos, _)) =
             self.iter_graphemes(GraphemePos(self.first_row(), 0), pos).rev().next()
@@ -681,6 +681,71 @@ impl<'i> DoubleEndedIterator for InputGraphemeIter<'i> {
 }
 
 impl<'i> std::iter::FusedIterator for InputGraphemeIter<'i> {}
+
+/// Controls rendering of the input box.
+///
+/// `Top`: The first row of the input is fixed and it grows down.
+/// `Bottom`: The last row of the input is fixed and it grows up.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Anchor {
+    Top,
+    Bottom,
+}
+
+/// Draws the currently visible rows of the input box. Also sets the cursor
+/// position.
+#[derive(Debug)]
+pub struct DrawInputBox<'i> {
+    pub input: &'i InputBox,
+    pub x: u16,
+    pub y: u16,
+    pub anchor: Anchor,
+}
+
+impl<'p> crossterm::Command for DrawInputBox<'p> {
+    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+        use crossterm::cursor::MoveTo;
+        use crossterm::style::{Attribute, ContentStyle, PrintStyledContent, StyledContent};
+
+        let height = self.input.height();
+        let prev = self.input.rows[self.input.first_visible_row].prev;
+        let mut row_y = match self.anchor {
+            Anchor::Top => self.y,
+            Anchor::Bottom => self.y + (height - 1) as u16,
+        };
+        let mut cursor_y = None;
+
+        for (id, row) in self.input.iter_range(prev, self.input.last_visible_row) {
+            crossterm::Command::write_ansi(&MoveTo(self.x, row_y), f)?;
+            let sc = StyledContent::new(ContentStyle::default(), row.preformatted.as_str());
+            crossterm::Command::write_ansi(&PrintStyledContent(sc), f)?;
+
+            if id == self.input.cursor_row {
+                cursor_y = Some(row_y);
+            }
+
+            row_y = match self.anchor {
+                Anchor::Top => row_y + 1,
+                Anchor::Bottom => row_y - 1,
+            };
+        }
+
+        // Draw the cursor block at the end.
+        if let Some(cursor_y) = cursor_y {
+            crossterm::Command::write_ansi(
+                &MoveTo(self.x + self.input.cursor_col as u16, cursor_y),
+                f,
+            )?;
+            let style = ContentStyle {
+                attributes: Attribute::Reverse.into(),
+                ..ContentStyle::default()
+            };
+            let sc = StyledContent::new(style, " ");
+            crossterm::Command::write_ansi(&PrintStyledContent(sc), f)?;
+        }
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
