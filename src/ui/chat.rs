@@ -19,6 +19,7 @@ use crate::ui::input_box::{Anchor, DrawInputBox, InputBox};
 const MARGIN: u16 = 2;
 /// Rows/columns of interior padding inside the grey box.
 const PADDING: u16 = 1;
+const MAX_HEIGHT: u16 = 24;
 
 /// Width of the input content: terminal minus margins and padding on each side.
 fn content_width(w: u16) -> usize {
@@ -38,7 +39,7 @@ struct Chat {
 impl Chat {
     fn new(w: u16, h: u16) -> Self {
         Self {
-            input: InputBox::new(content_width(w), 16),
+            input: InputBox::new(content_width(w), 24),
         }
     }
 
@@ -103,8 +104,23 @@ impl Chat {
     fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
         let (w, h) = size()?;
 
-        // Clear everything then redraw the input box region.
+        // Clear everything, then repaint the whole screen with the base
+        // background color before drawing the input box region.
         queue!(stdout, Clear(ClearType::All))?;
+
+        let base = DrawRectangle {
+            x: 0,
+            y: 0,
+            width: w,
+            height: h,
+            style: ContentStyle {
+                background_color: Some(
+                    THEME_DARK.get_background_color(BackgroundColorName::Base),
+                ),
+                ..Default::default()
+            },
+        };
+        queue!(stdout, base)?;
 
         // The grey box is inset by MARGIN rows/columns from the terminal edges.
         // Its content sits PADDING rows/columns inside the box, anchored to the
@@ -147,8 +163,8 @@ pub fn run() -> AnyResult<()> {
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, DisableLineWrap, Hide)?;
 
-    let (w, h) = size()?;
-    let mut chat = Chat::new(w, h);
+    let (w, _) = size()?;
+    let mut chat = Chat::new(w, MAX_HEIGHT);
     chat.draw(&mut stdout)?;
 
     let mut quit = false;

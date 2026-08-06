@@ -69,17 +69,17 @@ impl Theme {
 
 // Stock Tailwind CSS colors
 const WHITE: Color = rgb(255, 255, 255);
-const GREY_50: Color = rgb(249, 250, 251);
-const GREY_100: Color = rgb(243, 244, 246);
-const GREY_200: Color = rgb(229, 231, 235);
-const GREY_300: Color = rgb(209, 213, 219);
-const GREY_400: Color = rgb(156, 163, 175);
-const GREY_500: Color = rgb(107, 114, 128);
-const GREY_600: Color = rgb(75, 85, 99);
-const GREY_700: Color = rgb(55, 65, 81);
-const GREY_800: Color = rgb(31, 41, 55);
-const GREY_900: Color = rgb(17, 24, 39);
-const GREY_950: Color = rgb(3, 7, 18);
+const GREY_50: Color = rgb(250, 250, 249);
+const GREY_100: Color = rgb(245, 245, 244);
+const GREY_200: Color = rgb(231, 229, 228);
+const GREY_300: Color = rgb(214, 211, 209);
+const GREY_400: Color = rgb(168, 162, 158);
+const GREY_500: Color = rgb(120, 113, 108);
+const GREY_600: Color = rgb(87, 83, 78);
+const GREY_700: Color = rgb(68, 64, 60);
+const GREY_800: Color = rgb(41, 37, 36);
+const GREY_900: Color = rgb(28, 25, 23);
+const GREY_950: Color = rgb(12, 10, 9);
 const BLACK: Color = rgb(0, 0, 0);
 
 /// Only available theme for now
