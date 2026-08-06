@@ -4,6 +4,7 @@ use compact_str::CompactString;
 use crossterm::style::ContentStyle;
 
 use crate::arena::{Arena, Id};
+use crate::canvas::Canvas;
 use crate::text::{Row, strip_cr, wrap_line};
 
 /// A pair `(row_id, grapheme_index)` pointing to the location of a grapheme.
@@ -79,7 +80,7 @@ impl InputLine {
 struct InputGrapheme {
     data: CompactString,
     width: u8,
-    column: u32,
+    column: u16,
 }
 
 /// Visual/word-wrapped row
@@ -129,7 +130,7 @@ impl InputRow {
 
     fn from_row(row: Row) -> Self {
         let mut graphemes = Vec::with_capacity(row.graphemes.len());
-        let mut column: u32 = 0;
+        let mut column: u16 = 0;
         let mut preformatted = String::new();
         for g in row.graphemes {
             preformatted.push_str(g.formatted());
@@ -139,7 +140,7 @@ impl InputRow {
                 width,
                 column,
             });
-            column += width as u32;
+            column += width as u16;
         }
         InputRow {
             line: Id::null(),
@@ -776,64 +777,38 @@ impl<'i> DoubleEndedIterator for InputGraphemeIter<'i> {
 
 impl<'i> std::iter::FusedIterator for InputGraphemeIter<'i> {}
 
-/// Controls rendering of the input box.
-///
-/// `Top`: The first row of the input is fixed and it grows down.
-/// `Bottom`: The last row of the input is fixed and it grows up.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum Anchor {
-    Top,
-    Bottom,
-}
-
-/// Draws the currently visible rows of the input box. Also sets the cursor
-/// position.
+/// Draws the currently visible rows of the input box into a canvas, along
+/// with the cursor block.
 #[derive(Debug)]
 pub struct DrawInputBox<'i> {
     pub input: &'i InputBox,
     pub x: u16,
     pub y: u16,
-    pub anchor: Anchor,
     pub style: ContentStyle,
 }
 
-impl<'p> crossterm::Command for DrawInputBox<'p> {
-    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-        use crossterm::cursor::MoveTo;
-        use crossterm::style::{Attribute, ContentStyle, PrintStyledContent, StyledContent};
-
-        let height = self.input.height();
+impl<'i> DrawInputBox<'i> {
+    pub fn draw_to(&self, canvas: &mut Canvas) {
+        // Draw text
         let prev = self.input.rows[self.input.first_visible_row].prev;
-        let top_y = match self.anchor {
-            Anchor::Top => self.y,
-            Anchor::Bottom => self.y - (height - 1) as u16,
-        };
-        let mut cursor_y = None;
-
-        for (offset, (id, row)) in self.input.iter_range(prev, self.input.last_visible_row).enumerate() {
+        let top_y = self.y;
+        let mut cursor_row = u16::MAX;
+        for (offset, (row_id, row)) in self.input
+            .iter_range(prev, self.input.last_visible_row)
+            .enumerate()
+        {
             let row_y = top_y + offset as u16;
-            crossterm::Command::write_ansi(&MoveTo(self.x, row_y), f)?;
-            let sc = StyledContent::new(self.style, row.preformatted.as_str());
-            crossterm::Command::write_ansi(&PrintStyledContent(sc), f)?;
-
-            if id == self.input.cursor_row {
-                cursor_y = Some(row_y);
+            canvas.write_str(self.x, row_y, &row.preformatted, self.style);
+            if row_id == self.input.cursor_row {
+                cursor_row = row_y;
             }
         }
 
-        // Draw the cursor block over the grapheme at the cursor position.
-        if let Some(cursor_y) = cursor_y {
-            let pos = self.input.cursor_pos();
-            let column = self.input.rows[pos.row()].graphemes[pos.grapheme()].column;
-            crossterm::Command::write_ansi(&MoveTo(self.x + column as u16, cursor_y), f)?;
-            let style = ContentStyle {
-                attributes: Attribute::Reverse.into(),
-                ..self.style
-            };
-            let sc = StyledContent::new(style, " ");
-            crossterm::Command::write_ansi(&PrintStyledContent(sc), f)?;
-        }
-        Ok(())
+        // Draw cursor
+        let row = &self.input.rows[self.input.cursor_row];
+        let g = row.grapheme_at_col(self.input.cursor_col);
+        let column = row.graphemes[g].column as u16;
+        canvas.set_cursor_pos(self.x + column, cursor_row);
     }
 }
 
@@ -863,7 +838,7 @@ That on himself such murd'rous shame commits.
         if is_last {
             row.graphemes.push(InputGrapheme {
                 data: "\n".into(),
-                column: row.width as u32,
+                column: row.width as u16,
                 width: 0,
             });
         }

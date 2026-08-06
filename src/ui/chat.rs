@@ -1,50 +1,43 @@
-use std::io::{self, Write};
+use std::io::Write;
 
 use compact_str::CompactString;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::{execute, queue};
+use crossterm::execute;
 use crossterm::style::ContentStyle;
 use crossterm::terminal::{
-    size, Clear, ClearType, DisableLineWrap, EnableLineWrap, EnterAlternateScreen,
-    LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+    enable_raw_mode, size,
 };
 
+use crate::canvas::Canvas;
 use crate::error::AnyResult;
-use crate::render::DrawRectangle;
-use crate::style::{BackgroundColorName, THEME_DARK};
-use crate::ui::input_box::{Anchor, DrawInputBox, InputBox};
+use crate::style::{THEME_DARK, Theme};
+use crate::ui::input_box::{DrawInputBox, InputBox};
 
-/// Rows/columns of blank space around the outer grey box.
-const MARGIN: u16 = 2;
-/// Rows/columns of interior padding inside the grey box.
-const PADDING: u16 = 1;
-const MAX_HEIGHT: u16 = 24;
-
-/// Width of the input content: terminal minus margins and padding on each side.
-fn content_width(w: u16) -> usize {
-    (w.saturating_sub(2 * (MARGIN + PADDING)) as usize).max(4)
-}
-
-/// Maximum number of visible input rows: content fits inside the box, which
-/// fits inside the terminal minus top/bottom margins.
-fn content_height(h: u16) -> usize {
-    (h.saturating_sub(2 * (MARGIN + PADDING)) as usize).max(1)
-}
+const TEXT_INPUT_MAX_HEIGHT: u16 = 24;
 
 struct Chat {
+    width: u16,
+    height: u16,
+    theme: &'static Theme,
     input: InputBox,
 }
 
 impl Chat {
-    fn new(w: u16, h: u16) -> Self {
+    fn new(w: u16, h: u16, theme: &'static Theme) -> Self {
         Self {
-            input: InputBox::new(content_width(w), h as usize),
+            width: w,
+            height: h,
+            theme,
+            input: InputBox::new(w as usize - 8, TEXT_INPUT_MAX_HEIGHT as _),
         }
     }
 
-    fn resize(&mut self, w: u16, h: u16) {
-        self.input.set_width(content_width(w));
+    fn resize(&mut self, w: u16, _h: u16) {
+        self.width = w;
+        self.height = w;
+        self.input.set_width(w as usize - 8);
     }
 
     /// Handles a key event. Returns true if the app should quit.
@@ -102,64 +95,34 @@ impl Chat {
     }
 
     fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
-        let (w, h) = size()?;
+        let mut canvas = Canvas::new(self.width, self.height);
 
-        // Clear everything, then repaint the whole screen with the base
-        // background color before drawing the input box region.
-        queue!(stdout, Clear(ClearType::All))?;
+        // Clear screen
+        canvas.clear_all(ContentStyle {
+            background_color: Some(
+                self.theme.bg_base,
+            ),
+            ..Default::default()
+        });
 
-        let base = DrawRectangle {
-            x: 0,
-            y: 0,
-            width: w,
-            height: h,
-            style: ContentStyle {
-                background_color: Some(
-                    THEME_DARK.get_background_color(BackgroundColorName::Base),
-                ),
-                ..Default::default()
-            },
+        let x_0 = 2;
+        let x_1 = self.width - 2;
+        let y_1 = self.height - 1;
+        let y_0 = y_1 - self.input.height() as u16 - 2;
+        let style = ContentStyle {
+            background_color: Some(self.theme.bg_input_box),
+            ..Default::default()
         };
-        queue!(stdout, base)?;
-
-        // The grey box is inset by MARGIN rows/columns from the terminal edges.
-        // Its content sits PADDING rows/columns inside the box, anchored to the
-        // bottom.
-        let content_height = self.input.height() as u16;
-        let content_x: u16 = MARGIN + PADDING;
-        let content_y = h.saturating_sub(MARGIN + PADDING + 1);
-        let content_top = content_y.saturating_sub(content_height - 1);
-
-        let rect = DrawRectangle {
-            x: MARGIN,
-            y: content_top.saturating_sub(PADDING),
-            width: w.saturating_sub(2 * MARGIN),
-            height: content_height + 2 * PADDING,
-            style: ContentStyle {
-                background_color: Some(
-                    THEME_DARK.get_background_color(BackgroundColorName::InputBox),
-                ),
-                ..Default::default()
-            },
-        };
-        queue!(stdout, rect)?;
-
-        let input = DrawInputBox {
+        canvas.clear_rect(x_0, y_0, x_1 - x_0, y_1 - y_0, style);
+        let draw_input = DrawInputBox {
             input: &self.input,
-            x: content_x,
-            y: content_y,
-            anchor: Anchor::Bottom,
-            style: ContentStyle {
-                foreground_color: THEME_DARK.text_base.foreground_color,
-                background_color: Some(
-                    THEME_DARK.get_background_color(BackgroundColorName::InputBox),
-                ),
-                ..Default::default()
-            },
+            x: x_0 + 2,
+            y: y_0 + 1,
+            style: self.theme.text_base,
         };
-        queue!(stdout, input)?;
+        draw_input.draw_to(&mut canvas);
 
-        stdout.flush()?;
+        execute!(stdout, canvas)?;
         Ok(())
     }
 }
@@ -167,12 +130,11 @@ impl Chat {
 /// Runs the terminal app.
 pub fn run() -> AnyResult<()> {
     enable_raw_mode()?;
-    // Use a huge buffer to avoid flicker
-    let mut stdout = io::BufWriter::with_capacity(1024 * 1024, io::stdout());
+    let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen, DisableLineWrap, Hide)?;
 
-    let (w, _) = size()?;
-    let mut chat = Chat::new(w, MAX_HEIGHT);
+    let (w, h) = size()?;
+    let mut chat = Chat::new(w, h, &THEME_DARK);
     chat.draw(&mut stdout)?;
 
     let mut quit = false;
