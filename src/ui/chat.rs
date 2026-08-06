@@ -71,6 +71,7 @@ impl Chat {
                 false
             }
             KeyCode::Tab => {
+                // XXX: Maybe should expand to spaces when input via keyboard
                 self.input.paste("\t");
                 false
             }
@@ -96,6 +97,14 @@ impl Chat {
             }
             KeyCode::Down => {
                 self.input.move_down(1);
+                false
+            }
+            KeyCode::PageUp => {
+                self.input.move_up(self.input.max_height());
+                false
+            }
+            KeyCode::PageDown => {
+                self.input.move_down(self.input.max_height());
                 false
             }
             _ => false,

@@ -471,6 +471,10 @@ impl InputBox {
         self.fit_viewport_on_resize(cursor_offset_in_viewport as usize);
     }
 
+    pub fn max_height(&self) -> usize {
+        self.max_height
+    }
+
     /// Updates the maximum viewport size
     pub fn set_max_height(&mut self, max_height: usize) {
         if max_height == 0 {
