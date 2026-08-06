@@ -39,7 +39,7 @@ struct Chat {
 impl Chat {
     fn new(w: u16, h: u16) -> Self {
         Self {
-            input: InputBox::new(content_width(w), 24),
+            input: InputBox::new(content_width(w), h as usize),
         }
     }
 
@@ -160,7 +160,8 @@ impl Chat {
 /// Runs the terminal app.
 pub fn run() -> AnyResult<()> {
     enable_raw_mode()?;
-    let mut stdout = io::stdout();
+    // Use a huge buffer to avoid flicker
+    let mut stdout = io::BufWriter::with_capacity(1024 * 1024, io::stdout());
     execute!(stdout, EnterAlternateScreen, DisableLineWrap, Hide)?;
 
     let (w, _) = size()?;
