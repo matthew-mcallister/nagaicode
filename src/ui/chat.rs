@@ -82,18 +82,11 @@ impl Chat {
                 self.input.move_down();
                 false
             }
-            KeyCode::PageUp => {
-                self.input.scroll_up();
-                false
-            }
-            KeyCode::PageDown => {
-                self.input.scroll_down();
-                false
-            }
             _ => false,
         }
     }
 
+    // TODO: cap redraw frequency
     fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
         let mut canvas = Canvas::new(self.width, self.height);
 

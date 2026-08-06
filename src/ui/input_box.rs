@@ -173,12 +173,12 @@ pub struct InputBox {
     lines: Arena<InputLine>,
     rows: Arena<InputRow>,
     width: usize,
-    /// Maximum number of visible rows
+    /// Maximum viewport size
     max_height: usize,
     /// Head of circularly linked list. Contains no real data.
     head: Id<InputRow>,
-    first_visible_row: Id<InputRow>,
-    last_visible_row: Id<InputRow>,
+    viewport_top: Id<InputRow>,
+    viewport_bottom: Id<InputRow>,
     cursor_row: Id<InputRow>,
     cursor_col: usize,
 }
@@ -216,8 +216,8 @@ impl InputBox {
             width,
             max_height,
             head,
-            first_visible_row: first,
-            last_visible_row: first,
+            viewport_top: first,
+            viewport_bottom: first,
             cursor_row: first,
             cursor_col: 0,
         }
@@ -305,39 +305,59 @@ impl InputBox {
         self.rows[self.rows[self.lines[line].last_row].next].line
     }
 
-    /// Attempts to set the scroll window region based on first row while
-    /// preserving the total number of visible rows.
-    fn set_first_visible_row(&mut self, first_visible_row: Id<InputRow>) {
-        let prev = self.rows[first_visible_row].prev;
-        self.first_visible_row = first_visible_row;
+    /// Attempts to set the viewport region based on first row.
+    fn set_viewport_top(&mut self, viewport_top: Id<InputRow>) {
+        let prev = self.rows[viewport_top].prev;
+        self.viewport_top = viewport_top;
         if let Some(row) = self
             .iter_range(prev, self.last_row())
             .nth(self.max_height - 1)
             .map(|(id, _)| id)
         {
-            self.last_visible_row = row;
-        } else if self.first_visible_row != self.first_row() {
-            self.set_last_visible_row(self.last_row());
+            self.viewport_bottom = row;
+        } else if self.viewport_top != self.first_row() {
+            // Make sure we don't shrink the viewport
+            self.set_viewport_bottom(self.last_row());
         } else {
-            self.last_visible_row = self.last_row()
+            self.viewport_bottom = self.last_row()
         }
     }
 
-    /// Attempts to set the scroll window region based on last row while
-    /// preserving the total number of visible rows.
-    fn set_last_visible_row(&mut self, last_visible_row: Id<InputRow>) {
-        self.last_visible_row = last_visible_row;
+    /// Attempts to set the viewport region based on last row.
+    fn set_viewport_bottom(&mut self, viewport_bottom: Id<InputRow>) {
+        self.viewport_bottom = viewport_bottom;
         if let Some(row) = self
-            .iter_range(self.head, self.last_visible_row)
+            .iter_range(self.head, self.viewport_bottom)
             .rev()
             .nth(self.max_height - 1)
             .map(|(id, _)| id)
         {
-            self.first_visible_row = row
-        } else if self.last_visible_row != self.last_row() {
-            self.set_first_visible_row(self.first_row());
+            self.viewport_top = row
+        } else if self.viewport_bottom != self.last_row() {
+            // Make sure we don't shrink the viewport
+            self.set_viewport_top(self.first_row());
         } else {
-            self.first_visible_row = self.first_row();
+            self.viewport_top = self.first_row();
+        }
+    }
+
+    /// Recomputes the viewport after moving the cursor. Previous viewport
+    /// bounds must be computed in advance.
+    fn recompute_viewport(
+        &mut self,
+        base: Id<InputRow>,
+        prev_top: isize,
+        prev_bottom: isize,
+    ) {
+        let cursor = self.row_diff(base, self.cursor_row);
+        if cursor > prev_top {
+            self.set_viewport_bottom(self.cursor_row);
+        } else if cursor < prev_bottom {
+            self.set_viewport_top(self.cursor_row);
+        } else {
+            let bottom = self.row_offset(base, prev_bottom)
+                .unwrap_or(self.last_row());
+            self.set_viewport_bottom(bottom);
         }
     }
 
@@ -412,7 +432,7 @@ impl InputBox {
             text = &text[..text.len() - 1];
         }
         self.insert_text(self.head, text);
-        self.set_first_visible_row(self.first_row());
+        self.set_viewport_top(self.first_row());
         self.cursor_row = self.first_row();
         self.cursor_col = 0;
     }
@@ -430,9 +450,9 @@ impl InputBox {
         let cursor_index = self
             .iter_graphemes(GraphemePos(self.first_row(), 0), self.cursor_pos())
             .count();
-        // Offset of the cursor within the visible window, preserved across the
+        // Offset of the cursor within the viewport, preserved across the
         // re-wrap when possible.
-        let cursor_offset_in_window = self.row_diff(self.first_visible_row, self.cursor_row);
+        let cursor_offset_in_viewport = self.row_diff(self.viewport_top, self.cursor_row);
 
         self.width = width;
         self.set_text(&text);
@@ -448,28 +468,28 @@ impl InputBox {
             self.cursor_col = col;
         }
 
-        self.fit_window(cursor_offset_in_window as usize);
+        self.fit_viewport_on_resize(cursor_offset_in_viewport as usize);
     }
 
-    /// Updates the maximum number of visible rows.
+    /// Updates the maximum viewport size
     pub fn set_max_height(&mut self, max_height: usize) {
         if max_height == 0 {
             return;
         }
         self.max_height = max_height;
-        self.fit_window(self.row_diff(self.first_visible_row, self.cursor_row) as usize);
+        self.fit_viewport_on_resize(self.row_diff(self.viewport_top, self.cursor_row) as usize);
     }
 
-    /// Repositions the visible window to keep the cursor in the desired row,
-    /// as long as it is possible to do so.
-    fn fit_window(&mut self, cursor_row: usize) {
+    /// Repositions the viewport to keep the cursor in the desired row, as long
+    /// as it is possible to do so.
+    fn fit_viewport_on_resize(&mut self, cursor_row: usize) {
         let k = cursor_row.min(self.max_height - 1);
 
         // Scan up k rows and check for the top
         let first = match self.row_offset(self.cursor_row, -(k as isize)) {
             Some(first) => first,
             None => {
-                self.set_first_visible_row(self.first_row());
+                self.set_viewport_top(self.first_row());
                 return;
             }
         };
@@ -477,11 +497,11 @@ impl InputBox {
         // Scan down max_height - k rows and check for the bottom
         let down = self.max_height - 1 - k;
         if self.row_offset(self.cursor_row, down as isize).is_none() {
-            self.set_last_visible_row(self.last_row());
+            self.set_viewport_bottom(self.last_row());
             return;
         }
 
-        self.set_first_visible_row(first);
+        self.set_viewport_top(first);
     }
 
     /// Deletes a range of graphemes and replaces them with new text. If
@@ -492,15 +512,15 @@ impl InputBox {
     /// merged.
     ///
     /// The cursor will be placed after the inserted/deleted text and the
-    /// scroll window updated appropriately.
+    /// viewport updated appropriately.
     fn splice(&mut self, start: GraphemePos, end: GraphemePos, inserted_text: &str) {
         let start_line = self.rows[start.row()].line;
         let end_line = self.rows[end.row()].line;
         let prev = self.rows[self.lines[start_line].first_row].prev;
         let next = self.rows[self.lines[end_line].last_row].next;
 
-        // Assume splice start point comes before last visible row
-        let last_visible_row_offset = self.row_diff(prev, self.last_visible_row);
+        // Assume splice start point comes before viewport bottom
+        let viewport_bottom_offset = self.row_diff(prev, self.viewport_bottom);
 
         // Cursor byte offset relative to end of last line.
         // Why byte offset? In some cases, pasted codepoints will alter the
@@ -549,11 +569,12 @@ impl InputBox {
         self.cursor_col = g.column as _;
         self.cursor_row = pos.row();
 
-        // Recompute view window
-        let cursor_row_offset = self.row_diff(prev, self.cursor_row);
-        let last_visible_row_offset = cursor_row_offset.max(last_visible_row_offset);
-        let row = self.row_offset(prev, last_visible_row_offset).unwrap_or(self.last_row());
-        self.set_last_visible_row(row);
+        // Recompute view viewport
+        self.recompute_viewport(
+            prev,
+            viewport_bottom_offset - self.max_height as isize,
+            viewport_bottom_offset,
+        );
     }
 
     /// Pastes raw text at the cursor position.
@@ -563,58 +584,26 @@ impl InputBox {
         self.splice(pos, pos, pasted_text);
     }
 
-    /// Scrolls the visible window up one row. If the cursor is at the final
-    /// visible row, move the cursor up one row. Does nothing if already at the
-    /// first overall row.
-    pub fn scroll_up(&mut self) {
-        if self.first_visible_row == self.first_row() {
-            return;
-        }
-
-        let last_visible = self.last_visible_row;
-        if self.cursor_row == last_visible {
-            self.cursor_row = self.rows[self.cursor_row].prev;
-        }
-        self.first_visible_row = self.rows[self.cursor_row].prev;
-        self.last_visible_row = self.rows[last_visible].prev;
-    }
-
-    /// Scrolls the visible window up one row. If the cursor is at the first
-    /// visible row, move the cursor down one row. Does nothing if already at
-    /// the last overall row.
-    pub fn scroll_down(&mut self) {
-        let last_visible = self.last_visible_row;
-        if last_visible == self.last_row() {
-            return;
-        }
-
-        if self.cursor_row == self.first_visible_row {
-            self.cursor_row = self.rows[self.cursor_row].next;
-        }
-        self.first_visible_row = self.rows[self.first_visible_row].next;
-        self.last_visible_row = self.rows[last_visible].next;
-    }
-
     /// Moves the cursor up one row. Preserves the column of the cursor. If
     /// already at the very first row, moves to the start of the line. Scrolls
-    /// the visible window if at the top.
+    /// the viewport if at the top.
     pub fn move_up(&mut self) {
         if self.cursor_row == self.first_row() {
             self.cursor_col = 0;
             return;
         }
 
-        if self.cursor_row == self.first_visible_row {
-            let last_visible = self.last_visible_row;
-            self.first_visible_row = self.rows[self.first_visible_row].prev;
-            self.last_visible_row = self.rows[last_visible].prev;
+        if self.cursor_row == self.viewport_top {
+            let bottom = self.viewport_bottom;
+            self.viewport_top = self.rows[self.viewport_top].prev;
+            self.viewport_bottom = self.rows[bottom].prev;
         }
         self.cursor_row = self.rows[self.cursor_row].prev;
     }
 
     /// Moves the cursor down one row. Preserves the column of the cursor. If
     /// already at the very last row, moves to the end of the line. Scrolls the
-    /// visible window if at the bottom.
+    /// viewport if at the bottom.
     pub fn move_down(&mut self) {
         if self.cursor_row == self.last_row() {
             self.cursor_col = self.rows[self.cursor_row].width;
@@ -622,10 +611,10 @@ impl InputBox {
         }
 
         let cursor_row = self.cursor_row;
-        let last_visible = self.last_visible_row;
-        if cursor_row == last_visible {
-            self.first_visible_row = self.rows[self.first_visible_row].next;
-            self.last_visible_row = self.rows[last_visible].next;
+        let bottom = self.viewport_bottom;
+        if cursor_row == bottom {
+            self.viewport_top = self.rows[self.viewport_top].next;
+            self.viewport_bottom = self.rows[bottom].next;
         }
         self.cursor_row = self.rows[cursor_row].next;
     }
@@ -777,8 +766,7 @@ impl<'i> DoubleEndedIterator for InputGraphemeIter<'i> {
 
 impl<'i> std::iter::FusedIterator for InputGraphemeIter<'i> {}
 
-/// Draws the currently visible rows of the input box into a canvas, along
-/// with the cursor block.
+/// Draws the viewport into a canvas, along with the cursor block.
 #[derive(Debug)]
 pub struct DrawInputBox<'i> {
     pub input: &'i InputBox,
@@ -790,11 +778,11 @@ pub struct DrawInputBox<'i> {
 impl<'i> DrawInputBox<'i> {
     pub fn draw_to(&self, canvas: &mut Canvas) {
         // Draw text
-        let prev = self.input.rows[self.input.first_visible_row].prev;
+        let prev = self.input.rows[self.input.viewport_top].prev;
         let top_y = self.y;
         let mut cursor_row = u16::MAX;
         for (offset, (row_id, row)) in self.input
-            .iter_range(prev, self.input.last_visible_row)
+            .iter_range(prev, self.input.viewport_bottom)
             .enumerate()
         {
             let row_y = top_y + offset as u16;
@@ -923,7 +911,7 @@ That on himself such murd'rous shame commits.
     fn test_splice_delete_newline() {
         let mut input = InputBox::new(80, 8);
         input.set_text("abc\ndef");
-        input.set_first_visible_row(input.first_row());
+        input.set_viewport_top(input.first_row());
         assert_eq!(input.get_text(), "abc\ndef\n");
         assert_eq!(input.num_lines(), 2);
         assert_eq!(input.num_rows(), 2);
@@ -988,7 +976,7 @@ That on himself such murd'rous shame commits.
         let mut input = InputBox::new(20, 8);
 
         input.set_text("abcdef");
-        input.set_first_visible_row(input.first_row());
+        input.set_viewport_top(input.first_row());
         assert_eq!(input.get_text(), "abcdef\n");
 
         // Paste at the beginning of the line.
@@ -1014,7 +1002,7 @@ That on himself such murd'rous shame commits.
     fn test_delete() {
         let mut input = InputBox::new(80, 8);
         input.set_text("abcde");
-        input.set_first_visible_row(input.first_row());
+        input.set_viewport_top(input.first_row());
         assert_eq!(input.get_text(), "abcde\n");
 
         // Delete a grapheme in the middle of a line.
@@ -1031,7 +1019,7 @@ That on himself such murd'rous shame commits.
         // Delete a newline, merging lines.
         let mut input = InputBox::new(80, 8);
         input.set_text("abc\ndef");
-        input.set_first_visible_row(input.first_row());
+        input.set_viewport_top(input.first_row());
         let rows = row_ids(&input);
         input.cursor_row = rows[0];
         input.cursor_col = input.rows[rows[0]].width;
@@ -1044,7 +1032,7 @@ That on himself such murd'rous shame commits.
     fn test_backspace() {
         let mut input = InputBox::new(80, 8);
         input.set_text("abcde");
-        input.set_first_visible_row(input.first_row());
+        input.set_viewport_top(input.first_row());
         assert_eq!(input.get_text(), "abcde\n");
 
         // Backspace a grapheme in the middle of a line.
@@ -1061,7 +1049,7 @@ That on himself such murd'rous shame commits.
         // Backspace at the start of a line merges with the previous line.
         let mut input = InputBox::new(80, 8);
         input.set_text("abc\ndef");
-        input.set_first_visible_row(input.first_row());
+        input.set_viewport_top(input.first_row());
         let rows = row_ids(&input);
         input.cursor_row = rows[1];
         input.cursor_col = 0;
@@ -1072,38 +1060,38 @@ That on himself such murd'rous shame commits.
 
     #[test]
     fn test_splice_scrolling() {
-        // Cursor moves out of window
+        // Cursor moves out of viewport
         let mut input = InputBox::new(80, 4);
         input.set_text(&SAMPLE[..SAMPLE.len() - 1]);
         assert_eq!(input.num_rows(), 14);
         let rows = row_ids(&input);
-        assert_eq!(input.last_visible_row, rows[3]);
+        assert_eq!(input.viewport_bottom, rows[3]);
 
         input.paste(SAMPLE);
         let rows = row_ids(&input);
         assert_eq!(rows.len(), 28);
         assert_eq!((input.cursor_row, input.cursor_col), (rows[14], 0));
-        assert_eq!(input.first_visible_row, rows[11]);
-        assert_eq!(input.last_visible_row, rows[14]);
+        assert_eq!(input.viewport_top, rows[11]);
+        assert_eq!(input.viewport_bottom, rows[14]);
 
-        // Deletion scrolls window up
+        // Deletion scrolls viewport up
         let mut input = InputBox::new(80, 4);
         input.set_text(&SAMPLE[..SAMPLE.len() - 1]);
         assert_eq!(input.num_rows(), 14);
         let rows = row_ids(&input);
         input.cursor_row = rows[13];
         input.cursor_col = 0;
-        input.set_first_visible_row(rows[10]);
-        assert_eq!(input.first_visible_row, rows[10]);
-        assert_eq!(input.last_visible_row, rows[13]);
+        input.set_viewport_top(rows[10]);
+        assert_eq!(input.viewport_top, rows[10]);
+        assert_eq!(input.viewport_bottom, rows[13]);
 
         splice(&mut input, 6, 0, 13, 0, "");
         assert_eq!(input.num_rows(), 7);
         let rows = row_ids(&input);
         assert_eq!(input.cursor_row, rows[6]);
         assert_eq!(rows.len(), 7);
-        assert_eq!(input.first_visible_row, rows[3]);
-        assert_eq!(input.last_visible_row, rows[6]);
+        assert_eq!(input.viewport_top, rows[3]);
+        assert_eq!(input.viewport_bottom, rows[6]);
 
         // No scrolling
         let mut input = InputBox::new(80, 10);
@@ -1115,52 +1103,26 @@ That on himself such murd'rous shame commits.
         let rows = row_ids(&input);
         assert_eq!(rows.len(), 15);
         assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 0));
-        assert_eq!(input.first_visible_row, rows[0]);
-        assert_eq!(input.last_visible_row, rows[9]);
+        assert_eq!(input.viewport_top, rows[0]);
+        assert_eq!(input.viewport_bottom, rows[9]);
 
         splice(&mut input, 0, 0, 1, 0, "");
         assert_eq!(input.num_rows(), 14);
         let rows = row_ids(&input);
-        assert_eq!(input.first_visible_row, rows[0]);
-        assert_eq!(input.last_visible_row, rows[9]);
+        assert_eq!(input.viewport_top, rows[0]);
+        assert_eq!(input.viewport_bottom, rows[9]);
         assert_eq!(input.get_text(), SAMPLE);
 
         // Shrink height
         splice(&mut input, 3, 0, 13, 0, "");
         assert_eq!(input.num_rows(), 4);
         let rows = row_ids(&input);
-        assert_eq!(input.first_visible_row, rows[0]);
-        assert_eq!(input.last_visible_row, rows[3]);
+        assert_eq!(input.viewport_top, rows[0]);
+        assert_eq!(input.viewport_bottom, rows[3]);
     }
 
     fn row_ids(input: &InputBox) -> Vec<Id<InputRow>> {
         input.iter_rows().map(|(id, _)| id).collect()
-    }
-
-    #[test]
-    fn test_scroll() {
-        let mut input = InputBox::new(80, 2);
-        input.set_text("one\ntwo\nthree\nfour");
-        input.set_first_visible_row(input.first_row());
-
-        let rows = row_ids(&input);
-        input.cursor_row = rows[0];
-        assert_eq!(input.last_visible_row, rows[1]);
-
-        input.scroll_down();
-        assert_eq!(input.first_visible_row, rows[1]);
-        assert_eq!(input.last_visible_row, rows[2]);
-        assert_eq!(input.cursor_row, rows[1]);
-
-        input.cursor_row = rows[2];
-        input.scroll_up();
-        assert_eq!(input.first_visible_row, rows[0]);
-        assert_eq!(input.last_visible_row, rows[1]);
-        assert_eq!(input.cursor_row, rows[1]);
-
-        input.scroll_up();
-        assert_eq!(input.first_visible_row, rows[0]);
-        assert_eq!(input.cursor_row, rows[1]);
     }
 
     #[test]
@@ -1172,12 +1134,12 @@ That on himself such murd'rous shame commits.
         assert_eq!(rows.len(), 14);
 
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
-        assert_eq!(input.first_visible_row, rows[10]);
-        assert_eq!(input.last_visible_row, rows[13]);
+        assert_eq!(input.viewport_top, rows[10]);
+        assert_eq!(input.viewport_bottom, rows[13]);
 
         input.cursor_row = rows[0];
         input.cursor_col = 10;
-        input.set_first_visible_row(rows[0]);
+        input.set_viewport_top(rows[0]);
         input.move_left();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 9));
         input.move_right();
@@ -1188,69 +1150,69 @@ That on himself such murd'rous shame commits.
         input.move_up();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
         assert_eq!(
-            (input.first_visible_row, input.last_visible_row),
+            (input.viewport_top, input.viewport_bottom),
             (rows[0], rows[3])
         );
         input.move_up();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
         assert_eq!(
-            (input.first_visible_row, input.last_visible_row),
+            (input.viewport_top, input.viewport_bottom),
             (rows[0], rows[3])
         );
         input.move_left();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
         assert_eq!(
-            (input.first_visible_row, input.last_visible_row),
+            (input.viewport_top, input.viewport_bottom),
             (rows[0], rows[3])
         );
 
         // Test last row
         input.cursor_row = rows[13];
-        input.set_first_visible_row(rows[10]);
+        input.set_viewport_top(rows[10]);
         input.move_down();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
         assert_eq!(
-            (input.first_visible_row, input.last_visible_row),
+            (input.viewport_top, input.viewport_bottom),
             (rows[10], rows[13])
         );
         input.move_down();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
         assert_eq!(
-            (input.first_visible_row, input.last_visible_row),
+            (input.viewport_top, input.viewport_bottom),
             (rows[10], rows[13])
         );
         input.move_right();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
         assert_eq!(
-            (input.first_visible_row, input.last_visible_row),
+            (input.viewport_top, input.viewport_bottom),
             (rows[10], rows[13])
         );
 
         // Test scrolling
         input.cursor_row = rows[1];
         input.cursor_col = 0;
-        input.set_first_visible_row(rows[1]);
+        input.set_viewport_top(rows[1]);
         input.move_up();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
         assert_eq!(
-            (input.first_visible_row, input.last_visible_row),
+            (input.viewport_top, input.viewport_bottom),
             (rows[0], rows[3])
         );
 
         input.cursor_row = rows[12];
         input.cursor_col = 0;
-        input.set_first_visible_row(rows[9]);
+        input.set_viewport_top(rows[9]);
         input.move_down();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 0));
         assert_eq!(
-            (input.first_visible_row, input.last_visible_row),
+            (input.viewport_top, input.viewport_bottom),
             (rows[10], rows[13])
         );
 
         // Test line endings
         input.cursor_row = rows[0];
         input.cursor_col = 35;
-        input.set_first_visible_row(rows[0]);
+        input.set_viewport_top(rows[0]);
         input.move_right();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 36));
         input.move_right();
@@ -1274,7 +1236,7 @@ That on himself such murd'rous shame commits.
     }
 
     #[test]
-    fn test_resize_preserves_window_position() {
+    fn test_resize_preserves_viewport_position() {
         let mut input = InputBox::new(80, 4);
         input.set_text("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten");
         assert_eq!(input.num_rows(), 10);
@@ -1282,8 +1244,8 @@ That on himself such murd'rous shame commits.
 
         // Window shows rows 4..7, cursor at row 6 (offset 2).
         input.cursor_row = rows[6];
-        input.set_first_visible_row(rows[4]);
-        assert_eq!(input.row_diff(input.first_visible_row, input.cursor_row), 2);
+        input.set_viewport_top(rows[4]);
+        assert_eq!(input.row_diff(input.viewport_top, input.cursor_row), 2);
 
         // Re-wrap to a narrower width. Short lines stay on one row each.
         input.set_width(40);
@@ -1291,21 +1253,21 @@ That on himself such murd'rous shame commits.
 
         let rows = row_ids(&input);
         assert_eq!(input.cursor_row, rows[6]);
-        assert_eq!(input.row_diff(input.first_visible_row, input.cursor_row), 2);
-        assert_eq!(input.row_diff(input.first_visible_row, input.last_visible_row), 3);
+        assert_eq!(input.row_diff(input.viewport_top, input.cursor_row), 2);
+        assert_eq!(input.row_diff(input.viewport_top, input.viewport_bottom), 3);
 
-        // Cursor at the top of the window stays at the top.
+        // Cursor at the top of the viewport stays at the top.
         input.cursor_row = rows[2];
-        input.set_first_visible_row(rows[0]);
-        assert_eq!(input.row_diff(input.first_visible_row, input.cursor_row), 2);
+        input.set_viewport_top(rows[0]);
+        assert_eq!(input.row_diff(input.viewport_top, input.cursor_row), 2);
         input.set_width(20);
-        assert_eq!(input.row_diff(input.first_visible_row, input.cursor_row), 2);
+        assert_eq!(input.row_diff(input.viewport_top, input.cursor_row), 2);
 
-        // Shrinking the window below the cursor offset clamps to the bottom.
+        // Shrinking the viewport below the cursor offset clamps to the bottom.
         input.set_max_height(2);
         assert_eq!(
-            input.row_diff(input.first_visible_row, input.cursor_row),
-            input.row_diff(input.first_visible_row, input.last_visible_row)
+            input.row_diff(input.viewport_top, input.cursor_row),
+            input.row_diff(input.viewport_top, input.viewport_bottom)
         );
     }
 }
