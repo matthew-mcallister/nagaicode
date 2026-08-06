@@ -382,11 +382,88 @@ impl InputBox {
     }
 
     fn set_text(&mut self, text: &str) {
-        self.remove_line(self.rows[self.first_row()].line);
+        // Remove all existing lines.
+        while self.rows[self.head].next != self.head {
+            let first = self.rows[self.head].next;
+            let line = self.rows[first].line;
+            self.remove_line(line);
+        }
+
+        let mut text = text;
+        if text.ends_with('\n') {
+            text = &text[..text.len() - 1];
+        }
         self.insert_text(self.head, text);
         self.set_first_visible_row(self.first_row());
         self.cursor_row = self.first_row();
         self.cursor_col = 0;
+    }
+
+    /// Updates the wrapping width, re-wrapping all existing text. The cursor
+    /// is restored to the same byte offset.
+    pub fn set_width(&mut self, width: usize) {
+        if width == self.width {
+            return;
+        }
+
+        let text = self.get_text();
+        // The text is unchanged (only the wrap width differs), so the grapheme
+        // index of the cursor is stable across the re-wrap.
+        let cursor_index = self
+            .iter_graphemes(GraphemePos(self.first_row(), 0), self.cursor_pos())
+            .count();
+        // Offset of the cursor within the visible window, preserved across the
+        // re-wrap when possible.
+        let cursor_offset_in_window = self.row_diff(self.first_visible_row, self.cursor_row);
+
+        self.width = width;
+        self.set_text(&text);
+
+        // Restore the cursor to the same grapheme index.
+        let end = GraphemePos(self.last_row(), self.rows[self.last_row()].graphemes.len());
+        let cursor = self
+            .iter_graphemes(GraphemePos(self.first_row(), 0), end)
+            .nth(cursor_index)
+            .map(|(pos, g)| (pos.row(), g.column as usize));
+        if let Some((row, col)) = cursor {
+            self.cursor_row = row;
+            self.cursor_col = col;
+        }
+
+        self.fit_window(cursor_offset_in_window as usize);
+    }
+
+    /// Updates the maximum number of visible rows.
+    pub fn set_max_height(&mut self, max_height: usize) {
+        if max_height == 0 {
+            return;
+        }
+        self.max_height = max_height;
+        self.fit_window(self.row_diff(self.first_visible_row, self.cursor_row) as usize);
+    }
+
+    /// Repositions the visible window to keep the cursor in the desired row,
+    /// as long as it is possible to do so.
+    fn fit_window(&mut self, cursor_row: usize) {
+        let k = cursor_row.min(self.max_height - 1);
+
+        // Scan up k rows and check for the top
+        let first = match self.row_offset(self.cursor_row, -(k as isize)) {
+            Some(first) => first,
+            None => {
+                self.set_first_visible_row(self.first_row());
+                return;
+            }
+        };
+
+        // Scan down max_height - k rows and check for the bottom
+        let down = self.max_height - 1 - k;
+        if self.row_offset(self.cursor_row, down as isize).is_none() {
+            self.set_last_visible_row(self.last_row());
+            return;
+        }
+
+        self.set_first_visible_row(first);
     }
 
     /// Deletes a range of graphemes and replaces them with new text. If
@@ -1206,5 +1283,41 @@ That on himself such murd'rous shame commits.
         assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 0));
         input.move_left();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 9));
+    }
+
+    #[test]
+    fn test_resize_preserves_window_position() {
+        let mut input = InputBox::new(80, 4);
+        input.set_text("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten");
+        assert_eq!(input.num_rows(), 10);
+        let rows = row_ids(&input);
+
+        // Window shows rows 4..7, cursor at row 6 (offset 2).
+        input.cursor_row = rows[6];
+        input.set_first_visible_row(rows[4]);
+        assert_eq!(input.row_diff(input.first_visible_row, input.cursor_row), 2);
+
+        // Re-wrap to a narrower width. Short lines stay on one row each.
+        input.set_width(40);
+        assert_eq!(input.num_rows(), 10);
+
+        let rows = row_ids(&input);
+        assert_eq!(input.cursor_row, rows[6]);
+        assert_eq!(input.row_diff(input.first_visible_row, input.cursor_row), 2);
+        assert_eq!(input.row_diff(input.first_visible_row, input.last_visible_row), 3);
+
+        // Cursor at the top of the window stays at the top.
+        input.cursor_row = rows[2];
+        input.set_first_visible_row(rows[0]);
+        assert_eq!(input.row_diff(input.first_visible_row, input.cursor_row), 2);
+        input.set_width(20);
+        assert_eq!(input.row_diff(input.first_visible_row, input.cursor_row), 2);
+
+        // Shrinking the window below the cursor offset clamps to the bottom.
+        input.set_max_height(2);
+        assert_eq!(
+            input.row_diff(input.first_visible_row, input.cursor_row),
+            input.row_diff(input.first_visible_row, input.last_visible_row)
+        );
     }
 }
