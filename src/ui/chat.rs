@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use compact_str::CompactString;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::execute;
+use crossterm::{execute, queue};
 use crossterm::style::ContentStyle;
 use crossterm::terminal::{
     size, Clear, ClearType, DisableLineWrap, EnableLineWrap, EnterAlternateScreen,
@@ -104,7 +104,7 @@ impl Chat {
         let (w, h) = size()?;
 
         // Clear everything then redraw the input box region.
-        execute!(stdout, Clear(ClearType::All))?;
+        queue!(stdout, Clear(ClearType::All))?;
 
         // The grey box is inset by MARGIN rows/columns from the terminal edges.
         // Its content sits PADDING rows/columns inside the box, anchored to the
@@ -126,7 +126,7 @@ impl Chat {
                 ..Default::default()
             },
         };
-        execute!(stdout, rect)?;
+        queue!(stdout, rect)?;
 
         let input = DrawInputBox {
             input: &self.input,
@@ -134,7 +134,7 @@ impl Chat {
             y: content_y,
             anchor: Anchor::Bottom,
         };
-        execute!(stdout, input)?;
+        queue!(stdout, input)?;
 
         stdout.flush()?;
         Ok(())
