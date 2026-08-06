@@ -83,6 +83,12 @@ struct InputGrapheme {
     column: u16,
 }
 
+impl InputGrapheme {
+    fn is_alphanumeric(&self) -> bool {
+        self.data.chars().any(|c| c.is_alphanumeric())
+    }
+}
+
 /// Visual/word-wrapped row
 #[derive(Debug)]
 struct InputRow {
@@ -342,18 +348,22 @@ impl InputBox {
     }
 
     /// Recomputes the viewport after moving the cursor. Previous viewport
-    /// bounds must be computed in advance.
+    /// bounds must be computed in advance. Tries to keep `MARGIN_ROWS` rows
+    /// between the cursor and the viewport edges.
     fn recompute_viewport(
         &mut self,
         base: Id<InputRow>,
         prev_top: isize,
         prev_bottom: isize,
     ) {
+        let margin = Self::MARGIN_ROWS;
         let cursor = self.row_diff(base, self.cursor_row);
-        if cursor > prev_top {
-            self.set_viewport_bottom(self.cursor_row);
-        } else if cursor < prev_bottom {
-            self.set_viewport_top(self.cursor_row);
+        if cursor > prev_top + margin {
+            let bottom = self.row_offset(self.cursor_row, margin).unwrap_or(self.last_row());
+            self.set_viewport_bottom(bottom);
+        } else if cursor < prev_bottom - margin {
+            let top = self.row_offset(self.cursor_row, -margin).unwrap_or(self.first_row());
+            self.set_viewport_top(top);
         } else {
             let bottom = self.row_offset(base, prev_bottom)
                 .unwrap_or(self.last_row());
@@ -588,6 +598,7 @@ impl InputBox {
         self.splice(pos, pos, pasted_text);
     }
 
+    // FIXME: Make this configurable, and handle 0 specifically
     const MARGIN_ROWS: isize = 3;
 
     /// Moves the cursor up one row. Preserves the column of the cursor. If
@@ -702,6 +713,8 @@ impl InputBox {
         self.cursor_col = self.rows[last_row].width;
     }
 
+
+
     /// Deletes all graphemes from the beginning of the current logical line up
     /// to the cursor.
     pub fn delete_to_line_start(&mut self) {
@@ -724,6 +737,61 @@ impl InputBox {
         if pos != end {
             self.splice(pos, end, "");
         }
+    }
+
+    /// Moves the cursor to an exact grapheme position and updates the
+    /// viewport.
+    fn move_cursor_to(&mut self, pos: GraphemePos) {
+        let base = self.first_row();
+        let prev_top = self.row_diff(base, self.viewport_top);
+        let prev_bottom = self.row_diff(base, self.viewport_bottom);
+
+        self.cursor_row = pos.row();
+        self.cursor_col = self.rows[pos.row()].graphemes[pos.grapheme()].column as usize;
+
+        self.recompute_viewport(base, prev_top, prev_bottom);
+    }
+
+    fn grapheme_start(&self) -> GraphemePos {
+        GraphemePos(self.first_row(), 0)
+    }
+
+    fn grapheme_end(&self) -> GraphemePos {
+        GraphemePos(self.head, 0)
+    }
+
+    fn last_grapheme(&self) -> GraphemePos {
+        GraphemePos(self.last_row(), self.rows[self.last_row()].graphemes.len() - 1)
+    }
+
+    fn word_end(&self) -> GraphemePos {
+        let mut iter = self.iter_graphemes(self.cursor_pos(), self.grapheme_end());
+        (&mut iter).find(|(_, g)| g.is_alphanumeric());
+        iter.find(|(_, g)| !g.is_alphanumeric())
+            .map(|(pos, _)| pos)
+            .unwrap_or(self.last_grapheme())
+    }
+
+    fn prev_word_start(&self) -> GraphemePos {
+        let iter = self.iter_graphemes(self.grapheme_start(), self.cursor_pos()).rev();
+        let prev = iter.take_while(|(_, g)| !g.is_alphanumeric())
+            .last()
+            .map_or(self.cursor_pos(), |(pos, _)| pos);
+        let iter = self.iter_graphemes(self.grapheme_start(), prev).rev();
+        iter.take_while(|(_, g)| g.is_alphanumeric())
+            .last()
+            .map(|(pos, _)| pos)
+            .unwrap_or(self.grapheme_start())
+    }
+
+    /// Goes to the nearest word end after the cursor.
+    pub fn go_to_word_end(&mut self) {
+        self.move_cursor_to(self.word_end());
+    }
+
+    /// Goes to the nearest word start before the cursor.
+    pub fn go_to_prev_word_start(&mut self) {
+        self.move_cursor_to(self.prev_word_start());
     }
 }
 
@@ -769,6 +837,16 @@ struct InputGraphemeIter<'i> {
     input: &'i InputBox,
     start: GraphemePos,
     end: GraphemePos,
+}
+
+impl<'i> InputGraphemeIter<'i> {
+    fn peek(&self) -> Option<(GraphemePos, &'i InputGrapheme)> {
+        self.clone().next()
+    }
+
+    fn peek_back(&self) -> Option<(GraphemePos, &'i InputGrapheme)> {
+        self.clone().next_back()
+    }
 }
 
 impl<'i> InputGraphemeIter<'i> {
@@ -1129,8 +1207,8 @@ That on himself such murd'rous shame commits.
         let rows = row_ids(&input);
         assert_eq!(rows.len(), 28);
         assert_eq!((input.cursor_row, input.cursor_col), (rows[14], 0));
-        assert_eq!(input.viewport_top, rows[11]);
-        assert_eq!(input.viewport_bottom, rows[14]);
+        assert_eq!(input.viewport_top, rows[14]);
+        assert_eq!(input.viewport_bottom, rows[17]);
 
         // Deletion scrolls viewport up
         let mut input = InputBox::new(80, 4);
@@ -1341,6 +1419,35 @@ That on himself such murd'rous shame commits.
     }
 
     #[test]
+    fn test_move_cursor_to_scrolls_viewport() {
+        let mut input = InputBox::new(80, 4);
+        input.set_text(&SAMPLE[..SAMPLE.len() - 1]);
+        let rows = row_ids(&input);
+        assert_eq!(rows.len(), 14);
+        assert_eq!(input.viewport_top, rows[0]);
+        assert_eq!(input.viewport_bottom, rows[3]);
+
+        // Moving to the very start keeps the viewport at the top.
+        input.move_cursor_to(GraphemePos(rows[0], 0));
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
+        assert_eq!(input.viewport_top, rows[0]);
+
+        // Moving to the end of the last row scrolls the viewport down to keep
+        // the cursor visible with a margin.
+        let last = rows[13];
+        input.move_cursor_to(GraphemePos(last, input.rows[last].graphemes.len() - 1));
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
+        assert_eq!(input.viewport_top, rows[10]);
+        assert_eq!(input.viewport_bottom, rows[13]);
+
+        // Moving back to the start scrolls the viewport to the top.
+        input.move_cursor_to(GraphemePos(rows[0], 0));
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
+        assert_eq!(input.viewport_top, rows[0]);
+        assert_eq!(input.viewport_bottom, rows[3]);
+    }
+
+    #[test]
     fn test_resize_preserves_viewport_position() {
         let mut input = InputBox::new(80, 4);
         input.set_text("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten");
@@ -1374,5 +1481,52 @@ That on himself such murd'rous shame commits.
             input.row_diff(input.viewport_top, input.cursor_row),
             input.row_diff(input.viewport_top, input.viewport_bottom)
         );
+    }
+
+    #[test]
+    fn test_next_word() {
+        let mut input = InputBox::new(80, 4);
+
+        input.set_text("abc def ghi");
+        input.cursor_row = input.first_row();
+        input.cursor_col = 0;
+        input.go_to_word_end();
+        assert_eq!(input.cursor_col, 3);
+        input.cursor_col = 1;
+        input.go_to_word_end();
+        assert_eq!(input.cursor_col, 3);
+        input.cursor_col = 3;
+        input.go_to_word_end();
+        assert_eq!(input.cursor_col, 7);
+
+        input.set_text("a b c");
+        input.cursor_col = 0;
+        input.go_to_word_end();
+        assert_eq!(input.cursor_col, 1);
+        input.cursor_col = 1;
+        input.go_to_word_end();
+        assert_eq!(input.cursor_col, 3);
+    }
+
+    #[test]
+    fn test_prev_word() {
+        let mut input = InputBox::new(80, 4);
+
+        input.set_text("abc def ghi");
+        input.cursor_row = input.first_row();
+        input.cursor_col = 7;
+        input.go_to_prev_word_start();
+        assert_eq!(input.cursor_col, 4);
+        input.cursor_col = 6;
+        input.go_to_prev_word_start();
+        assert_eq!(input.cursor_col, 4);
+        input.cursor_col = 4;
+        input.go_to_prev_word_start();
+        assert_eq!(input.cursor_col, 0);
+
+        input.set_text("a b c");
+        input.cursor_col = 4;
+        input.go_to_prev_word_start();
+        assert_eq!(input.cursor_col, 2);
     }
 }

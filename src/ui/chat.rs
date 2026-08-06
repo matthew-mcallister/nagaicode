@@ -60,6 +60,14 @@ impl Chat {
                 self.input.delete_to_line_end();
                 false
             }
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.input.go_to_word_end();
+                false
+            }
+            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.input.go_to_prev_word_start();
+                false
+            }
             KeyCode::Char(c) => {
                 let mut s = CompactString::with_capacity(1);
                 s.push(c);
