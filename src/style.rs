@@ -87,10 +87,10 @@ pub const THEME_DARK: Theme = Theme {
     text_base: text_style! { foreground_color: WHITE },
     text_header: text_style! { foreground_color: WHITE; Attribute::Bold },
     text_subtle: text_style! { foreground_color: GREY_400 },
-    bg_base: BLACK,
-    bg_collapsible: GREY_800,
-    bg_collapsible_hover: GREY_700,
-    bg_input_box: GREY_600,
+    bg_base: GREY_950,
+    bg_collapsible: GREY_950,
+    bg_collapsible_hover: GREY_900,
+    bg_input_box: GREY_800,
 };
 
 #[derive(Debug)]

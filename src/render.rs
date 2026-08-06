@@ -100,14 +100,12 @@ pub struct DrawPreformatted<'p> {
 impl<'p> crossterm::Command for DrawPreformatted<'p> {
     fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
         let x = self.x;
-        let mut y = self.y;
-        for line in self.pre.lines[self.start_line..self.end_line].iter() {
-            crossterm::Command::write_ansi(&MoveTo(x, y), f)?;
+        for (dy, line) in self.pre.lines[self.start_line..self.end_line].iter().enumerate() {
+            crossterm::Command::write_ansi(&MoveTo(x, self.y + dy as u16), f)?;
             for styled in line.iter() {
                 let sc = StyledContent::new(*styled.style(), styled.content().as_str());
                 crossterm::Command::write_ansi(&PrintStyledContent(sc), f)?;
             }
-            y += 1;
         }
         Ok(())
     }

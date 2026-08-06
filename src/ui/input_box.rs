@@ -303,24 +303,40 @@ impl InputBox {
         self.rows[self.rows[self.lines[line].last_row].next].line
     }
 
+    /// Attempts to set the scroll window region based on first row while
+    /// preserving the total number of visible rows.
     fn set_first_visible_row(&mut self, first_visible_row: Id<InputRow>) {
         let prev = self.rows[first_visible_row].prev;
         self.first_visible_row = first_visible_row;
-        self.last_visible_row = self
+        if let Some(row) = self
             .iter_range(prev, self.last_row())
             .nth(self.max_height - 1)
             .map(|(id, _)| id)
-            .unwrap_or(self.last_row());
+        {
+            self.last_visible_row = row;
+        } else if self.first_visible_row != self.first_row() {
+            self.set_last_visible_row(self.last_row());
+        } else {
+            self.last_visible_row = self.last_row()
+        }
     }
 
+    /// Attempts to set the scroll window region based on last row while
+    /// preserving the total number of visible rows.
     fn set_last_visible_row(&mut self, last_visible_row: Id<InputRow>) {
         self.last_visible_row = last_visible_row;
-        self.first_visible_row = self
+        if let Some(row) = self
             .iter_range(self.head, self.last_visible_row)
             .rev()
             .nth(self.max_height - 1)
             .map(|(id, _)| id)
-            .unwrap_or(self.first_row());
+        {
+            self.first_visible_row = row
+        } else if self.last_visible_row != self.last_row() {
+            self.set_first_visible_row(self.first_row());
+        } else {
+            self.first_visible_row = self.first_row();
+        }
     }
 
     pub fn height(&self) -> usize {
@@ -617,7 +633,7 @@ impl InputBox {
     pub fn move_left(&mut self) {
         let pos = self.cursor_pos();
         if let Some((prev, g)) =
-            self.iter_graphemes(GraphemePos(self.first_row(), 0), pos).rev().next()
+            self.iter_graphemes(GraphemePos(self.first_row(), 0), pos).next_back()
         {
             let col = g.column;
             self.cursor_row = prev.row();
@@ -655,7 +671,7 @@ impl InputBox {
     pub fn backspace(&mut self) {
         let pos = self.cursor_pos();
         if let Some((prev_pos, _)) =
-            self.iter_graphemes(GraphemePos(self.first_row(), 0), pos).rev().next()
+            self.iter_graphemes(GraphemePos(self.first_row(), 0), pos).next_back()
         {
             self.splice(prev_pos, pos, "");
         }
@@ -786,13 +802,14 @@ impl<'p> crossterm::Command for DrawInputBox<'p> {
 
         let height = self.input.height();
         let prev = self.input.rows[self.input.first_visible_row].prev;
-        let mut row_y = match self.anchor {
+        let top_y = match self.anchor {
             Anchor::Top => self.y,
-            Anchor::Bottom => self.y + (height - 1) as u16,
+            Anchor::Bottom => self.y - (height - 1) as u16,
         };
         let mut cursor_y = None;
 
-        for (id, row) in self.input.iter_range(prev, self.input.last_visible_row) {
+        for (offset, (id, row)) in self.input.iter_range(prev, self.input.last_visible_row).enumerate() {
+            let row_y = top_y + offset as u16;
             crossterm::Command::write_ansi(&MoveTo(self.x, row_y), f)?;
             let sc = StyledContent::new(ContentStyle::default(), row.preformatted.as_str());
             crossterm::Command::write_ansi(&PrintStyledContent(sc), f)?;
@@ -800,19 +817,13 @@ impl<'p> crossterm::Command for DrawInputBox<'p> {
             if id == self.input.cursor_row {
                 cursor_y = Some(row_y);
             }
-
-            row_y = match self.anchor {
-                Anchor::Top => row_y + 1,
-                Anchor::Bottom => row_y - 1,
-            };
         }
 
-        // Draw the cursor block at the end.
+        // Draw the cursor block over the grapheme at the cursor position.
         if let Some(cursor_y) = cursor_y {
-            crossterm::Command::write_ansi(
-                &MoveTo(self.x + self.input.cursor_col as u16, cursor_y),
-                f,
-            )?;
+            let pos = self.input.cursor_pos();
+            let column = self.input.rows[pos.row()].graphemes[pos.grapheme()].column;
+            crossterm::Command::write_ansi(&MoveTo(self.x + column as u16, cursor_y), f)?;
             let style = ContentStyle {
                 attributes: Attribute::Reverse.into(),
                 ..ContentStyle::default()
@@ -829,7 +840,7 @@ mod tests {
     use super::*;
     use crate::text::truncate_line;
 
-    const SAMPLE: &'static str = r"Is it for fear to wet a widow's eye,
+    const SAMPLE: &str = r"Is it for fear to wet a widow's eye,
 That thou consum'st thy self in single life?
 Ah! if thou issueless shalt hap to die,
 The world will wail thee like a makeless wife;

@@ -86,7 +86,7 @@ struct Entry<T> {
 
 impl<T> Entry<T> {
     fn is_empty(&self) -> bool {
-        self.generation % 2 == 0
+        self.generation.is_multiple_of(2)
     }
 
     fn get(&self, generation: u32) -> Option<&T> {
@@ -224,7 +224,7 @@ impl<T> Arena<T> {
         }
         let entry = &mut self.entries[idx];
         let generation = id.generation();
-        let res = entry.take(generation, self.free_head as u32);
+        let res = entry.take(generation, self.free_head);
         if res.is_some() {
             self.free_head = idx as u32;
             self.len -= 1;
@@ -303,7 +303,7 @@ impl<T> Arena<T> {
             if entry.is_empty() {
                 None
             } else {
-                let id = Id::new(idx as u32, entry.generation as u32);
+                let id = Id::new(idx as u32, entry.generation);
                 entry.get(entry.generation).map(|v| (id, v))
             }
         })
@@ -316,7 +316,7 @@ impl<T> Arena<T> {
             if entry.is_empty() {
                 None
             } else {
-                let id = Id::new(idx as u32, entry.generation as u32);
+                let id = Id::new(idx as u32, entry.generation);
                 entry.get_mut(entry.generation).map(|v| (id, v))
             }
         })
@@ -419,7 +419,7 @@ mod tests {
         let mut arena: Arena<u32> = Default::default();
         let id = arena.insert(1);
         arena.remove(id);
-        arena[id];
+        let _ = arena[id];
     }
 
     #[test]

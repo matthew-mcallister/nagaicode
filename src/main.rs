@@ -1,3 +1,6 @@
+// TODO: Explicitly mark the dead code we want to keep
+#![allow(dead_code)]
+
 use crate::error::AnyResult;
 
 mod arena;
@@ -9,5 +12,5 @@ mod text;
 mod ui;
 
 fn main() -> AnyResult<()> {
-    Ok(())
+    ui::run()
 }

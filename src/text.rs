@@ -6,18 +6,14 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 const TAB_WIDTH: usize = 4;
-const SPACES: &'static str = const {
+const SPACES: &str = const {
     let Ok(s) = std::str::from_utf8(&[b' '; 128]) else { panic!() };
     s
 };
 
 /// Removes trailing '\r' from a string.
 pub fn strip_cr(s: &str) -> &str {
-    if s.ends_with('\r') {
-        return &s[..s.len() - 1];
-    } else {
-        return s;
-    }
+    s.strip_suffix('\r').unwrap_or(s)
 }
 
 /// Single grapheme; generally corresponds to a unicode grapheme cluster. Tabs
