@@ -1,6 +1,7 @@
 use std::slice::SliceIndex;
 
 use compact_str::CompactString;
+use crossterm::style::ContentStyle;
 
 use crate::arena::{Arena, Id};
 use crate::text::{Row, strip_cr, wrap_line};
@@ -793,6 +794,7 @@ pub struct DrawInputBox<'i> {
     pub x: u16,
     pub y: u16,
     pub anchor: Anchor,
+    pub style: ContentStyle,
 }
 
 impl<'p> crossterm::Command for DrawInputBox<'p> {
@@ -811,7 +813,7 @@ impl<'p> crossterm::Command for DrawInputBox<'p> {
         for (offset, (id, row)) in self.input.iter_range(prev, self.input.last_visible_row).enumerate() {
             let row_y = top_y + offset as u16;
             crossterm::Command::write_ansi(&MoveTo(self.x, row_y), f)?;
-            let sc = StyledContent::new(ContentStyle::default(), row.preformatted.as_str());
+            let sc = StyledContent::new(self.style, row.preformatted.as_str());
             crossterm::Command::write_ansi(&PrintStyledContent(sc), f)?;
 
             if id == self.input.cursor_row {
@@ -826,7 +828,7 @@ impl<'p> crossterm::Command for DrawInputBox<'p> {
             crossterm::Command::write_ansi(&MoveTo(self.x + column as u16, cursor_y), f)?;
             let style = ContentStyle {
                 attributes: Attribute::Reverse.into(),
-                ..ContentStyle::default()
+                ..self.style
             };
             let sc = StyledContent::new(style, " ");
             crossterm::Command::write_ansi(&PrintStyledContent(sc), f)?;

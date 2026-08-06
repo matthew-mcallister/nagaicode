@@ -149,6 +149,13 @@ impl Chat {
             x: content_x,
             y: content_y,
             anchor: Anchor::Bottom,
+            style: ContentStyle {
+                foreground_color: THEME_DARK.text_base.foreground_color,
+                background_color: Some(
+                    THEME_DARK.get_background_color(BackgroundColorName::InputBox),
+                ),
+                ..Default::default()
+            },
         };
         queue!(stdout, input)?;
 
