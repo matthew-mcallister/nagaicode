@@ -75,11 +75,11 @@ impl Chat {
                 false
             }
             KeyCode::Up => {
-                self.input.move_up();
+                self.input.move_up(1);
                 false
             }
             KeyCode::Down => {
-                self.input.move_down();
+                self.input.move_down(1);
                 false
             }
             _ => false,

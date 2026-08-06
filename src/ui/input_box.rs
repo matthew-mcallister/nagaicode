@@ -584,39 +584,54 @@ impl InputBox {
         self.splice(pos, pos, pasted_text);
     }
 
+    const MARGIN_ROWS: isize = 3;
+
     /// Moves the cursor up one row. Preserves the column of the cursor. If
     /// already at the very first row, moves to the start of the line. Scrolls
-    /// the viewport if at the top.
-    pub fn move_up(&mut self) {
-        if self.cursor_row == self.first_row() {
-            self.cursor_col = 0;
-            return;
+    /// the viewport if at the top. Tries to keep some rows between the cursor
+    /// and viewport edge.
+    pub fn move_up(&mut self, rows: usize) {
+        let margin = self.row_diff(self.viewport_top, self.cursor_row);
+        let mut moved = 0;
+        for _ in 0..rows {
+            if self.cursor_row == self.first_row() {
+                self.cursor_col = 0;
+                break;
+            }
+            self.cursor_row = self.rows[self.cursor_row].prev;
+            moved += 1;
         }
 
-        if self.cursor_row == self.viewport_top {
-            let bottom = self.viewport_bottom;
-            self.viewport_top = self.rows[self.viewport_top].prev;
-            self.viewport_bottom = self.rows[bottom].prev;
+        let margin = margin - moved as isize;
+        if margin < Self::MARGIN_ROWS {
+            let new_top = self.row_offset(self.viewport_top, margin - Self::MARGIN_ROWS)
+                .unwrap_or(self.first_row());
+            self.set_viewport_top(new_top);
         }
-        self.cursor_row = self.rows[self.cursor_row].prev;
     }
 
     /// Moves the cursor down one row. Preserves the column of the cursor. If
     /// already at the very last row, moves to the end of the line. Scrolls the
-    /// viewport if at the bottom.
-    pub fn move_down(&mut self) {
-        if self.cursor_row == self.last_row() {
-            self.cursor_col = self.rows[self.cursor_row].width;
-            return;
+    /// viewport if at the bottom. Tries to keep some rows between the cursor
+    /// and viewport edge.
+    pub fn move_down(&mut self, rows: usize) {
+        let margin = self.row_diff(self.cursor_row, self.viewport_bottom);
+        let mut moved = 0;
+        for _ in 0..rows {
+            if self.cursor_row == self.last_row() {
+                self.cursor_col = self.rows[self.cursor_row].width;
+                break;
+            }
+            self.cursor_row = self.rows[self.cursor_row].next;
+            moved += 1;
         }
 
-        let cursor_row = self.cursor_row;
-        let bottom = self.viewport_bottom;
-        if cursor_row == bottom {
-            self.viewport_top = self.rows[self.viewport_top].next;
-            self.viewport_bottom = self.rows[bottom].next;
+        let margin = margin - moved as isize;
+        if margin < Self::MARGIN_ROWS {
+            let new_bottom = self.row_offset(self.viewport_bottom, Self::MARGIN_ROWS - margin)
+                .unwrap_or(self.last_row());
+            self.set_viewport_bottom(new_bottom);
         }
-        self.cursor_row = self.rows[cursor_row].next;
     }
 
     /// Moves the cursor left by one grapheme. If at the start of a row, goes
@@ -1147,13 +1162,13 @@ That on himself such murd'rous shame commits.
 
         // Test first row
         input.cursor_col = 10;
-        input.move_up();
+        input.move_up(1);
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
         assert_eq!(
             (input.viewport_top, input.viewport_bottom),
             (rows[0], rows[3])
         );
-        input.move_up();
+        input.move_up(1);
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
         assert_eq!(
             (input.viewport_top, input.viewport_bottom),
@@ -1169,13 +1184,13 @@ That on himself such murd'rous shame commits.
         // Test last row
         input.cursor_row = rows[13];
         input.set_viewport_top(rows[10]);
-        input.move_down();
+        input.move_down(1);
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
         assert_eq!(
             (input.viewport_top, input.viewport_bottom),
             (rows[10], rows[13])
         );
-        input.move_down();
+        input.move_down(1);
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
         assert_eq!(
             (input.viewport_top, input.viewport_bottom),
@@ -1192,7 +1207,7 @@ That on himself such murd'rous shame commits.
         input.cursor_row = rows[1];
         input.cursor_col = 0;
         input.set_viewport_top(rows[1]);
-        input.move_up();
+        input.move_up(1);
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
         assert_eq!(
             (input.viewport_top, input.viewport_bottom),
@@ -1202,7 +1217,7 @@ That on himself such murd'rous shame commits.
         input.cursor_row = rows[12];
         input.cursor_col = 0;
         input.set_viewport_top(rows[9]);
-        input.move_down();
+        input.move_down(1);
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 0));
         assert_eq!(
             (input.viewport_top, input.viewport_bottom),
