@@ -43,7 +43,23 @@ impl Chat {
     /// Handles a key event. Returns true if the app should quit.
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' => true,
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => true,
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.input.go_to_line_start();
+                false
+            }
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.input.go_to_line_end();
+                false
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.input.delete_to_line_start();
+                false
+            }
+            KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.input.delete_to_line_end();
+                false
+            }
             KeyCode::Char(c) => {
                 let mut s = CompactString::with_capacity(1);
                 s.push(c);

@@ -315,11 +315,11 @@ impl InputBox {
             .map(|(id, _)| id)
         {
             self.viewport_bottom = row;
-        } else if self.viewport_top != self.first_row() {
-            // Make sure we don't shrink the viewport
-            self.set_viewport_bottom(self.last_row());
-        } else {
+        } else if self.viewport_top == self.first_row() {
+            // Viewport covers entire text
             self.viewport_bottom = self.last_row()
+        } else {
+            self.set_viewport_bottom(self.last_row());
         }
     }
 
@@ -333,11 +333,11 @@ impl InputBox {
             .map(|(id, _)| id)
         {
             self.viewport_top = row
-        } else if self.viewport_bottom != self.last_row() {
-            // Make sure we don't shrink the viewport
-            self.set_viewport_top(self.first_row());
-        } else {
+        } else if self.viewport_bottom == self.last_row() {
+            // Viewport covers entire text
             self.viewport_top = self.first_row();
+        } else {
+            self.set_viewport_top(self.first_row());
         }
     }
 
@@ -680,6 +680,45 @@ impl InputBox {
             self.iter_graphemes(GraphemePos(self.first_row(), 0), pos).next_back()
         {
             self.splice(prev_pos, pos, "");
+        }
+    }
+
+    /// Moves the cursor to the beginning of the current logical line.
+    pub fn go_to_line_start(&mut self) {
+        let line = self.rows[self.cursor_row].line;
+        self.cursor_row = self.lines[line].first_row;
+        self.cursor_col = 0;
+    }
+
+    /// Moves the cursor to the end of the current logical line.
+    pub fn go_to_line_end(&mut self) {
+        let line = self.rows[self.cursor_row].line;
+        let last_row = self.lines[line].last_row;
+        self.cursor_row = last_row;
+        self.cursor_col = self.rows[last_row].width;
+    }
+
+    /// Deletes all graphemes from the beginning of the current logical line up
+    /// to the cursor.
+    pub fn delete_to_line_start(&mut self) {
+        let line = self.rows[self.cursor_row].line;
+        let start = GraphemePos(self.lines[line].first_row, 0);
+        let pos = self.cursor_pos();
+        if start != pos {
+            self.splice(start, pos, "");
+        }
+    }
+
+    /// Deletes all graphemes from the cursor up to the end of the current
+    /// logical line, keeping the trailing newline so the line remains.
+    pub fn delete_to_line_end(&mut self) {
+        let line = self.rows[self.cursor_row].line;
+        let last_row = self.lines[line].last_row;
+        // The final grapheme is the zero-width newline; stop before it.
+        let end = GraphemePos(last_row, self.rows[last_row].graphemes.len() - 1);
+        let pos = self.cursor_pos();
+        if pos != end {
+            self.splice(pos, end, "");
         }
     }
 }
@@ -1248,6 +1287,53 @@ That on himself such murd'rous shame commits.
         assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 0));
         input.move_left();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 9));
+    }
+
+    #[test]
+    fn test_line_start_end_and_delete() {
+        // go_to_line_start / go_to_line_end
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abcd\nefgh\nijkl");
+        let rows = row_ids(&input);
+        assert_eq!(rows.len(), 3);
+
+        input.cursor_row = rows[1];
+        input.cursor_col = 3;
+        input.go_to_line_start();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 0));
+        input.go_to_line_end();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 4));
+
+        // Wrapped line: start/end span the whole logical line.
+        let mut input = InputBox::new(10, 8);
+        input.paste("123456789 123456789");
+        let rows = row_ids(&input);
+        assert_eq!(rows.len(), 2);
+        input.cursor_row = rows[0];
+        input.cursor_col = 9;
+        input.go_to_line_start();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
+        input.go_to_line_end();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 9));
+
+        // delete_to_line_start keeps the rest of the line.
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abcd\nefgh");
+        let rows = row_ids(&input);
+        input.cursor_row = rows[1];
+        input.cursor_col = 3;
+        input.delete_to_line_start();
+        assert_eq!(input.get_text(), "abcd\nh\n");
+
+        // delete_to_line_end keeps the newline (and thus the line).
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abcd\nefgh");
+        let rows = row_ids(&input);
+        input.cursor_row = rows[1];
+        input.cursor_col = 1;
+        input.delete_to_line_end();
+        assert_eq!(input.get_text(), "abcd\ne\n");
+        assert_eq!(input.num_lines(), 2);
     }
 
     #[test]
