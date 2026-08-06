@@ -793,6 +793,11 @@ impl InputBox {
     pub fn go_to_prev_word_start(&mut self) {
         self.move_cursor_to(self.prev_word_start());
     }
+
+    pub fn delete_prev_word(&mut self) {
+        let start = self.prev_word_start();
+        self.splice(start, self.cursor_pos(), "");
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1528,5 +1533,27 @@ That on himself such murd'rous shame commits.
         input.cursor_col = 4;
         input.go_to_prev_word_start();
         assert_eq!(input.cursor_col, 2);
+    }
+
+    #[test]
+    fn test_del_prev_word() {
+        let mut input = InputBox::new(80, 4);
+
+        input.set_text("abc def ghi");
+        input.cursor_row = input.first_row();
+        input.cursor_col = 0;
+        input.delete_prev_word();
+        assert_eq!(input.get_text(), "abc def ghi\n");
+        input.cursor_col = 8;
+        input.delete_prev_word();
+        assert_eq!(input.get_text(), "abc ghi\n");
+        input.cursor_col = 1;
+        input.delete_prev_word();
+        assert_eq!(input.get_text(), "bc ghi\n");
+
+        input.set_text("a b");
+        input.cursor_col = 3;
+        input.delete_prev_word();
+        assert_eq!(input.get_text(), "a \n");
     }
 }
