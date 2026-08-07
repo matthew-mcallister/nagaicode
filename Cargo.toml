@@ -11,7 +11,10 @@ path = "src/main.rs"
 crossterm = "0.28"
 smol = "2"
 dirs = "5"
-rusqlite = { version = "0.32", features = ["bundled"] }
+diesel = { version = "2", features = ["sqlite", "chrono", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = { version = "2", features = ["sqlite"] }
+chrono = "0.4"
+libsqlite3-sys = { version = "0.31", features = ["bundled"] }
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
 compact_str = "0.10.0"
