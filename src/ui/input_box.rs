@@ -187,6 +187,8 @@ pub struct InputBox {
     viewport_bottom: Id<InputRow>,
     cursor_row: Id<InputRow>,
     cursor_col: usize,
+    buffer: String,
+    overwrite_buffer: bool,
 }
 
 impl InputBox {
@@ -226,6 +228,8 @@ impl InputBox {
             viewport_bottom: first,
             cursor_row: first,
             cursor_col: 0,
+            buffer: String::new(),
+            overwrite_buffer: false,
         }
     }
 
@@ -445,6 +449,8 @@ impl InputBox {
         self.set_viewport_top(self.first_row());
         self.cursor_row = self.first_row();
         self.cursor_col = 0;
+        self.buffer.clear();
+        self.overwrite_buffer = false;
     }
 
     /// Updates the wrapping width, re-wrapping all existing text. The cursor
@@ -591,11 +597,48 @@ impl InputBox {
         );
     }
 
+    /// Appends all text to the end of the buffer. If the overwrite flag is
+    /// set, overwrites the buffer and resets the flag.
+    fn buffer_append(&mut self, start: GraphemePos, end: GraphemePos) {
+        if self.overwrite_buffer {
+            self.overwrite_buffer = false;
+            self.buffer.clear();
+        }
+        let mut buffer = std::mem::take(&mut self.buffer); // Memory micro optimization
+        buffer.extend(self.iter_graphemes(start, end).map(|(_, g)| &g.data[..]));
+        self.buffer = buffer;
+    }
+
+    /// Prepends all text to the beginning of the buffer. If the overwrite flag is
+    /// set, overwrites the buffer and resets the flag.
+    fn buffer_prepend(&mut self, start: GraphemePos, end: GraphemePos) {
+        let text: String = self
+            .iter_graphemes(start, end)
+            .map(|(_, g)| &g.data[..])
+            .collect();
+        if self.overwrite_buffer {
+            self.buffer = text;
+            self.overwrite_buffer = false;
+        } else {
+            let mut combined = text;
+            combined.push_str(&self.buffer);
+            self.buffer = combined;
+        }
+    }
+
     /// Pastes raw text at the cursor position.
     pub fn paste(&mut self, pasted_text: &str) {
         if pasted_text.is_empty() { return; }
         let pos = self.cursor_pos();
         self.splice(pos, pos, pasted_text);
+    }
+
+    /// Pastes the contents of the buffer at the cursor position.
+    pub fn paste_buffer(&mut self) {
+        let text = std::mem::take(&mut self.buffer);
+        if text.is_empty() { return; }
+        let pos = self.cursor_pos();
+        self.splice(pos, pos, &text);
     }
 
     // FIXME: Make this configurable, and handle 0 specifically
@@ -606,6 +649,7 @@ impl InputBox {
     /// the viewport if at the top. Tries to keep some rows between the cursor
     /// and viewport edge.
     pub fn move_up(&mut self, rows: usize) {
+        self.overwrite_buffer = true;
         let margin = self.row_diff(self.viewport_top, self.cursor_row);
         let mut moved = 0;
         for _ in 0..rows {
@@ -630,6 +674,7 @@ impl InputBox {
     /// viewport if at the bottom. Tries to keep some rows between the cursor
     /// and viewport edge.
     pub fn move_down(&mut self, rows: usize) {
+        self.overwrite_buffer = true;
         let margin = self.row_diff(self.cursor_row, self.viewport_bottom);
         let mut moved = 0;
         for _ in 0..rows {
@@ -652,6 +697,7 @@ impl InputBox {
     /// Moves the cursor left by one grapheme. If at the start of a row, goes
     /// to the end of the previous row.
     pub fn move_left(&mut self) {
+        self.overwrite_buffer = true;
         let pos = self.cursor_pos();
         if let Some((prev, g)) =
             self.iter_graphemes(GraphemePos(self.first_row(), 0), pos).next_back()
@@ -665,6 +711,7 @@ impl InputBox {
     /// Moves the cursor right by one grapheme. If at the end of a row, goes to
     /// the start of the next row.
     pub fn move_right(&mut self) {
+        self.overwrite_buffer = true;
         let pos = self.cursor_pos();
         let end = GraphemePos(self.last_row(), self.rows[self.last_row()].graphemes.len());
         if let Some((next, g)) = self.iter_graphemes(pos, end).nth(1) {
@@ -700,6 +747,7 @@ impl InputBox {
 
     /// Moves the cursor to the beginning of the current logical line.
     pub fn go_to_line_start(&mut self) {
+        self.overwrite_buffer = true;
         let line = self.rows[self.cursor_row].line;
         self.cursor_row = self.lines[line].first_row;
         self.cursor_col = 0;
@@ -707,6 +755,7 @@ impl InputBox {
 
     /// Moves the cursor to the end of the current logical line.
     pub fn go_to_line_end(&mut self) {
+        self.overwrite_buffer = true;
         let line = self.rows[self.cursor_row].line;
         let last_row = self.lines[line].last_row;
         self.cursor_row = last_row;
@@ -722,6 +771,7 @@ impl InputBox {
         let start = GraphemePos(self.lines[line].first_row, 0);
         let pos = self.cursor_pos();
         if start != pos {
+            self.buffer_prepend(start, pos);
             self.splice(start, pos, "");
         }
     }
@@ -735,6 +785,7 @@ impl InputBox {
         let end = GraphemePos(last_row, self.rows[last_row].graphemes.len() - 1);
         let pos = self.cursor_pos();
         if pos != end {
+            self.buffer_append(pos, end);
             self.splice(pos, end, "");
         }
     }
@@ -742,6 +793,7 @@ impl InputBox {
     /// Moves the cursor to an exact grapheme position and updates the
     /// viewport.
     fn move_cursor_to(&mut self, pos: GraphemePos) {
+        self.overwrite_buffer = true;
         let base = self.first_row();
         let prev_top = self.row_diff(base, self.viewport_top);
         let prev_bottom = self.row_diff(base, self.viewport_bottom);
@@ -796,7 +848,9 @@ impl InputBox {
 
     pub fn delete_prev_word(&mut self) {
         let start = self.prev_word_start();
-        self.splice(start, self.cursor_pos(), "");
+        let pos = self.cursor_pos();
+        self.buffer_prepend(start, pos);
+        self.splice(start, pos, "");
     }
 }
 
@@ -1411,6 +1465,7 @@ That on himself such murd'rous shame commits.
         input.cursor_col = 3;
         input.delete_to_line_start();
         assert_eq!(input.get_text(), "abcd\nh\n");
+        assert_eq!(input.buffer, "efg");
 
         // delete_to_line_end keeps the newline (and thus the line).
         let mut input = InputBox::new(80, 8);
@@ -1421,6 +1476,7 @@ That on himself such murd'rous shame commits.
         input.delete_to_line_end();
         assert_eq!(input.get_text(), "abcd\ne\n");
         assert_eq!(input.num_lines(), 2);
+        assert_eq!(input.buffer, "fgh");
     }
 
     #[test]
@@ -1544,16 +1600,41 @@ That on himself such murd'rous shame commits.
         input.cursor_col = 0;
         input.delete_prev_word();
         assert_eq!(input.get_text(), "abc def ghi\n");
+        assert_eq!(input.buffer, "");
         input.cursor_col = 8;
         input.delete_prev_word();
         assert_eq!(input.get_text(), "abc ghi\n");
+        assert_eq!(input.buffer, "def ");
         input.cursor_col = 1;
         input.delete_prev_word();
         assert_eq!(input.get_text(), "bc ghi\n");
+        assert_eq!(input.buffer, "def a");
 
         input.set_text("a b");
         input.cursor_col = 3;
         input.delete_prev_word();
         assert_eq!(input.get_text(), "a \n");
+        assert_eq!(input.buffer, "b");
+    }
+
+    #[test]
+    fn test_overwrite_buffer_flag() {
+        let mut input = InputBox::new(80, 8);
+        input.set_text("hello world");
+
+        // Delete a word to fill the buffer.
+        input.cursor_row = input.first_row();
+        input.cursor_col = 11; // end of "world"
+        input.delete_prev_word();
+        assert_eq!(input.buffer, "world");
+        assert!(!input.overwrite_buffer);
+
+        // Moving the cursor and deleting again overwrites the buffer instead
+        // of appending.
+        input.go_to_line_start();
+        input.cursor_col = 5; // end of "hello"
+        input.delete_prev_word();
+        assert_eq!(input.buffer, "hello");
+        assert!(!input.overwrite_buffer);
     }
 }

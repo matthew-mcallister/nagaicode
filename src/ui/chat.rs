@@ -68,6 +68,14 @@ impl Chat {
                 self.input.go_to_prev_word_start();
                 false
             }
+            KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.input.delete_prev_word();
+                false
+            }
+            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.input.paste_buffer();
+                false
+            }
             KeyCode::Char(c) => {
                 let mut s = CompactString::with_capacity(1);
                 s.push(c);
