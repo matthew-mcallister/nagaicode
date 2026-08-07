@@ -1,3 +1,6 @@
+//! Input text box. Data structures are similar to @src/ui/history.rs but more
+//! complex.
+
 use compact_str::CompactString;
 use crossterm::style::ContentStyle;
 
@@ -421,7 +424,7 @@ impl InputBox {
         }
     }
 
-    fn set_text(&mut self, text: &str) {
+    pub fn set_text(&mut self, text: &str) {
         // Remove all existing lines.
         while self.rows[self.head].next != self.head {
             let first = self.rows[self.head].next;
@@ -835,6 +838,8 @@ impl InputBox {
         self.move_cursor_to(self.prev_word_start());
     }
 
+    /// Kills text between the previous word start and the cursor. Appends to
+    /// buffer
     pub fn delete_prev_word(&mut self) {
         let start = self.prev_word_start();
         let pos = self.cursor_pos();
@@ -1584,10 +1589,10 @@ That on himself such murd'rous shame commits.
         input.delete_prev_word();
         assert_eq!(input.get_text(), "abc ghi\n");
         assert_eq!(input.buffer, "def ");
-        input.cursor_col = 1;
+        input.move_cursor_to(GraphemePos(input.first_row(), 1));
         input.delete_prev_word();
         assert_eq!(input.get_text(), "bc ghi\n");
-        assert_eq!(input.buffer, "def a");
+        assert_eq!(input.buffer, "a");
 
         input.set_text("a b");
         input.cursor_col = 3;

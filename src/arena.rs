@@ -12,7 +12,8 @@ impl<T> Id<T> {
         Id(NonZeroU64::new(((generation as u64) << 32) | (index as u64)).unwrap(), PhantomData)
     }
 
-    /// Returns an invalid ID. Occasionally useful, though prefer to use
+    /// Returns an invalid ID. Useful for initializing circular references.
+    /// You should never compare an ID to `null()`; prefer instead to use
     /// `Option<Id<T>>`.
     pub fn null() -> Self {
         Self::new(u32::MAX, 0)
