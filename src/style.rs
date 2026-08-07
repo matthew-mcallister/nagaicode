@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crossterm::style::{Attribute, Color, ContentStyle};
 
 pub const fn rgb(r: u8, g: u8, b: u8) -> Color {

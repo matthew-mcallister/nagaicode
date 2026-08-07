@@ -449,7 +449,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nagaicode"
+name = "nagai"
 version = "0.1.0"
 dependencies = [
  "compact_str",

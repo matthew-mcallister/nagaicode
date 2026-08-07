@@ -1,5 +1,3 @@
-use std::slice::SliceIndex;
-
 use compact_str::CompactString;
 use crossterm::style::ContentStyle;
 
@@ -26,8 +24,6 @@ struct InputLine {
     first_row: Id<InputRow>,
     last_row: Id<InputRow>,
     num_rows: usize,
-    /// Length of line in bytes. Good for reserving string capacity.
-    len_bytes: usize,
 }
 
 impl InputLine {
@@ -41,12 +37,10 @@ impl InputLine {
     ) -> Id<Self> {
         debug_assert!(!s.contains('\n'), "unexpected newline");
 
-        let len_bytes = s.len();
         let line = lines.insert(Self {
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 0,
-            len_bytes,
         });
 
         let wrapped = wrap_line(width, s);
@@ -127,13 +121,6 @@ impl InputRow {
         }
     }
 
-    fn data<I>(&self, range: I) -> impl Iterator<Item = &'_ str> + '_
-    where
-        I: SliceIndex<[InputGrapheme], Output = [InputGrapheme]>,
-    {
-        self.graphemes[range].iter().map(|g| &g.data[..])
-    }
-
     fn from_row(row: Row) -> Self {
         let mut graphemes = Vec::with_capacity(row.graphemes.len());
         let mut column: u16 = 0;
@@ -204,7 +191,6 @@ impl InputBox {
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 1,
-            len_bytes: 0,
         });
         let first = rows.insert(InputRow {
             line,
@@ -238,6 +224,7 @@ impl InputBox {
         self.rows.len() - 1
     }
 
+    #[allow(dead_code)]
     pub fn num_lines(&self) -> usize {
         self.lines.len()
     }
@@ -260,6 +247,7 @@ impl InputBox {
         self.iter_range(self.head, self.last_row())
     }
 
+    #[allow(dead_code)]
     fn iter_line<'a>(&'a self, line: Id<InputLine>) -> InputRowIter<'a> {
         let line = &self.lines[line];
         let prev = self.rows[line.first_row].prev;
@@ -491,6 +479,7 @@ impl InputBox {
         self.max_height
     }
 
+    #[allow(dead_code)]
     /// Updates the maximum viewport size
     pub fn set_max_height(&mut self, max_height: usize) {
         if max_height == 0 {
@@ -896,16 +885,6 @@ struct InputGraphemeIter<'i> {
     input: &'i InputBox,
     start: GraphemePos,
     end: GraphemePos,
-}
-
-impl<'i> InputGraphemeIter<'i> {
-    fn peek(&self) -> Option<(GraphemePos, &'i InputGrapheme)> {
-        self.clone().next()
-    }
-
-    fn peek_back(&self) -> Option<(GraphemePos, &'i InputGrapheme)> {
-        self.clone().next_back()
-    }
 }
 
 impl<'i> InputGraphemeIter<'i> {

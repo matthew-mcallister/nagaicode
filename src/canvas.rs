@@ -6,7 +6,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// A single terminal cell.
-// XXX: Optimize me!
+// XXX: Optimize me?
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Cell {
     pub grapheme: CompactString,
@@ -51,13 +51,6 @@ impl Canvas {
 
     pub fn height(&self) -> u16 {
         self.height
-    }
-
-    fn get(&self, x: u16, y: u16) -> Option<&Cell> {
-        if x >= self.width || y >= self.height {
-            return None;
-        }
-        self.data[self.index(x, y)].as_ref()
     }
 
     fn index(&self, x: u16, y: u16) -> usize {

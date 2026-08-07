@@ -1,10 +1,10 @@
 [package]
-name = "nagaicode"
+name = "nagai"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "nagaicode"
+name = "nagai"
 path = "src/main.rs"
 
 [dependencies]
