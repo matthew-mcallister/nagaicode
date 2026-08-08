@@ -150,8 +150,8 @@ impl Chat {
         queue!(stdout, MoveTo(0, 0))?;
         queue!(stdout, SetForegroundColor(text_style.foreground_color))?;
         queue!(stdout, SetBackgroundColor(bg))?;
-        for row in self.stacked.drawable_rows() {
-            queue!(stdout, row)?;
+        for (y, row) in self.stacked.drawable_rows().enumerate() {
+            queue!(stdout, row, MoveTo(0, y as u16))?;
         }
         queue!(stdout, ResetColor)?;
         stdout.flush()?;

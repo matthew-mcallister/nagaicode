@@ -20,12 +20,14 @@ impl StackedView {
         height: usize,
         input_max_height: usize,
     ) -> Self {
-        Self {
+        let mut this = Self {
             width,
             height,
-            empty: Empty::new(width, height - input_max_height, None),
+            empty: Empty::new(width, 0, None),
             input: InputBox::new(width, input_max_height),
-        }
+        };
+        this.resize();  // Compute empty height
+        this
     }
 
     pub fn input_mut(&mut self) -> &mut InputBox {
