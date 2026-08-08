@@ -369,11 +369,6 @@ impl InputBox {
         }
     }
 
-    /// Number of actually visible rows.
-    pub fn height(&self) -> usize {
-        std::cmp::min(self.max_height, self.num_rows())
-    }
-
     /// Computes text of all lines.
     pub fn get_text(&self) -> String {
         let mut out = String::new();
@@ -914,6 +909,15 @@ impl Component for InputBox {
 
     fn set_height(&mut self, height: usize) {
         self.set_max_height(height);
+    }
+
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    /// Number of actually visible rows.
+    fn height(&self) -> usize {
+        std::cmp::min(self.max_height, self.num_rows())
     }
 }
 

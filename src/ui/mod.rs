@@ -28,6 +28,12 @@ trait Component {
     /// Returns an iterator over the component's printable rows.
     fn drawable_rows(&self) -> Self::RowIter<'_>;
 
+    /// Returns the component's width.
+    fn width(&self) -> usize;
+
+    /// Returns the component's height.
+    fn height(&self) -> usize;
+
     /// Updates the component's width. The component should recompute its
     /// layout.
     fn set_width(&mut self, width: usize);

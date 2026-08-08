@@ -64,4 +64,12 @@ impl Component for Empty {
     fn set_height(&mut self, height: usize) {
         self.height = height;
     }
+
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    fn height(&self) -> usize {
+        self.height
+    }
 }

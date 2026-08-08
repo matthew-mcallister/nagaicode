@@ -85,7 +85,6 @@ impl<C: Component> Component for Padded<C> {
             for _ in 0..self.v_padding {
                 yield PaddedRow::Fill { background, width };
             }
-
             for _ in 2..height {
                 if let Some(row) = inner.next() {
                     yield PaddedRow::Inner {
@@ -98,7 +97,6 @@ impl<C: Component> Component for Padded<C> {
                     yield PaddedRow::Fill { background, width };
                 }
             }
-
             for _ in 0..self.v_padding {
                 yield PaddedRow::Fill { background, width };
             }
@@ -113,5 +111,13 @@ impl<C: Component> Component for Padded<C> {
     fn set_height(&mut self, height: usize) {
         self.height = height;
         self.inner.set_height(height - 2 * self.v_padding);
+    }
+
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    fn height(&self) -> usize {
+        self.height
     }
 }

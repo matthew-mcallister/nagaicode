@@ -83,4 +83,12 @@ impl Component for StackedView {
         self.height = height;
         self.resize();
     }
+
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    fn height(&self) -> usize {
+        self.height
+    }
 }
