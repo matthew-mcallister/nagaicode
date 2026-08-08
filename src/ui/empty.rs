@@ -9,16 +9,30 @@ use crate::ui::Component;
 
 /// Renders a solid color.
 #[derive(Debug)]
-struct Empty {
+pub struct Empty {
     width: usize,
     height: usize,
     background: Option<Color>,
 }
 
 #[derive(Debug, Clone)]
-struct EmptyRow {
+pub struct EmptyRow {
     width: usize,
     background: Option<Color>,
+}
+
+impl Empty {
+    pub fn new(width: usize, height: usize, background: Option<Color>) -> Self {
+        Self {
+            width,
+            height,
+            background,
+        }
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
 }
 
 impl Command for EmptyRow {

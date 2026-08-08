@@ -1,10 +1,15 @@
 //! Input text box. Data structures are similar to @src/ui/history.rs but more
 //! complex.
 
+use std::fmt;
+
 use compact_str::CompactString;
+use crossterm::Command;
+use crossterm::style::{Attribute, SetAttribute};
 
 use crate::arena::{Arena, Id};
-use crate::text::{Row, strip_cr, wrap_line};
+use crate::text::{Row, SPACES, strip_cr, wrap_line};
+use crate::ui::{write_spaces, Component};
 
 /// A pair `(row_id, grapheme_index)` pointing to the location of a grapheme.
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
@@ -842,6 +847,73 @@ impl InputBox {
         let pos = self.cursor_pos();
         self.buffer_prepend(start, pos);
         self.splice(start, pos, "");
+    }
+}
+
+/// A single drawable row of the input box. The cursor is rendered as a
+/// reverse-video cell.
+#[derive(Debug)]
+pub struct InputBoxRow<'a> {
+    row: &'a InputRow,
+    width: usize,
+    cursor: Option<usize>,
+}
+
+impl Command for InputBoxRow<'_> {
+    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
+        let cursor = self.cursor;
+        for g in &self.row.graphemes {
+            let col = g.column as usize;
+            let is_cursor_cell = cursor.is_some_and(|c| c >= col && c < col + g.width as usize);
+            if is_cursor_cell {
+                SetAttribute(Attribute::Reverse).write_ansi(f)?;
+            }
+            match &g.data[..] {
+                "\t" => f.write_str(&SPACES[..g.width as usize])?,
+                "\n" => {}
+                _ => f.write_str(&g.data)?,
+            }
+            if is_cursor_cell {
+                SetAttribute(Attribute::NoReverse).write_ansi(f)?;
+            }
+        }
+
+        let mut remaining = self.width.saturating_sub(self.row.width);
+        if cursor.is_some_and(|c| c >= self.row.width) && remaining > 0 {
+            SetAttribute(Attribute::Reverse).write_ansi(f)?;
+            f.write_str(" ")?;
+            SetAttribute(Attribute::NoReverse).write_ansi(f)?;
+            remaining -= 1;
+        }
+        write_spaces(f, remaining)
+    }
+}
+
+impl Component for InputBox {
+    type Row<'a> = InputBoxRow<'a> where Self: 'a;
+    type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
+
+    fn drawable_rows(&self) -> Self::RowIter<'_> {
+        let prev = self.rows[self.viewport_top].prev;
+        let width = self.width;
+        let cursor_row = self.cursor_row;
+        let cursor_col = self.cursor_col;
+        Box::new(
+            self.iter_range(prev, self.viewport_bottom)
+                .map(move |(id, row)| InputBoxRow {
+                    row,
+                    width,
+                    cursor: (id == cursor_row).then_some(cursor_col),
+                }),
+        )
+    }
+
+    fn set_width(&mut self, width: usize) {
+        InputBox::set_width(self, width);
+    }
+
+    fn set_height(&mut self, height: usize) {
+        self.set_max_height(height);
     }
 }
 

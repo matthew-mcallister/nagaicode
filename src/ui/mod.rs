@@ -3,6 +3,7 @@ mod empty;
 mod input_box;
 mod history;
 mod padded;
+mod stacked_view;
 
 use std::fmt;
 
