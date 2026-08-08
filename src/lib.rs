@@ -1,3 +1,5 @@
+#![feature(iter_macro, yield_expr)]
+
 pub mod arena;
 pub mod canvas;
 pub mod db;

@@ -6,8 +6,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 const TAB_WIDTH: usize = 4;
-const SPACES: &str = const {
-    let Ok(s) = std::str::from_utf8(&[b' '; 128]) else { panic!() };
+pub const SPACES: &str = const {
+    let Ok(s) = std::str::from_utf8(&[b' '; 1024]) else { panic!() };
     s
 };
 
