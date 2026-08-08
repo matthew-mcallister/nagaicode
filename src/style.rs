@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crossterm::style::{Attribute, Color, ContentStyle};
+use crossterm::style::{Attribute, Attributes, Color, ContentStyle};
 
 pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb { r, g, b }
@@ -8,20 +8,36 @@ pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
 
 macro_rules! text_style {
     (
-        $($attrib:ident: $value:expr),*
+        foreground_color: $fg:expr
         $(; $($deco:expr),*)?
         $(,)?
     ) => {{
-        let mut style = crossterm::style::ContentStyle {
-            foreground_color: None,
-            background_color: None,
+        TextStyle {
+            foreground_color: $fg,
             underline_color: None,
-            attributes: crossterm::style::Attributes::none(),
-        };
-        $(style.$attrib = Some($value);)*
-        $($(style.attributes = style.attributes.with($deco);)*)?
-        style
+            attributes: Attributes::none()$( $(.with($deco))* )?,
+        }
     }};
+}
+
+/// Text style with a mandatory foreground color and no background. Convertible
+/// to a crossterm [`ContentStyle`].
+#[derive(Clone, Copy, Debug)]
+pub struct TextStyle {
+    pub foreground_color: Color,
+    pub underline_color: Option<Color>,
+    pub attributes: Attributes,
+}
+
+impl From<TextStyle> for ContentStyle {
+    fn from(style: TextStyle) -> Self {
+        ContentStyle {
+            foreground_color: Some(style.foreground_color),
+            background_color: None,
+            underline_color: style.underline_color,
+            attributes: style.attributes,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -30,9 +46,9 @@ pub struct Theme {
     pub bg_collapsible: Color,
     pub bg_collapsible_hover: Color,
     pub bg_input_box: Color,
-    pub text_base: ContentStyle,
-    pub text_header: ContentStyle,
-    pub text_subtle: ContentStyle,
+    pub text_base: TextStyle,
+    pub text_header: TextStyle,
+    pub text_subtle: TextStyle,
 }
 
 // Stock Tailwind CSS colors

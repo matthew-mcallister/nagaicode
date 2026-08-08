@@ -148,9 +148,7 @@ impl Chat {
         let text_style = self.theme.text_base;
         let bg = self.theme.bg_base;
         queue!(stdout, MoveTo(0, 0))?;
-        if let Some(fg) = text_style.foreground_color {
-            queue!(stdout, SetForegroundColor(fg))?;
-        }
+        queue!(stdout, SetForegroundColor(text_style.foreground_color))?;
         queue!(stdout, SetBackgroundColor(bg))?;
         for row in self.stacked.drawable_rows() {
             queue!(stdout, row)?;
