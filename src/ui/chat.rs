@@ -106,7 +106,12 @@ impl Chat {
                 false
             }
             (KeyCode::Enter, _, _, _) => {
+                let text = input.get_text();
+                let text = text.strip_suffix('\n').unwrap_or(&text);
                 input.set_text("");
+                if !text.is_empty() {
+                    self.stacked.inner_mut().history_mut().system_message(text);
+                }
                 false
             }
             (KeyCode::Tab, _, _, _) => {

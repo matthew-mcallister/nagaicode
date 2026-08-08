@@ -1,28 +1,36 @@
 //! Scrolling chat history. Data is constructed as a linked list of rows for
 //! fast viewport scrolling and rendering.
 
-use crossterm::style::{Attribute, Color, ContentStyle};
+use std::fmt;
+
+use crossterm::Command;
 
 use crate::arena::{Arena, Id};
 use crate::text::{Row, wrap_line};
+use crate::ui::{write_spaces, Component};
 
 #[derive(Debug)]
 pub struct HistoryRow {
     item: Id<HistoryItem>,
-    style: ContentStyle,
+    /// Width in columns
+    width: usize,
     preformatted: String,
     prev: Id<HistoryRow>,
     next: Id<HistoryRow>,
 }
 
 impl HistoryRow {
-    fn from_row(style: ContentStyle, row: Row) -> Self {
+    fn from_row(row: Row) -> Self {
         let num_bytes = row.graphemes.iter().map(|g| g.formatted().len()).sum();
         let mut content = String::with_capacity(num_bytes);
-        content.extend(row.graphemes.iter().map(|g| g.formatted()));
+        let mut width = 0;
+        for g in &row.graphemes {
+            content.push_str(g.formatted());
+            width += g.width as usize;
+        }
         Self {
             item: Id::null(),
-            style,
+            width,
             preformatted: content,
             next: Id::null(),
             prev: Id::null(),
@@ -42,7 +50,6 @@ impl HistoryItem {
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
         width: usize,
-        style: ContentStyle,
         s: &str,
     ) -> Id<Self> {
         let item = items.insert(Self {
@@ -56,7 +63,7 @@ impl HistoryItem {
         let mut num_rows = 0;
         for line in s.split('\n') {
             for row in wrap_line(width, line).into_iter() {
-                let mut history_row = HistoryRow::from_row(style, row);
+                let mut history_row = HistoryRow::from_row(row);
                 history_row.item = item;
                 history_row.prev = last_row;
 
@@ -100,7 +107,7 @@ impl History {
         // Insert dummy head, distinct from all other rows.
         let head = rows.insert(HistoryRow {
             item: Id::null(),
-            style: ContentStyle::default(),
+            width: 0,
             preformatted: String::new(),
             prev: Id::null(),
             next: Id::null(),
@@ -221,11 +228,10 @@ impl History {
 
         // Reconstruct the original text of each item. Wrapping never discards
         // characters, so concatenating the wrapped rows restores the source.
-        let items: Vec<(ContentStyle, String)> = self
+        let items: Vec<String> = self
             .item
             .iter()
             .map(|(_, item)| {
-                let style = self.rows[item.first_row].style;
                 let mut text = String::new();
                 let mut row = item.first_row;
                 loop {
@@ -236,7 +242,7 @@ impl History {
                     }
                     row = current.next;
                 }
-                (style, text)
+                text
             })
             .collect();
 
@@ -245,7 +251,7 @@ impl History {
 
         let head = self.rows.insert(HistoryRow {
             item: Id::null(),
-            style: ContentStyle::default(),
+            width: 0,
             preformatted: String::new(),
             prev: Id::null(),
             next: Id::null(),
@@ -256,8 +262,8 @@ impl History {
         self.viewport_top = head;
         self.viewport_bottom = head;
 
-        for (style, text) in items {
-            let item = HistoryItem::from_str(&mut self.item, &mut self.rows, width, style, &text);
+        for text in items {
+            let item = HistoryItem::from_str(&mut self.item, &mut self.rows, width, &text);
             self.append_item(item);
         }
     }
@@ -281,57 +287,17 @@ impl History {
 
     /// Appends a plaintext system message to the history.
     pub fn system_message(&mut self, text: &str) {
-        // === Begin template ===
-        // System       (bold, normal color)
-        //              (padding)
-        // {content}    (subtle color)
-        //              (padding)
-        //              (padding)
-        // === End template ===
-        let header_style = ContentStyle {
-            attributes: Attribute::Bold.into(),
-            ..Default::default()
-        };
-        let subtle_style = ContentStyle {
-            foreground_color: Some(Color::Grey),
-            ..Default::default()
-        };
-
-        let header = HistoryItem::from_str(
-            &mut self.item,
-            &mut self.rows,
-            self.width,
-            header_style,
-            "System",
-        );
+        let header = HistoryItem::from_str(&mut self.item, &mut self.rows, self.width, "System");
         self.append_item(header);
 
-        let padding = HistoryItem::from_str(
-            &mut self.item,
-            &mut self.rows,
-            self.width,
-            header_style,
-            "",
-        );
+        let padding = HistoryItem::from_str(&mut self.item, &mut self.rows, self.width, "");
         self.append_item(padding);
 
-        let content = HistoryItem::from_str(
-            &mut self.item,
-            &mut self.rows,
-            self.width,
-            subtle_style,
-            text,
-        );
+        let content = HistoryItem::from_str(&mut self.item, &mut self.rows, self.width, text);
         self.append_item(content);
 
         for _ in 0..2 {
-            let padding = HistoryItem::from_str(
-                &mut self.item,
-                &mut self.rows,
-                self.width,
-                subtle_style,
-                "",
-            );
+            let padding = HistoryItem::from_str(&mut self.item, &mut self.rows, self.width, "");
             self.append_item(padding);
         }
 
@@ -353,6 +319,55 @@ impl History {
             // Can't scroll any further; anchor to the bottom.
             self.set_viewport_bottom(self.last_row());
         }
+    }
+}
+
+/// A single drawable row of the history.
+#[derive(Debug)]
+pub struct HistoryRowRef<'a> {
+    row: &'a HistoryRow,
+    width: usize,
+}
+
+impl Command for HistoryRowRef<'_> {
+    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
+        f.write_str(&self.row.preformatted)?;
+        write_spaces(f, self.width.saturating_sub(self.row.width))
+    }
+}
+
+impl Component for History {
+    type Row<'a> = HistoryRowRef<'a> where Self: 'a;
+    type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
+
+    fn drawable_rows(&self) -> Self::RowIter<'_> {
+        let prev = self.rows[self.viewport_top].prev;
+        let width = self.width;
+        Box::new(
+            self.iter_range(prev, self.viewport_bottom)
+                .map(move |(_, row)| HistoryRowRef { row, width }),
+        )
+    }
+
+    fn set_width(&mut self, width: usize) {
+        History::set_width(self, width);
+    }
+
+    fn set_height(&mut self, height: usize) {
+        self.set_max_height(height);
+    }
+
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    /// Number of actually visible rows.
+    fn height(&self) -> usize {
+        std::cmp::min(self.max_height, self.num_rows())
+    }
+
+    fn cursor_pos(&self) -> (usize, usize) {
+        (0, 0)
     }
 }
 
@@ -395,10 +410,7 @@ impl<'i> std::iter::FusedIterator for HistoryRowIter<'i> {}
 
 #[cfg(test)]
 mod tests {
-    use crossterm::Command;
-
     use super::*;
-    use crate::style::THEME_DARK;
 
     #[test]
     fn test_empty_history() {

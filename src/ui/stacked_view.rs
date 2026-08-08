@@ -1,18 +1,18 @@
 use crossterm::Command;
 
 use crate::style::Theme;
-use crate::ui::empty::{Empty, EmptyRow};
+use crate::ui::history::{History, HistoryRowRef};
 use crate::ui::input_box::{InputBox, InputBoxRow};
 use crate::ui::padded::{Padded, PaddedRow};
-use crate::ui::Component;
+use crate::ui::{write_spaces, Component};
 
 /// Stacks components vertically. The input box is anchored to the bottom and
-/// grows upward; the empty component fills the remaining space.
+/// grows upward; the history fills the remaining space.
 #[derive(Debug)]
 pub struct StackedView {
     width: usize,
     height: usize,
-    empty: Empty,
+    history: History,
     input: Padded<InputBox>,
 }
 
@@ -26,7 +26,7 @@ impl StackedView {
         let mut this = Self {
             width,
             height,
-            empty: Empty::new(width, 0, None),
+            history: History::new(width, 0),
             input: Padded::new(
                 InputBox::new(width.saturating_sub(4), input_max_height.saturating_sub(2)),
                 2,
@@ -34,7 +34,7 @@ impl StackedView {
                 Some(theme.bg_input_box),
             ),
         };
-        this.resize();  // Compute empty height
+        this.resize();  // Compute history height
         this
     }
 
@@ -42,25 +42,31 @@ impl StackedView {
         self.input.inner_mut()
     }
 
-    /// Recomputes the empty region's height after the input box changes size.
+    pub fn history_mut(&mut self) -> &mut History {
+        &mut self.history
+    }
+
+    /// Recomputes the history region's height after the input box changes size.
     pub fn resize(&mut self) {
-        let empty_height = self.height.saturating_sub(self.input.height());
-        if self.empty.height() != empty_height {
-            self.empty.set_height(empty_height);
+        let history_height = self.height.saturating_sub(self.input.height());
+        if self.history.max_height() != history_height {
+            self.history.set_height(history_height);
         }
     }
 }
 
 #[derive(Debug)]
 pub enum StackedRow<'a> {
-    Empty(EmptyRow),
+    Empty { width: usize },
+    History(HistoryRowRef<'a>),
     Input(PaddedRow<InputBoxRow<'a>>),
 }
 
 impl Command for StackedRow<'_> {
     fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
         match self {
-            StackedRow::Empty(row) => row.write_ansi(f),
+            StackedRow::Empty { width } => write_spaces(f, *width),
+            StackedRow::History(row) => row.write_ansi(f),
             StackedRow::Input(row) => row.write_ansi(f),
         }
     }
@@ -71,18 +77,20 @@ impl Component for StackedView {
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
-        let empty_height = self.empty.height();
-        let empty = self.empty.drawable_rows().take(empty_height);
-        let input = self.input.drawable_rows();
-        Box::new(
-            empty.map(StackedRow::Empty)
-                .chain(input.map(StackedRow::Input)),
-        )
+        let empty_rows = self
+            .height
+            .saturating_sub(self.history.height())
+            .saturating_sub(self.input.height());
+        let width = self.width;
+        let empty = (0..empty_rows).map(move |_| StackedRow::Empty { width });
+        let history = self.history.drawable_rows().map(StackedRow::History);
+        let input = self.input.drawable_rows().map(StackedRow::Input);
+        Box::new(empty.chain(history).chain(input))
     }
 
     fn set_width(&mut self, width: usize) {
         self.width = width;
-        self.empty.set_width(width);
+        self.history.set_width(width);
         self.input.set_width(width);
         self.resize();
     }
@@ -102,6 +110,6 @@ impl Component for StackedView {
 
     fn cursor_pos(&self) -> (usize, usize) {
         let (row, col) = self.input.cursor_pos();
-        (self.empty.height() + row, col)
+        (self.height.saturating_sub(self.input.height()) + row, col)
     }
 }

@@ -1,5 +1,4 @@
 mod chat;
-mod empty;
 mod input_box;
 mod history;
 mod padded;
