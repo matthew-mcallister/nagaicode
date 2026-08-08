@@ -1,3 +1,5 @@
+// TODO: paste mode, disables all horizontal padding
+
 use std::fmt;
 use std::iter::iter;
 
@@ -129,5 +131,10 @@ impl<C: Component> Component for Padded<C> {
 
     fn height(&self) -> usize {
         self.inner.height() + 2 * self.v_padding
+    }
+
+    fn cursor_pos(&self) -> (usize, usize) {
+        let (row, col) = self.inner.cursor_pos();
+        (row + self.v_padding, col + self.h_padding)
     }
 }

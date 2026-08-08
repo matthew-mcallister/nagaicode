@@ -99,4 +99,9 @@ impl Component for StackedView {
     fn height(&self) -> usize {
         self.height
     }
+
+    fn cursor_pos(&self) -> (usize, usize) {
+        let (row, col) = self.input.cursor_pos();
+        (self.empty.height() + row, col)
+    }
 }

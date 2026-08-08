@@ -72,4 +72,8 @@ impl Component for Empty {
     fn height(&self) -> usize {
         self.height
     }
+
+    fn cursor_pos(&self) -> (usize, usize) {
+        (0, 0)
+    }
 }

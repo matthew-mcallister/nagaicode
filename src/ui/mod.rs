@@ -34,6 +34,10 @@ trait Component {
     /// Returns the component's height.
     fn height(&self) -> usize;
 
+    /// Returns the (row, column) the cursor should appear at, relative to the
+    /// component's top-left corner, when the component is focused/active.
+    fn cursor_pos(&self) -> (usize, usize);
+
     /// Updates the component's width. The component should recompute its
     /// layout.
     fn set_width(&mut self, width: usize);

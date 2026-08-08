@@ -154,12 +154,16 @@ impl Chat {
     fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
         let text_style = self.theme.text_base;
         let bg = self.theme.bg_base;
-        queue!(stdout, SetForegroundColor(text_style.foreground_color))?;
-        queue!(stdout, SetBackgroundColor(bg))?;
+        queue!(stdout,
+            Hide,
+            SetForegroundColor(text_style.foreground_color),
+            SetBackgroundColor(bg),
+        )?;
         for (y, row) in self.stacked.drawable_rows().enumerate() {
-            queue!(stdout, row, MoveTo(0, y as u16))?;
+            queue!(stdout, MoveTo(0, y as u16), row)?;
         }
-        queue!(stdout, ResetColor)?;
+        let (row, col) = self.stacked.cursor_pos();
+        queue!(stdout, ResetColor, MoveTo(col as u16, row as u16), Show)?;
         stdout.flush()?;
         Ok(())
     }
@@ -169,7 +173,7 @@ impl Chat {
 pub fn run() -> AnyResult<()> {
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen, DisableLineWrap, Hide)?;
+    execute!(stdout, EnterAlternateScreen, DisableLineWrap)?;
 
     let (w, h) = size()?;
     let mut chat = Chat::new(w, h, &THEME_DARK);
@@ -191,7 +195,7 @@ pub fn run() -> AnyResult<()> {
         }
     }
 
-    execute!(stdout, EnableLineWrap, Show, LeaveAlternateScreen)?;
+    execute!(stdout, EnableLineWrap, LeaveAlternateScreen)?;
     disable_raw_mode()?;
     Ok(())
 }
