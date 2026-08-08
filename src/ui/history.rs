@@ -6,7 +6,7 @@ use std::fmt;
 use crossterm::Command;
 
 use crate::arena::{Arena, Id};
-use crate::text::{Row, wrap_line};
+use crate::ui::text::{Row, wrap_line};
 use crate::ui::{write_spaces, Component};
 
 #[derive(Debug)]

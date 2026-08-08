@@ -12,7 +12,7 @@ use crossterm::terminal::{
 };
 
 use crate::error::AnyResult;
-use crate::style::{THEME_DARK, Theme};
+use crate::ui::style::{THEME_DARK, Theme};
 use crate::ui::padded::Padded;
 use crate::ui::stacked_view::StackedView;
 use crate::ui::Component;

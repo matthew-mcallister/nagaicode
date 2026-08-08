@@ -3,13 +3,15 @@ mod input_box;
 mod history;
 mod padded;
 mod stacked_view;
+mod style;
+mod text;
 
 use std::fmt;
 
 pub use chat::run;
 use crossterm::Command;
 
-use crate::text::SPACES;
+use text::SPACES;
 
 /// Trait which all drawable UI components implement. This UI is *row-based*:
 /// every drawable must be able to decompose itself into rows, which the parent

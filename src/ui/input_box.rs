@@ -7,7 +7,7 @@ use compact_str::CompactString;
 use crossterm::Command;
 
 use crate::arena::{Arena, Id};
-use crate::text::{Row, SPACES, strip_cr, wrap_line};
+use crate::ui::text::{Row, SPACES, strip_cr, wrap_line};
 use crate::ui::{write_spaces, Component};
 
 /// A pair `(row_id, grapheme_index)` pointing to the location of a grapheme.
@@ -1001,7 +1001,7 @@ impl<'i> std::iter::FusedIterator for InputGraphemeIter<'i> {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::text::truncate_line;
+    use crate::ui::text::truncate_line;
 
     const SAMPLE: &str = r"Is it for fear to wet a widow's eye,
 That thou consum'st thy self in single life?

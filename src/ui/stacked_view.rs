@@ -1,6 +1,6 @@
 use crossterm::Command;
 
-use crate::style::Theme;
+use crate::ui::style::Theme;
 use crate::ui::history::{History, HistoryRowRef};
 use crate::ui::input_box::{InputBox, InputBoxRow};
 use crate::ui::padded::{Padded, PaddedRow};
