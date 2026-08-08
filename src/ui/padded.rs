@@ -4,24 +4,38 @@ use std::iter::iter;
 use crossterm::Command;
 use crossterm::style::{Color, ResetColor, SetBackgroundColor};
 
-use crate::text::SPACES;
+use crate::ui::write_spaces;
 use crate::ui::Component;
 
 /// Adds padding around a UI component. Also styles the background.
 #[derive(Debug)]
 struct Padded<C> {
-    width: usize,
-    height: usize,
-    h_padding: usize,
-    v_padding: usize,
-    background_color: Color,
-    inner: C,
+    pub width: usize,
+    pub height: usize,
+    pub h_padding: usize,
+    pub v_padding: usize,
+    pub background_color: Option<Color>,
+    pub inner: C,
+}
+
+impl<C> Padded<C> {
+    pub fn inner(&self) -> &C {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &C {
+        &self.inner
+    }
+
+    pub fn into_inner(self) -> C {
+        self.inner
+    }
 }
 
 enum PaddedRow<R> {
-    Fill { background: Color, width: usize },
+    Fill { background: Option<Color>, width: usize },
     Inner {
-        background: Color,
+        background: Option<Color>,
         left: usize,
         right: usize,
         inner: R,
@@ -32,7 +46,9 @@ impl<R: Command> Command for PaddedRow<R> {
     fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
         match self {
             PaddedRow::Fill { background, width } => {
-                SetBackgroundColor(*background).write_ansi(f)?;
+                if let Some(bg) = background {
+                    SetBackgroundColor(*bg).write_ansi(f)?;
+                }
                 write_spaces(f, *width)?;
                 ResetColor.write_ansi(f)?;
             }
@@ -42,7 +58,9 @@ impl<R: Command> Command for PaddedRow<R> {
                 right,
                 inner,
             } => {
-                SetBackgroundColor(*background).write_ansi(f)?;
+                if let Some(bg) = background {
+                    SetBackgroundColor(*bg).write_ansi(f)?;
+                }
                 write_spaces(f, *left)?;
                 inner.write_ansi(f)?;
                 write_spaces(f, *right)?;
@@ -86,14 +104,14 @@ impl<C: Component> Component for Padded<C> {
             }
         })())
     }
-}
 
-fn write_spaces(f: &mut impl fmt::Write, count: usize) -> fmt::Result {
-    let mut remaining = count;
-    while remaining != 0 {
-        let n = remaining.min(SPACES.len());
-        f.write_str(&SPACES[..n])?;
-        remaining -= n;
+    fn set_width(&mut self, width: usize) {
+        self.width = width;
+        self.inner.set_width(width - 2 * self.h_padding);
     }
-    Ok(())
+
+    fn set_height(&mut self, height: usize) {
+        self.height = height;
+        self.inner.set_height(height - 2 * self.v_padding);
+    }
 }
