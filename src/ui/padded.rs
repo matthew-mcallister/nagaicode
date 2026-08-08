@@ -9,7 +9,7 @@ use crate::ui::Component;
 
 /// Adds padding around a UI component. Also styles the background.
 #[derive(Debug)]
-struct Padded<C> {
+pub struct Padded<C> {
     pub h_padding: usize,
     pub v_padding: usize,
     pub background_color: Option<Color>,
@@ -17,12 +17,26 @@ struct Padded<C> {
 }
 
 impl<C> Padded<C> {
+    pub fn new(
+        inner: C,
+        h_padding: usize,
+        v_padding: usize,
+        background_color: Option<Color>,
+    ) -> Self {
+        Self {
+            h_padding,
+            v_padding,
+            background_color,
+            inner,
+        }
+    }
+
     pub fn inner(&self) -> &C {
         &self.inner
     }
 
-    pub fn inner_mut(&mut self) -> &C {
-        &self.inner
+    pub fn inner_mut(&mut self) -> &mut C {
+        &mut self.inner
     }
 
     pub fn into_inner(self) -> C {
@@ -30,7 +44,8 @@ impl<C> Padded<C> {
     }
 }
 
-enum PaddedRow<R> {
+#[derive(Debug)]
+pub enum PaddedRow<R> {
     Fill { background: Option<Color>, width: usize },
     Inner {
         background: Option<Color>,
@@ -61,6 +76,9 @@ impl<R: Command> Command for PaddedRow<R> {
                 }
                 write_spaces(f, *left)?;
                 inner.write_ansi(f)?;
+                if let Some(bg) = background {
+                    SetBackgroundColor(*bg).write_ansi(f)?;
+                }
                 write_spaces(f, *right)?;
                 ResetColor.write_ansi(f)?;
             }
@@ -98,11 +116,11 @@ impl<C: Component> Component for Padded<C> {
     }
 
     fn set_width(&mut self, width: usize) {
-        self.inner.set_width(width - 2 * self.h_padding);
+        self.inner.set_width(width.saturating_sub(2 * self.h_padding));
     }
 
     fn set_height(&mut self, height: usize) {
-        self.inner.set_height(height - 2 * self.v_padding);
+        self.inner.set_height(height.saturating_sub(2 * self.v_padding));
     }
 
     fn width(&self) -> usize {

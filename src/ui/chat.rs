@@ -13,6 +13,7 @@ use crossterm::terminal::{
 
 use crate::error::AnyResult;
 use crate::style::{THEME_DARK, Theme};
+use crate::ui::padded::Padded;
 use crate::ui::stacked_view::StackedView;
 use crate::ui::Component;
 
@@ -20,17 +21,23 @@ const TEXT_INPUT_MAX_HEIGHT: u16 = 24;
 
 struct Chat {
     theme: &'static Theme,
-    stacked: StackedView,
+    stacked: Padded<StackedView>,
 }
 
 impl Chat {
     fn new(w: u16, h: u16, theme: &'static Theme) -> Self {
         Self {
             theme,
-            stacked: StackedView::new(
-                w as usize,
-                h as usize,
-                TEXT_INPUT_MAX_HEIGHT.min(h) as usize,
+            stacked: Padded::new(
+                StackedView::new(
+                    w as usize - 4,
+                    h as usize - 2,
+                    TEXT_INPUT_MAX_HEIGHT.min(h.saturating_sub(2)) as usize,
+                    theme,
+                ),
+                2,
+                1,
+                Some(theme.bg_base),
             ),
         }
     }
@@ -45,7 +52,7 @@ impl Chat {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
-        let input = self.stacked.input_mut();
+        let input = self.stacked.inner_mut().input_mut();
         match (key.code, ctrl, shift, alt) {
             // Ctrl + char
             (KeyCode::Char('c'), true, _, _) => true,
@@ -147,7 +154,6 @@ impl Chat {
     fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
         let text_style = self.theme.text_base;
         let bg = self.theme.bg_base;
-        queue!(stdout, MoveTo(0, 0))?;
         queue!(stdout, SetForegroundColor(text_style.foreground_color))?;
         queue!(stdout, SetBackgroundColor(bg))?;
         for (y, row) in self.stacked.drawable_rows().enumerate() {
@@ -174,7 +180,7 @@ pub fn run() -> AnyResult<()> {
         match event::read()? {
             Event::Key(key) => {
                 quit = chat.handle_key(key);
-                chat.stacked.resize();
+                chat.stacked.inner_mut().resize();
                 chat.draw(&mut stdout)?;
             }
             Event::Resize(w, h) => {

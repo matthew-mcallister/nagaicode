@@ -1,7 +1,9 @@
 use crossterm::Command;
 
+use crate::style::Theme;
 use crate::ui::empty::{Empty, EmptyRow};
 use crate::ui::input_box::{InputBox, InputBoxRow};
+use crate::ui::padded::{Padded, PaddedRow};
 use crate::ui::Component;
 
 /// Stacks components vertically. The input box is anchored to the bottom and
@@ -11,7 +13,7 @@ pub struct StackedView {
     width: usize,
     height: usize,
     empty: Empty,
-    input: InputBox,
+    input: Padded<InputBox>,
 }
 
 impl StackedView {
@@ -19,19 +21,25 @@ impl StackedView {
         width: usize,
         height: usize,
         input_max_height: usize,
+        theme: &'static Theme,
     ) -> Self {
         let mut this = Self {
             width,
             height,
             empty: Empty::new(width, 0, None),
-            input: InputBox::new(width, input_max_height),
+            input: Padded::new(
+                InputBox::new(width.saturating_sub(4), input_max_height.saturating_sub(2)),
+                2,
+                1,
+                Some(theme.bg_input_box),
+            ),
         };
         this.resize();  // Compute empty height
         this
     }
 
     pub fn input_mut(&mut self) -> &mut InputBox {
-        &mut self.input
+        self.input.inner_mut()
     }
 
     /// Recomputes the empty region's height after the input box changes size.
@@ -46,7 +54,7 @@ impl StackedView {
 #[derive(Debug)]
 pub enum StackedRow<'a> {
     Empty(EmptyRow),
-    Input(InputBoxRow<'a>),
+    Input(PaddedRow<InputBoxRow<'a>>),
 }
 
 impl Command for StackedRow<'_> {
