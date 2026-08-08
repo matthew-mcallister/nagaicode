@@ -4,8 +4,6 @@
 use crossterm::style::{Attribute, Color, ContentStyle};
 
 use crate::arena::{Arena, Id};
-use crate::canvas::Canvas;
-use crate::style::Theme;
 use crate::text::{Row, wrap_line};
 
 #[derive(Debug)]
@@ -395,29 +393,6 @@ impl<'i> DoubleEndedIterator for HistoryRowIter<'i> {
 
 impl<'i> std::iter::FusedIterator for HistoryRowIter<'i> {}
 
-#[derive(Debug)]
-pub struct DrawHistory<'i> {
-    pub theme: &'static Theme,
-    pub history: &'i History,
-    pub x: u16,
-    pub y: u16,
-}
-
-impl<'i> DrawHistory<'i> {
-    pub fn draw_to(&self, canvas: &mut Canvas) {
-        let prev = self.history.rows[self.history.viewport_top].prev;
-        let top_y = self.y;
-        for (offset, (_, row)) in self
-            .history
-            .iter_range(prev, self.history.viewport_bottom)
-            .enumerate()
-        {
-            let row_y = top_y + offset as u16;
-            canvas.write_str(self.x, row_y, &row.preformatted, row.style);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crossterm::Command;
@@ -508,25 +483,5 @@ mod tests {
         // Hit top
         history.scroll_up(1000);
         assert_eq!(history.viewport_top, history.first_row());
-    }
-
-    #[test]
-    fn test_draw() {
-        let mut history = History::new(80, 5);
-        history.system_message("hello world");
-
-        let mut canvas = Canvas::new(80, 5);
-        let draw = DrawHistory {
-            theme: &THEME_DARK,
-            history: &history,
-            x: 0,
-            y: 0,
-        };
-        draw.draw_to(&mut canvas);
-
-        let mut out = String::new();
-        canvas.write_ansi(&mut out).unwrap();
-        assert!(out.contains("System"));
-        assert!(out.contains("hello world"));
     }
 }

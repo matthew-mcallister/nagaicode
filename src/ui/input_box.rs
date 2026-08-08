@@ -2,10 +2,8 @@
 //! complex.
 
 use compact_str::CompactString;
-use crossterm::style::ContentStyle;
 
 use crate::arena::{Arena, Id};
-use crate::canvas::Canvas;
 use crate::text::{Row, strip_cr, wrap_line};
 
 /// A pair `(row_id, grapheme_index)` pointing to the location of a grapheme.
@@ -366,6 +364,7 @@ impl InputBox {
         }
     }
 
+    /// Number of actually visible rows.
     pub fn height(&self) -> usize {
         std::cmp::min(self.max_height, self.num_rows())
     }
@@ -485,9 +484,7 @@ impl InputBox {
     #[allow(dead_code)]
     /// Updates the maximum viewport size
     pub fn set_max_height(&mut self, max_height: usize) {
-        if max_height == 0 {
-            return;
-        }
+        assert!(max_height > 0);
         self.max_height = max_height;
         self.fit_viewport_on_resize(self.row_diff(self.viewport_top, self.cursor_row) as usize);
     }
@@ -944,40 +941,6 @@ impl<'i> DoubleEndedIterator for InputGraphemeIter<'i> {
 }
 
 impl<'i> std::iter::FusedIterator for InputGraphemeIter<'i> {}
-
-/// Draws the viewport into a canvas, along with the cursor block.
-#[derive(Debug)]
-pub struct DrawInputBox<'i> {
-    pub input: &'i InputBox,
-    pub x: u16,
-    pub y: u16,
-    pub style: ContentStyle,
-}
-
-impl<'i> DrawInputBox<'i> {
-    pub fn draw_to(&self, canvas: &mut Canvas) {
-        // Draw text
-        let prev = self.input.rows[self.input.viewport_top].prev;
-        let top_y = self.y;
-        let mut cursor_row = u16::MAX;
-        for (offset, (row_id, row)) in self.input
-            .iter_range(prev, self.input.viewport_bottom)
-            .enumerate()
-        {
-            let row_y = top_y + offset as u16;
-            canvas.write_str(self.x, row_y, &row.preformatted, self.style);
-            if row_id == self.input.cursor_row {
-                cursor_row = row_y;
-            }
-        }
-
-        // Draw cursor
-        let row = &self.input.rows[self.input.cursor_row];
-        let g = row.grapheme_at_col(self.input.cursor_col);
-        let column = row.graphemes[g].column as u16;
-        canvas.set_cursor_pos(self.x + column, cursor_row);
-    }
-}
 
 #[cfg(test)]
 mod tests {

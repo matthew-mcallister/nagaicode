@@ -4,17 +4,15 @@ use compact_str::CompactString;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
-use crossterm::style::ContentStyle;
 use crossterm::terminal::{
     DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
     enable_raw_mode, size,
 };
 
-use crate::canvas::Canvas;
 use crate::error::AnyResult;
 use crate::style::{THEME_DARK, Theme};
-use crate::ui::history::{DrawHistory, History};
-use crate::ui::input_box::{DrawInputBox, InputBox};
+use crate::ui::history::History;
+use crate::ui::input_box::InputBox;
 
 const TEXT_INPUT_MAX_HEIGHT: u16 = 24;
 /// Horizontal padding around the history and input box, in columns.
@@ -191,46 +189,7 @@ impl Chat {
 
     // TODO: cap redraw frequency
     fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
-        let mut canvas = Canvas::new(self.width, self.height);
-
-        // Clear screen
-        canvas.clear_all(ContentStyle {
-            background_color: Some(self.theme.bg_base),
-            ..Default::default()
-        });
-
-        // Draw chat history
-        let (history_x, history_y, history_w, history_h) = self.history_rect();
-        let base = ContentStyle {
-            background_color: Some(self.theme.bg_base),
-            ..Default::default()
-        };
-        canvas.clear_rect(history_x, history_y, history_w, history_h, base);
-        let draw_history = DrawHistory {
-            theme: self.theme,
-            history: &self.history,
-            x: history_x,
-            y: history_y,
-        };
-        draw_history.draw_to(&mut canvas);
-
-        // Draw input box
-        let (input_x, input_y, input_w, input_h) = self.input_box_rect();
-        let style = ContentStyle {
-            background_color: Some(self.theme.bg_input_box),
-            ..Default::default()
-        };
-        canvas.clear_rect(input_x, input_y, input_w, input_h, style);
-        let draw_input = DrawInputBox {
-            input: &self.input,
-            x: input_x + 2,
-            y: input_y + 1,
-            style: self.theme.text_base,
-        };
-        draw_input.draw_to(&mut canvas);
-
-        execute!(stdout, canvas)?;
-        Ok(())
+        todo!()
     }
 }
 
