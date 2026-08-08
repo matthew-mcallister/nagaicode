@@ -10,8 +10,6 @@ use crate::ui::Component;
 /// Adds padding around a UI component. Also styles the background.
 #[derive(Debug)]
 struct Padded<C> {
-    pub width: usize,
-    pub height: usize,
     pub h_padding: usize,
     pub v_padding: usize,
     pub background_color: Option<Color>,
@@ -78,46 +76,40 @@ impl<C: Component> Component for Padded<C> {
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let mut inner = self.inner.drawable_rows();
         let background = self.background_color;
-        let width = self.width;
+        let width = self.inner.width() + 2 * self.h_padding;
         let h_padding = self.h_padding;
-        let height = self.height;
+        let v_padding = self.v_padding;
         Box::new(iter!(move || {
-            for _ in 0..self.v_padding {
+            for _ in 0..v_padding {
                 yield PaddedRow::Fill { background, width };
             }
-            for _ in 2..height {
-                if let Some(row) = inner.next() {
-                    yield PaddedRow::Inner {
-                        background,
-                        left: h_padding,
-                        right: h_padding,
-                        inner: row,
-                    };
-                } else {
-                    yield PaddedRow::Fill { background, width };
-                }
+            for row in &mut inner {
+                yield PaddedRow::Inner {
+                    background,
+                    left: h_padding,
+                    right: h_padding,
+                    inner: row,
+                };
             }
-            for _ in 0..self.v_padding {
+            for _ in 0..v_padding {
                 yield PaddedRow::Fill { background, width };
             }
         })())
     }
 
     fn set_width(&mut self, width: usize) {
-        self.width = width;
         self.inner.set_width(width - 2 * self.h_padding);
     }
 
     fn set_height(&mut self, height: usize) {
-        self.height = height;
         self.inner.set_height(height - 2 * self.v_padding);
     }
 
     fn width(&self) -> usize {
-        self.width
+        self.inner.width() + 2 * self.h_padding
     }
 
     fn height(&self) -> usize {
-        self.height
+        self.inner.height() + 2 * self.v_padding
     }
 }
