@@ -24,21 +24,6 @@ macro_rules! text_style {
     }};
 }
 
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub enum BackgroundColorName {
-    Base,
-    Collapsible,
-    CollapsibleHover,
-    InputBox,
-}
-
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub enum TextStyleName {
-    Base,
-    Header,
-    Subtle,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct Theme {
     pub bg_base: Color,
@@ -48,25 +33,6 @@ pub struct Theme {
     pub text_base: ContentStyle,
     pub text_header: ContentStyle,
     pub text_subtle: ContentStyle,
-}
-
-impl Theme {
-    pub fn get_text_style(&self, name: TextStyleName) -> ContentStyle {
-        match name {
-            TextStyleName::Base => self.text_base,
-            TextStyleName::Header => self.text_header,
-            TextStyleName::Subtle => self.text_subtle,
-        }
-    }
-
-    pub fn get_background_color(&self, name: BackgroundColorName) -> Color {
-        match name {
-            BackgroundColorName::Base => self.bg_base,
-            BackgroundColorName::Collapsible => self.bg_collapsible,
-            BackgroundColorName::CollapsibleHover => self.bg_collapsible_hover,
-            BackgroundColorName::InputBox => self.bg_input_box,
-        }
-    }
 }
 
 // Stock Tailwind CSS colors

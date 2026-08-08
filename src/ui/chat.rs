@@ -1,9 +1,11 @@
 use std::io::Write;
 
 use compact_str::CompactString;
-use crossterm::cursor::{Hide, Show};
+use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::queue;
 use crossterm::execute;
+use crossterm::style::{ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{
     DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
     enable_raw_mode, size,
@@ -11,73 +13,31 @@ use crossterm::terminal::{
 
 use crate::error::AnyResult;
 use crate::style::{THEME_DARK, Theme};
-use crate::ui::history::History;
-use crate::ui::input_box::InputBox;
+use crate::ui::stacked_view::StackedView;
+use crate::ui::Component;
 
 const TEXT_INPUT_MAX_HEIGHT: u16 = 24;
-/// Horizontal padding around the history and input box, in columns.
-const H_PADDING: u16 = 2;
-/// Vertical padding above/below the history, in rows.
-const V_PADDING: u16 = 1;
 
 struct Chat {
-    width: u16,
-    height: u16,
     theme: &'static Theme,
-    input: InputBox,
-    history: History,
+    stacked: StackedView,
 }
 
 impl Chat {
     fn new(w: u16, h: u16, theme: &'static Theme) -> Self {
-        let mut chat = Self {
-            width: w,
-            height: h,
+        Self {
             theme,
-            input: InputBox::new(w.saturating_sub(2 * H_PADDING + 4) as usize, TEXT_INPUT_MAX_HEIGHT as _),
-            history: History::new(w.saturating_sub(2 * H_PADDING) as usize, 1),
-        };
-        chat.update_history_max_height();
-        chat
+            stacked: StackedView::new(
+                w as usize,
+                h as usize,
+                TEXT_INPUT_MAX_HEIGHT.min(h) as usize,
+            ),
+        }
     }
 
     fn resize(&mut self, w: u16, h: u16) {
-        self.width = w;
-        self.height = h;
-        self.input
-            .set_width(w.saturating_sub(2 * H_PADDING + 4) as usize);
-        self.history.set_width(w.saturating_sub(2 * H_PADDING) as usize);
-        self.update_history_max_height();
-    }
-
-    /// Computes the input box rectangle `(x, y, w, h)`.
-    fn input_box_rect(&self) -> (u16, u16, u16, u16) {
-        let x_0 = H_PADDING;
-        let x_1 = self.width - H_PADDING;
-        let y_1 = self.height - V_PADDING;
-        let y_0 = y_1 - self.input.height() as u16 - 2;
-        (x_0, y_0, x_1 - x_0, y_1 - y_0)
-    }
-
-    /// Computes the history rectangle `(x, y, w, h)`, filling the screen from
-    /// the top down to the top of the input box.
-    fn history_rect(&self) -> (u16, u16, u16, u16) {
-        let (x_0, y_0, _, _) = self.input_box_rect();
-        (
-            x_0,
-            V_PADDING,
-            self.width.saturating_sub(2 * H_PADDING),
-            y_0.saturating_sub(2 * V_PADDING),
-        )
-    }
-
-    /// Keeps the history viewport height in sync with the input box height.
-    fn update_history_max_height(&mut self) {
-        let (_, _, _, h) = self.history_rect();
-        let height = h as usize;
-        if height != self.history.max_height() {
-            self.history.set_max_height(height);
-        }
+        self.stacked.set_width(w as usize);
+        self.stacked.set_height(h as usize);
     }
 
     /// Handles a key event. Returns true if the app should quit.
@@ -85,40 +45,41 @@ impl Chat {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let input = self.stacked.input_mut();
         match (key.code, ctrl, shift, alt) {
             // Ctrl + char
             (KeyCode::Char('c'), true, _, _) => true,
             (KeyCode::Char('a'), true, _, _) => {
-                self.input.go_to_line_start();
+                input.go_to_line_start();
                 false
             }
             (KeyCode::Char('e'), true, _, _) => {
-                self.input.go_to_line_end();
+                input.go_to_line_end();
                 false
             }
             (KeyCode::Char('u'), true, _, _) => {
-                self.input.delete_to_line_start();
+                input.delete_to_line_start();
                 false
             }
             (KeyCode::Char('k'), true, _, _) => {
-                self.input.delete_to_line_end();
+                input.delete_to_line_end();
                 false
             }
             (KeyCode::Char('w'), true, _, _) => {
-                self.input.delete_prev_word();
+                input.delete_prev_word();
                 false
             }
             (KeyCode::Char('y'), true, _, _) => {
-                self.input.paste_buffer();
+                input.paste_buffer();
                 false
             }
             // Alt + char
             (KeyCode::Char('f'), _, _, true) => {
-                self.input.go_to_word_end();
+                input.go_to_word_end();
                 false
             }
             (KeyCode::Char('b'), _, _, true) => {
-                self.input.go_to_prev_word_start();
+                input.go_to_prev_word_start();
                 false
             }
             // Other combinations
@@ -127,60 +88,55 @@ impl Chat {
             | (KeyCode::Enter, true, _, _)
             | (KeyCode::Enter, _, true, _)
             | (KeyCode::Enter, _, _, true) => {
-                self.input.paste("\n");
+                input.paste("\n");
                 false
             }
             // Ignoring modifiers
             (KeyCode::Char(c), _, _, _) => {
                 let mut s = CompactString::with_capacity(1);
                 s.push(c);
-                self.input.paste(&s);
+                input.paste(&s);
                 false
             }
             (KeyCode::Enter, _, _, _) => {
-                let text = self.input.get_text();
-                self.input.set_text("");
-                let text = text.trim_end_matches('\n');
-                if !text.is_empty() {
-                    self.history.system_message(text);
-                }
+                input.set_text("");
                 false
             }
             (KeyCode::Tab, _, _, _) => {
                 // XXX: Maybe should expand to spaces when input via keyboard
-                self.input.paste("\t");
+                input.paste("\t");
                 false
             }
             (KeyCode::Backspace, _, _, _) => {
-                self.input.backspace();
+                input.backspace();
                 false
             }
             (KeyCode::Delete, _, _, _) => {
-                self.input.delete();
+                input.delete();
                 false
             }
             (KeyCode::Left, _, _, _) => {
-                self.input.move_left();
+                input.move_left();
                 false
             }
             (KeyCode::Right, _, _, _) => {
-                self.input.move_right();
+                input.move_right();
                 false
             }
             (KeyCode::Up, _, _, _) => {
-                self.input.move_up(1);
+                input.move_up(1);
                 false
             }
             (KeyCode::Down, _, _, _) => {
-                self.input.move_down(1);
+                input.move_down(1);
                 false
             }
             (KeyCode::PageUp, _, _, _) => {
-                self.input.move_up(self.input.max_height());
+                input.move_up(input.max_height());
                 false
             }
             (KeyCode::PageDown, _, _, _) => {
-                self.input.move_down(self.input.max_height());
+                input.move_down(input.max_height());
                 false
             }
             _ => false,
@@ -189,7 +145,19 @@ impl Chat {
 
     // TODO: cap redraw frequency
     fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
-        todo!()
+        let text_style = self.theme.text_base;
+        let bg = self.theme.bg_base;
+        queue!(stdout, MoveTo(0, 0))?;
+        if let Some(fg) = text_style.foreground_color {
+            queue!(stdout, SetForegroundColor(fg))?;
+        }
+        queue!(stdout, SetBackgroundColor(bg))?;
+        for row in self.stacked.drawable_rows() {
+            queue!(stdout, row)?;
+        }
+        queue!(stdout, ResetColor)?;
+        stdout.flush()?;
+        Ok(())
     }
 }
 
@@ -208,7 +176,7 @@ pub fn run() -> AnyResult<()> {
         match event::read()? {
             Event::Key(key) => {
                 quit = chat.handle_key(key);
-                chat.update_history_max_height();
+                chat.stacked.resize();
                 chat.draw(&mut stdout)?;
             }
             Event::Resize(w, h) => {

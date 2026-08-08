@@ -15,15 +15,21 @@ pub struct StackedView {
 }
 
 impl StackedView {
-    pub fn new(width: usize, height: usize) -> Self {
-        let mut view = Self {
+    pub fn new(
+        width: usize,
+        height: usize,
+        input_max_height: usize,
+    ) -> Self {
+        Self {
             width,
             height,
-            empty: Empty::new(width, height, None),
-            input: InputBox::new(width, height),
-        };
-        view.resize();
-        view
+            empty: Empty::new(width, height - input_max_height, None),
+            input: InputBox::new(width, input_max_height),
+        }
+    }
+
+    pub fn input_mut(&mut self) -> &mut InputBox {
+        &mut self.input
     }
 
     /// Recomputes the empty region's height after the input box changes size.
@@ -68,13 +74,11 @@ impl Component for StackedView {
         self.width = width;
         self.empty.set_width(width);
         self.input.set_width(width);
+        self.resize();
     }
 
     fn set_height(&mut self, height: usize) {
         self.height = height;
-        if height > 0 {
-            self.input.set_height(height);
-        }
         self.resize();
     }
 }
