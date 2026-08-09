@@ -1,16 +1,10 @@
-use std::fmt;
 use std::iter::iter;
 
-use crossterm::style::{
-    Attribute, Attributes, Color, Colors, ContentStyle, ResetColor, SetAttribute,
-    SetAttributes, SetBackgroundColor, SetColors, SetForegroundColor, SetStyle,
-    SetUnderlineColor,
-};
 use crossterm::Command;
-use markdown::mdast::{InlineCode, Node, Paragraph};
+use markdown::mdast::{Blockquote, InlineCode, Node, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::ui::style::{TextStyle, Theme};
+use crate::ui::style::{TextStyle, Theme, UpdateStyle};
 use crate::ui::text::{wrap_line, SPACES, TAB_WIDTH};
 
 /// Out-of-line style marker.
@@ -45,13 +39,17 @@ fn collapse_whitespace(s: &str) -> String {
     out
 }
 
+fn update_style(out: &mut String, prev: TextStyle, style: TextStyle) {
+    let _ = UpdateStyle(prev, style).write_ansi(out);
+}
+
 impl MarkupBuilder {
-    fn new(theme: &'static Theme) -> Self {
+    fn new(theme: &'static Theme, base: TextStyle) -> Self {
         Self {
             theme,
             plain_text: String::new(),
             markers: Vec::new(),
-            cur_style: theme.text_base,
+            cur_style: base,
         }
     }
 
@@ -216,16 +214,13 @@ impl MarkupBuilder {
     }
 }
 
-fn write_style(out: &mut String, style: TextStyle) {
-    let _ = SetStyle(ContentStyle::from(style)).write_ansi(out);
-}
-
 fn paragraph_to_rows<'a>(
     theme: &'static Theme,
     width: usize,
+    style: TextStyle,
     paragraph: &'a Paragraph,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
-    let mut builder = MarkupBuilder::new(theme);
+    let mut builder = MarkupBuilder::new(theme, style);
     builder.push_all(&paragraph.children);
     let MarkupBuilder {
         plain_text,
@@ -234,7 +229,7 @@ fn paragraph_to_rows<'a>(
     } = builder;
 
     Box::new(iter!(move || {
-        let mut cur_style = theme.text_base;
+        let mut cur_style = style;
         let mut marker_idx = 0usize;
         let mut offset = 0usize;
 
@@ -244,12 +239,14 @@ fn paragraph_to_rows<'a>(
             for row in rows {
                 let mut out = String::new();
 
-                // Update and reapply styles at start of row
+                // The parent is responsible for resetting the style at the
+                // start of each row, so begin from the base style and only
+                // emit the differences needed to reach the active style.
                 while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
                     cur_style = markers[marker_idx].style;
                     marker_idx += 1;
                 }
-                write_style(&mut out, cur_style);
+                update_style(&mut out, style, cur_style);
                 let mut last_style = cur_style;
 
                 for g in &row.graphemes {
@@ -263,7 +260,7 @@ fn paragraph_to_rows<'a>(
                         marker_idx += 1;
                     }
                     if cur_style != last_style {
-                        write_style(&mut out, cur_style);
+                        update_style(&mut out, last_style, cur_style);
                         last_style = cur_style;
                     }
 
@@ -280,16 +277,47 @@ fn paragraph_to_rows<'a>(
     })())
 }
 
-/// Renders formatted lines from a flow (multiline) node. Panics on invalid
-/// nodes.
+fn blockquote_to_rows<'a>(
+    theme: &'static Theme,
+    width: usize,
+    style: TextStyle,
+    quote: &'a Blockquote,
+) -> Box<dyn Iterator<Item = String> + 'a> {
+    // One column for the left border prefix
+    let inner_width = width.saturating_sub(1);
+
+    let content_style = theme.text_subtle.italicized();
+
+    let mut children = quote
+        .children
+        .iter()
+        .map(move |child| to_rows(theme, inner_width, content_style, child));
+
+    Box::new(iter!(move || {
+        for rows in &mut children {
+            for row in rows {
+                let mut out = String::new();
+                update_style(&mut out, style, theme.text_subtle);
+                out.push('\u{2595}');
+                // The content is italicized, so step the terminal from the
+                // non-italic prefix style up to the italicized content style
+                // before the child row takes over.
+                update_style(&mut out, theme.text_subtle, content_style);
+                out.push_str(&row);
+                yield out;
+            }
+        }
+    })())
+}
+
 fn to_rows<'a>(
     theme: &'static Theme,
     width: usize,
+    style: TextStyle,
     node: &'a Node,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
     match node {
         Node::Root(_)
-        | Node::Blockquote(_)
         | Node::FootnoteDefinition(_)
         | Node::MdxJsxFlowElement(_)
         | Node::List(_)
@@ -307,7 +335,8 @@ fn to_rows<'a>(
         | Node::Definition(_)
         | Node::Html(_) => todo!(),
 
-        Node::Paragraph(paragraph) => paragraph_to_rows(theme, width, paragraph),
+        Node::Paragraph(paragraph) => paragraph_to_rows(theme, width, style, paragraph),
+        Node::Blockquote(quote) => blockquote_to_rows(theme, width, style, quote),
 
         // Phrasing nodes
         | Node::Break(_)
@@ -348,25 +377,25 @@ mod test_paragraph {
         let node = markdown::to_mdast(text, &markdown::ParseOptions::default()).unwrap();
         let Node::Root(root) = node else { panic!() };
         let Node::Paragraph(p) = &root.children[0] else { panic!() };
-        paragraph_to_rows(&THEME_DARK, width, p).collect()
+        paragraph_to_rows(&THEME_DARK, width, THEME_DARK.text_base, p).collect()
     }
 
     #[test]
     fn plain() {
-        assert_eq!(render("hello world", 80), vec!["\x1b[38;5;15mhello world "]);
+        assert_eq!(render("hello world", 80), vec!["hello world "]);
     }
 
     #[test]
     fn bold() {
-        assert_eq!(render("**hi**", 80), vec!["\x1b[38;5;15m\x1b[1mhi "]);
+        assert_eq!(render("**hi**", 80), vec!["\x1b[1mhi "]);
     }
 
     #[test]
     fn wrap() {
         assert_eq!(render("hello world foo", 8), vec![
-            "\x1b[38;5;15mhello ",
-            "\x1b[38;5;15mworld ",
-            "\x1b[38;5;15mfoo ",
+            "hello ",
+            "world ",
+            "foo ",
         ]);
     }
 
@@ -375,8 +404,35 @@ mod test_paragraph {
         assert_eq!(
             render("**bold** *italic*\\\n`code`", 80),
             vec![
-                "\x1b[38;5;15m\x1b[1mbold \x1b[38;5;15m\x1b[3mitalic ",
+                "\x1b[1mbold \x1b[22m\x1b[3mitalic ",
                 "\x1b[38;2;254;240;138mcode",
+            ],
+        );
+    }
+
+    fn render_block(text: &str, width: usize) -> Vec<String> {
+        let node = markdown::to_mdast(text, &markdown::ParseOptions::default()).unwrap();
+        let Node::Root(root) = node else { panic!() };
+        let Node::Blockquote(b) = &root.children[0] else { panic!() };
+        super::to_rows(&THEME_DARK, width, THEME_DARK.text_base, &Node::Blockquote(b.clone())).collect()
+    }
+
+    #[test]
+    fn blockquote() {
+        assert_eq!(
+            render_block("> hello *world*", 80),
+            vec!["\x1b[38;2;168;162;158m▕\x1b[3mhello world "],
+        );
+    }
+
+    #[test]
+    fn blockquote_wrap() {
+        assert_eq!(
+            render_block("> hello world foo", 8),
+            vec![
+                "\x1b[38;2;168;162;158m▕\x1b[3mhello ",
+                "\x1b[38;2;168;162;158m▕\x1b[3mworld ",
+                "\x1b[38;2;168;162;158m▕\x1b[3mfoo ",
             ],
         );
     }
