@@ -18,7 +18,7 @@ macro_rules! text_style {
     }};
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TextStyle {
     pub fg_color: Color,
     pub bold: bool,
@@ -39,7 +39,7 @@ impl TextStyle {
 
 /// Tuple `(old, new)`, replaces terminal text style
 #[derive(Clone, Copy, Debug)]
-pub struct UpdateStyle(TextStyle, TextStyle);
+pub struct UpdateStyle(pub TextStyle, pub TextStyle);
 
 impl Command for UpdateStyle {
     fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {

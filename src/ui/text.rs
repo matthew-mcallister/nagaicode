@@ -170,7 +170,8 @@ fn find_break_points(line: &str) -> VecDeque<Breakpoint> {
 ///
 /// Details:
 /// - Whitespace is preserved and will cause a line break where it overflows
-/// - Tabs are treated as a single, variable-width grapheme
+/// - Tabs are treated as a single, variable-width grapheme and rendered as
+///   spaces
 /// - Overflowing words will be placed on the next line, unless they are
 ///   already at the beginning of the line
 /// - Words too long to fit on one line will be broken where they overflow

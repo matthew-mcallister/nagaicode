@@ -1,6 +1,7 @@
 mod chat;
 mod input_box;
 mod history;
+mod markdown;
 mod padded;
 mod stacked_view;
 mod style;
