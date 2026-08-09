@@ -1,14 +1,16 @@
 // FIXME maybe: accumulate nested prefixes instead of concatenating repeatedly.
 // FIXME: need to cap prefix size/set a lower bound on width to prevent
 // underflow and broken layout
+// FIXME: probably should escape actual escape sequences if they appear in the
+// source
 use std::iter::iter;
 
 use crossterm::Command;
-use markdown::mdast::{Blockquote, InlineCode, Node, Paragraph, Root};
+use markdown::mdast::{Blockquote, Code, InlineCode, Node, Paragraph, Root};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ui::style::{TextStyle, Theme, UpdateStyle};
-use crate::ui::text::{wrap_line, SPACES, TAB_WIDTH};
+use crate::ui::text::{wrap_line, wrap_line_naive, SPACES, TAB_WIDTH};
 
 /// Out-of-line style marker.
 #[derive(Debug)]
@@ -25,7 +27,10 @@ struct Context {
     theme: &'static Theme,
     width: usize,
     base_style: TextStyle,
+    // FIXME: Current behavior is a slightly crude hack; ideally block quotes
+    // would flip the meaning of italic and non-italic
     block_quote: bool,
+    code: bool,
 }
 
 impl Context {
@@ -49,10 +54,13 @@ impl Context {
         self
     }
 
+    const fn set_code(mut self, code: bool) -> Self {
+        self.code = code;
+        self
+    }
+
     fn update_style(&self, out: &mut String, prev: TextStyle, style: TextStyle) {
-        if self.block_quote {
-            // FIXME: This is a crude hack; ideally block quotes would flip the
-            // meaning of italic and non-italic
+        if self.block_quote || self.code {
             return;
         }
         let _ = UpdateStyle(prev, style).write_ansi(out);
@@ -323,6 +331,35 @@ fn paragraph_to_rows<'a>(
     })())
 }
 
+fn code_to_rows<'a>(
+    ctx: Context,
+    code: &'a Code,
+) -> Box<dyn Iterator<Item = String> + 'a> {
+    // Base style is text_code; style updates are frozen so the preformatted
+    // content renders with one uniform style.
+    let code_ctx = ctx
+        .with_base_style(ctx.theme.text_code)
+        .set_code(true);
+
+    Box::new(iter!(move || {
+        for line in code.value.split('\n') {
+            for row in wrap_line_naive(code_ctx.width, line) {
+                let mut out = String::new();
+                // Step into the code style from the enclosing context's style
+                ctx.update_style(&mut out, ctx.base_style, code_ctx.base_style);
+                for g in &row.graphemes {
+                    // Newline added by wrap_line_naive, not part of the source
+                    if g.data == "\n" {
+                        continue;
+                    }
+                    out.push_str(g.formatted());
+                }
+                yield out;
+            }
+        }
+    })())
+}
+
 fn blockquote_to_rows<'a>(
     ctx: Context,
     quote: &'a Blockquote,
@@ -390,10 +427,8 @@ fn to_rows<'a>(
         Node::Root(root) => root_to_rows(ctx, root),
 
         Node::FootnoteDefinition(_)
-        | Node::MdxJsxFlowElement(_)
         | Node::List(_)
         | Node::MdxjsEsm(_)
-        | Node::Code(_)
         | Node::Math(_)
         | Node::Heading(_)
         | Node::Table(_)
@@ -406,6 +441,7 @@ fn to_rows<'a>(
 
         Node::Paragraph(paragraph) => paragraph_to_rows(ctx, paragraph),
         Node::Blockquote(quote) => blockquote_to_rows(ctx, quote),
+        Node::Code(code) => code_to_rows(ctx, code),
 
         // Phrasing nodes
         | Node::Break(_)
@@ -414,6 +450,7 @@ fn to_rows<'a>(
         | Node::Delete(_)
         | Node::Emphasis(_)
         | Node::MdxTextExpression(_)
+        | Node::MdxJsxFlowElement(_)
         | Node::FootnoteReference(_)
         | Node::Image(_)
         | Node::ImageReference(_)
@@ -450,6 +487,7 @@ mod test_paragraph {
                 width,
                 base_style: THEME_DARK.text_base,
                 block_quote: false,
+                code: false,
             },
             &node,
         )
@@ -527,6 +565,25 @@ mod test_paragraph {
         assert_eq!(
             render("first paragraph\n\nsecond paragraph", 80),
             vec!["first paragraph", "", "second paragraph"],
+        );
+    }
+
+    #[test]
+    fn code() {
+        assert_eq!(
+            render("```\nfn main() {}\n```", 80),
+            vec!["\x1b[38;2;254;240;138mfn main() {}"],
+        );
+    }
+
+    #[test]
+    fn code_wrap() {
+        assert_eq!(
+            render("```\nabcdefgh\n```", 4),
+            vec![
+                "\x1b[38;2;254;240;138mabcd",
+                "\x1b[38;2;254;240;138mefgh",
+            ],
         );
     }
 }

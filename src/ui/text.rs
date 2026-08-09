@@ -189,6 +189,38 @@ pub fn wrap_line(max_width: usize, line: &str) -> Vec<Row> {
     rows
 }
 
+/// Naive line wrapping: text is wrapped exactly where it overflows the line.
+/// This is used for preformatted/code rendering.
+pub fn wrap_line_naive(max_width: usize, line: &str) -> Vec<Row> {
+    assert!(max_width >= TAB_WIDTH);
+    let mut rows = Vec::new();
+    let mut row = Row::default();
+    let mut width = 0;
+
+    for grapheme in line.graphemes(true) {
+        assert_ne!(grapheme, "\n");
+        let grapheme_width = if grapheme == "\t" {
+            TAB_WIDTH - width % TAB_WIDTH
+        } else {
+            grapheme.width()
+        };
+        if width + grapheme_width > max_width {
+            rows.push(row);
+            row = Row::default();
+            width = 0;
+        }
+        row.graphemes.push(Grapheme {
+            data: CompactString::new(grapheme),
+            width: grapheme_width as u8,
+        });
+        width += grapheme_width;
+    }
+
+    rows.push(row);
+    rows.last_mut().unwrap().graphemes.push(Grapheme::newline());
+    rows
+}
+
 /// Truncates a single line to fit within the maximum width. Also expands tabs.
 pub fn truncate_line(max_width: usize, line: &str) -> Row {
     let mut row = Row::default();
@@ -256,6 +288,31 @@ mod tests {
         assert_eq!(wrap(10, "\n\n"), "\n\n");
         assert_eq!(wrap(8, "asdf\t"), "asdf    \n");
         assert_eq!(wrap(6, "asdf\t"), "asdf\n    \n");
+    }
+
+    fn wrap_naive(width: usize, text: &str) -> String {
+        let mut s = String::with_capacity(2 * text.len());
+        for line in text.lines() {
+            let rows = wrap_line_naive(width, line);
+            for row in rows {
+                for g in row.graphemes {
+                    s.push_str(g.formatted());
+                }
+                s.push('\n');
+            }
+        }
+        s
+    }
+
+    #[test]
+    fn test_wrap_naive() {
+        assert_eq!(wrap_naive(10, ""), "");
+        assert_eq!(wrap_naive(10, "hello"), "hello\n");
+        assert_eq!(wrap_naive(10, "hello world foo"), "hello worl\nd foo\n");
+        assert_eq!(wrap_naive(10, "      "), "      \n");
+        assert_eq!(wrap_naive(4, "        "), "    \n    \n");
+        assert_eq!(wrap_naive(10, "asdf\t"), "asdf    \n");
+        assert_eq!(wrap_naive(6, "asdf\t"), "asdf\n    \n");
     }
 
     fn trunc(width: usize, text: &str) -> String {
