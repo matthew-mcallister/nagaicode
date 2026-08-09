@@ -1,7 +1,8 @@
+// FIXME maybe: accumulate nested prefixes instead of concatenating repeatedly.
 use std::iter::iter;
 
 use crossterm::Command;
-use markdown::mdast::{Blockquote, InlineCode, Node, Paragraph};
+use markdown::mdast::{Blockquote, InlineCode, Node, Paragraph, Root};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ui::style::{TextStyle, Theme, UpdateStyle};
@@ -24,7 +25,8 @@ struct MarkupBuilder {
     cur_style: TextStyle,
 }
 
-/// Replaces runs of whitespace with a single space character.
+/// Replaces runs of whitespace with a single space character. Preserves
+/// leading and trailing whitespace.
 ///
 /// Technically we should not eliminate whitespace that is combined with a
 /// diacritic, e.g. " \u{0301}", but no one renders this correctly, making
@@ -32,8 +34,20 @@ struct MarkupBuilder {
 /// Unicode Consortium.
 fn collapse_whitespace(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    for t in s.split_whitespace() {
+    if s.starts_with(char::is_whitespace) {
+        out.push(' ');
+    }
+
+    let mut words = s.split_whitespace();
+    let Some(t) = words.next() else { return out };
+    out.push_str(t);
+
+    for t in words {
+        out.push(' ');
         out.push_str(t);
+    }
+
+    if s.ends_with(char::is_whitespace) {
         out.push(' ');
     }
     out
@@ -310,6 +324,30 @@ fn blockquote_to_rows<'a>(
     })())
 }
 
+fn root_to_rows<'a>(
+    theme: &'static Theme,
+    width: usize,
+    root: &'a Root,
+) -> Box<dyn Iterator<Item = String> + 'a> {
+    let mut children = root
+        .children
+        .iter()
+        .map(move |child| to_rows(theme, width, theme.text_base, child));
+
+    Box::new(iter!(move || {
+        let mut first = true;
+        for rows in &mut children {
+            if !first {
+                yield String::new();
+            }
+            first = false;
+            for row in rows {
+                yield row;
+            }
+        }
+    })())
+}
+
 fn to_rows<'a>(
     theme: &'static Theme,
     width: usize,
@@ -317,8 +355,9 @@ fn to_rows<'a>(
     node: &'a Node,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
     match node {
-        Node::Root(_)
-        | Node::FootnoteDefinition(_)
+        Node::Root(root) => root_to_rows(theme, width, root),
+
+        Node::FootnoteDefinition(_)
         | Node::MdxJsxFlowElement(_)
         | Node::List(_)
         | Node::MdxjsEsm(_)
@@ -369,25 +408,29 @@ pub fn render_markdown(
 }
 #[cfg(test)]
 mod test_paragraph {
-    use super::paragraph_to_rows;
     use crate::ui::style::THEME_DARK;
-    use markdown::mdast::Node;
 
     fn render(text: &str, width: usize) -> Vec<String> {
         let node = markdown::to_mdast(text, &markdown::ParseOptions::default()).unwrap();
-        let Node::Root(root) = node else { panic!() };
-        let Node::Paragraph(p) = &root.children[0] else { panic!() };
-        paragraph_to_rows(&THEME_DARK, width, THEME_DARK.text_base, p).collect()
+        super::to_rows(&THEME_DARK, width, THEME_DARK.text_base, &node).collect()
     }
 
     #[test]
     fn plain() {
-        assert_eq!(render("hello world", 80), vec!["hello world "]);
+        assert_eq!(render("hello world", 80), vec!["hello world"]);
     }
 
     #[test]
     fn bold() {
-        assert_eq!(render("**hi**", 80), vec!["\x1b[1mhi "]);
+        assert_eq!(render("**hi**", 80), vec!["\x1b[1mhi"]);
+    }
+
+    #[test]
+    fn inline_spacing() {
+        assert_eq!(render("a*b*c", 80), vec!["a\x1b[3mb\x1b[23mc"]);
+        assert_eq!(render("a *h*c", 80), vec!["a \x1b[3mh\x1b[23mc"]);
+        assert_eq!(render("a*h* c", 80), vec!["a\x1b[3mh\x1b[23m c"]);
+        assert_eq!(render("a *h* c", 80), vec!["a \x1b[3mh\x1b[23m c"]);
     }
 
     #[test]
@@ -395,7 +438,7 @@ mod test_paragraph {
         assert_eq!(render("hello world foo", 8), vec![
             "hello ",
             "world ",
-            "foo ",
+            "foo",
         ]);
     }
 
@@ -404,36 +447,37 @@ mod test_paragraph {
         assert_eq!(
             render("**bold** *italic*\\\n`code`", 80),
             vec![
-                "\x1b[1mbold \x1b[22m\x1b[3mitalic ",
+                "\x1b[1mbold\x1b[22m \x1b[3mitalic",
                 "\x1b[38;2;254;240;138mcode",
             ],
         );
     }
 
-    fn render_block(text: &str, width: usize) -> Vec<String> {
-        let node = markdown::to_mdast(text, &markdown::ParseOptions::default()).unwrap();
-        let Node::Root(root) = node else { panic!() };
-        let Node::Blockquote(b) = &root.children[0] else { panic!() };
-        super::to_rows(&THEME_DARK, width, THEME_DARK.text_base, &Node::Blockquote(b.clone())).collect()
-    }
-
     #[test]
     fn blockquote() {
         assert_eq!(
-            render_block("> hello *world*", 80),
-            vec!["\x1b[38;2;168;162;158m▕\x1b[3mhello world "],
+            render("> hello *world*", 80),
+            vec!["\x1b[38;2;168;162;158m▕\x1b[3mhello world"],
         );
     }
 
     #[test]
     fn blockquote_wrap() {
         assert_eq!(
-            render_block("> hello world foo", 8),
+            render("> hello world foo", 8),
             vec![
                 "\x1b[38;2;168;162;158m▕\x1b[3mhello ",
                 "\x1b[38;2;168;162;158m▕\x1b[3mworld ",
-                "\x1b[38;2;168;162;158m▕\x1b[3mfoo ",
+                "\x1b[38;2;168;162;158m▕\x1b[3mfoo",
             ],
+        );
+    }
+
+    #[test]
+    fn two_paragraphs() {
+        assert_eq!(
+            render("first paragraph\n\nsecond paragraph", 80),
+            vec!["first paragraph", "", "second paragraph"],
         );
     }
 }
