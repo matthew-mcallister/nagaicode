@@ -5,7 +5,7 @@ use compact_str::CompactString;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-const TAB_WIDTH: usize = 4;
+pub const TAB_WIDTH: usize = 4;
 pub const SPACES: &str = const {
     let Ok(s) = std::str::from_utf8(&[b' '; 1024]) else { panic!() };
     s

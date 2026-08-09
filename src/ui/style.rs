@@ -2,7 +2,7 @@
 
 use crossterm::Command;
 use crossterm::style::{
-    Attribute, Color, SetAttribute, SetForegroundColor,
+    Attribute, Attributes, Color, ContentStyle, SetAttribute, SetForegroundColor
 };
 
 pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
@@ -24,16 +24,38 @@ pub struct TextStyle {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub strikethrough: bool,
 }
 
 impl TextStyle {
-    const fn default() -> Self {
+    pub const fn default() -> Self {
         Self {
             fg_color: WHITE,
             bold: false,
             italic: false,
             underline: false,
+            strikethrough: false,
         }
+    }
+
+    pub const fn bolded(mut self) -> Self {
+        self.bold = true;
+        self
+    }
+
+    pub const fn italicized(mut self) -> Self {
+        self.italic = true;
+        self
+    }
+
+    pub const fn underlined(mut self) -> Self {
+        self.underline = true;
+        self
+    }
+
+    pub const fn struck_out(mut self) -> Self {
+        self.strikethrough = true;
+        self
     }
 }
 
@@ -52,7 +74,7 @@ impl Command for UpdateStyle {
             SetAttribute(if new.bold {
                 Attribute::Bold
             } else {
-                Attribute::NoBold
+                Attribute::NormalIntensity
             })
             .write_ansi(f)?;
         }
@@ -74,6 +96,33 @@ impl Command for UpdateStyle {
         }
 
         Ok(())
+    }
+}
+
+impl From<TextStyle> for ContentStyle {
+    fn from(value: TextStyle) -> Self {
+        let mut attributes = Attributes::none();
+        if value.bold {
+            attributes.set(Attribute::Bold);
+        } else {
+            attributes.unset(Attribute::NormalIntensity);
+        }
+        if value.italic {
+            attributes.set(Attribute::Italic);
+        } else {
+            attributes.unset(Attribute::NoItalic);
+        }
+        if value.strikethrough {
+            attributes.set(Attribute::CrossedOut);
+        } else {
+            attributes.unset(Attribute::NotCrossedOut);
+        }
+        Self {
+            foreground_color: Some(value.fg_color),
+            background_color: None,
+            underline_color: None,
+            attributes,
+        }
     }
 }
 

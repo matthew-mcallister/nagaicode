@@ -1,4 +1,5 @@
 use std::fmt;
+use std::iter::iter;
 
 use crossterm::style::{
     Attribute, Attributes, Color, Colors, ContentStyle, ResetColor, SetAttribute,
@@ -6,93 +7,26 @@ use crossterm::style::{
     SetUnderlineColor,
 };
 use crossterm::Command;
-use markdown::mdast::Node;
+use markdown::mdast::{InlineCode, Node, Paragraph};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ui::style::{TextStyle, Theme};
+use crate::ui::text::{wrap_line, SPACES, TAB_WIDTH};
 
-/// Enum representation of a terminal control sequence (e.g. set style, set
-/// color).
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum ConsoleCommand {
-    /// Sets the foreground color.
-    SetForegroundColor(Color),
-    /// Sets the background color.
-    SetBackgroundColor(Color),
-    /// Sets the underline color.
-    SetUnderlineColor(Color),
-    /// Sets a single attribute.
-    SetAttribute(Attribute),
-    /// Sets multiple attributes at once.
-    SetAttributes(Attributes),
-    /// Sets both the foreground and background colors.
-    SetColors(Colors),
-    /// Sets a full content style.
-    SetStyle(ContentStyle),
-    /// Resets all styling.
-    ResetColor,
-    /// Replaces the terminal text style, transitioning from one style to
-    /// another.
-    UpdateStyle(TextStyle, TextStyle),
-}
-
-impl Command for ConsoleCommand {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        match self {
-            Self::SetForegroundColor(color) => SetForegroundColor(*color).write_ansi(f),
-            Self::SetBackgroundColor(color) => SetBackgroundColor(*color).write_ansi(f),
-            Self::SetUnderlineColor(color) => SetUnderlineColor(*color).write_ansi(f),
-            Self::SetAttribute(attribute) => SetAttribute(*attribute).write_ansi(f),
-            Self::SetAttributes(attributes) => SetAttributes(*attributes).write_ansi(f),
-            Self::SetColors(colors) => SetColors(*colors).write_ansi(f),
-            Self::SetStyle(style) => SetStyle(*style).write_ansi(f),
-            Self::ResetColor => ResetColor.write_ansi(f),
-            Self::UpdateStyle(old, new) => {
-                crate::ui::style::UpdateStyle(*old, *new).write_ansi(f)
-            }
-        }
-    }
-
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        match self {
-            Self::SetForegroundColor(color) => SetForegroundColor(*color).execute_winapi(),
-            Self::SetBackgroundColor(color) => SetBackgroundColor(*color).execute_winapi(),
-            Self::SetUnderlineColor(color) => SetUnderlineColor(*color).execute_winapi(),
-            Self::SetAttribute(attribute) => SetAttribute(*attribute).execute_winapi(),
-            Self::SetAttributes(attributes) => SetAttributes(*attributes).execute_winapi(),
-            Self::SetColors(colors) => SetColors(*colors).execute_winapi(),
-            Self::SetStyle(style) => SetStyle(*style).execute_winapi(),
-            Self::ResetColor => ResetColor.execute_winapi(),
-            Self::UpdateStyle(old, new) => {
-                crate::ui::style::UpdateStyle(*old, *new).execute_winapi()
-            }
-        }
-    }
-}
-
-/// Out-of-line instruction to emit a control sequence.
+/// Out-of-line style marker.
 #[derive(Debug)]
-struct Control {
+struct Marker {
     /// Byte offset to insert control sequence in plain_text
     offset: usize,
-    /// Command to emit
-    command: ConsoleCommand,
-}
-
-/// Marked up paragraph with out-of-line control sequences.
-#[derive(Debug)]
-struct Markup {
-    /// Single line of plain text with collapsed whitespace.
-    plain_text: String,
-    /// Array of control sequences
-    control: Vec<Control>,
+    /// Style to apply
+    style: TextStyle,
 }
 
 #[derive(Debug)]
 struct MarkupBuilder {
     theme: &'static Theme,
     plain_text: String,
-    control: Vec<Control>,
+    markers: Vec<Marker>,
     cur_style: TextStyle,
 }
 
@@ -116,98 +50,145 @@ impl MarkupBuilder {
         Self {
             theme,
             plain_text: String::new(),
-            control: Vec::new(),
+            markers: Vec::new(),
             cur_style: theme.text_base,
         }
     }
 
-    /// Appends collapsed text in the current style.
     fn push_text(&mut self, s: &str) {
         self.plain_text.push_str(&collapse_whitespace(s));
     }
 
-    /// Transitions to a new style, emitting a control sequence if it differs
-    /// from the current style.
+    /// Removes newlines, expands tabs, but preserves otherwise whitespace.
+    fn push_inline_code(&mut self, s: &str) {
+        let mut col = self.plain_text.width();
+        for c in s.chars() {
+            match c {
+                '\n' | '\r' => {
+                    self.plain_text.push(' ');
+                    col += 1;
+                }
+                '\t' => {
+                    let n = TAB_WIDTH - col % TAB_WIDTH;
+                    self.plain_text.push_str(&SPACES[..n]);
+                    col += n;
+                }
+                _ => {
+                    self.plain_text.push(c);
+                    if let Some(w) = UnicodeWidthChar::width(c) {
+                        col += w;
+                    }
+                }
+            }
+        }
+    }
+
+    fn push_all(&mut self, nodes: &[Node]) {
+        for node in nodes {
+            self.push_node(node);
+        }
+    }
+
     fn set_style(&mut self, style: TextStyle) {
         if style != self.cur_style {
-            self.control.push(Control {
+            self.markers.push(Marker {
                 offset: self.plain_text.len(),
-                command: ConsoleCommand::UpdateStyle(self.cur_style, style),
+                style: style,
             });
             self.cur_style = style;
         }
     }
 
-    /// Runs `f` in the given style, then restores the previous style.
-    fn run_with_style(&mut self, style: TextStyle, f: impl FnOnce(&mut Self)) {
-        let prev = self.cur_style;
-        self.set_style(style);
-        f(self);
-        self.set_style(prev);
-    }
-
-    fn push_children(&mut self, children: &[Node]) {
-        for child in children {
-            self.push_node(child);
-        }
-    }
-
-    /// Emits the raw text representation of a node we cannot style.
-    fn push_fallback(&mut self, node: &Node) {
-        let text = match node {
-            Node::Image(image) => format!("![{}]", image.alt),
-            Node::ImageReference(image) => format!("![{}]", image.alt),
-            Node::InlineMath(math) => format!("${}$", math.value),
-            Node::FootnoteReference(footnote) => {
-                format!("[^{}]", footnote.identifier)
-            }
-            other => other.to_string(),
-        };
-        self.push_text(&text);
-    }
-
     fn push_node(&mut self, node: &Node) {
         match node {
+            // Plain text
             Node::Text(text) => self.push_text(&text.value),
-            Node::Break(_) => self.push_text(" "),
+            Node::Break(_) => self.plain_text.push('\n'),
 
-            Node::InlineCode(code) => {
-                self.run_with_style(self.theme.text_code, |b| b.push_text(&code.value));
+            // Styling
+            Node::InlineCode(inner) => {
+                let prev = self.cur_style;
+                self.set_style(self.theme.text_code);
+                self.push_inline_code(&inner.value);
+                self.set_style(prev);
             }
-            Node::Emphasis(emphasis) => {
-                let style = italic(self.theme.text_base);
-                self.run_with_style(style, |b| b.push_children(&emphasis.children));
+            Node::Emphasis(inner) => {
+                let prev = self.cur_style;
+                self.set_style(prev.italicized());
+                self.push_all(&inner.children);
+                self.set_style(prev);
             }
-            Node::Strong(strong) => {
-                let style = bold(self.theme.text_base);
-                self.run_with_style(style, |b| b.push_children(&strong.children));
+            Node::Strong(inner) => {
+                let prev = self.cur_style;
+                self.set_style(prev.bolded());
+                self.push_all(&inner.children);
+                self.set_style(prev);
             }
+            Node::Delete(inner) => {
+                let prev = self.cur_style;
+                self.set_style(prev.struck_out());
+                self.push_all(&inner.children);
+                self.set_style(prev);
+            }
+
+            // Nodes that can't be rendered faithfully in the terminal
             Node::Link(link) => {
-                let style = underline(self.theme.text_base);
-                self.run_with_style(style, |b| b.push_children(&link.children));
-                self.run_with_style(self.theme.text_subtle, |b| {
-                    b.push_text(&format!(" ({})", link.url));
-                });
+                self.push_text("![");
+                self.push_all(&link.children);
+                self.push_text("]");
+                self.push_text("[");
+                self.push_text(&link.url);
+                self.push_text("]");
             }
             Node::LinkReference(link) => {
-                self.run_with_style(self.theme.text_subtle, |b| {
-                    b.push_children(&link.children);
-                });
+                self.push_text("![");
+                self.push_all(&link.children);
+                self.push_text("]");
+                self.push_text("[");
+                self.push_text(&link.identifier);
+                self.push_text("]");
+            }
+            Node::Image(image) => {
+                self.push_text("![");
+                self.push_text(&image.alt);
+                self.push_text("]");
+                self.push_text("(");
+                self.push_text(&image.url);
+                if let Some(title) = &image.title {
+                    self.push_text("\"");
+                    // FIXME: Should escape non-printable characters and \"
+                    self.push_text(&title);
+                    self.push_text("\"");
+                }
+                self.push_text(")");
+            }
+            Node::ImageReference(image) => {
+                self.push_text("![");
+                self.push_text(&image.alt);
+                self.push_text("]");
+                self.push_text("[");
+                self.push_text(&image.identifier);
+                self.push_text("]");
+            }
+            Node::InlineMath(math) => {
+                self.push_text("$");
+                self.push_text(&math.value);
+                self.push_text("$");
+            }
+            Node::FootnoteReference(footnote) => {
+                self.push_text("[^");
+                self.push_text(&footnote.identifier);
+                self.push_text("]");
+            }
+            Node::Html(html) => {
+                // Treat HTML as code
+                self.push_node(&Node::InlineCode(InlineCode {
+                    value: html.value.clone(),
+                    position: html.position.clone(),
+                }));
             }
 
-            // Syntax we cannot faithfully reproduce in the terminal falls back
-            // to its raw text representation.
-            Node::InlineMath(_)
-            | Node::MdxTextExpression(_)
-            | Node::Html(_)
-            | Node::Delete(_)
-            | Node::Image(_)
-            | Node::ImageReference(_)
-            | Node::FootnoteReference(_)
-            | Node::MdxJsxTextElement(_) => self.push_fallback(node),
-
-            // Flow and container nodes should never appear in phrasing
-            // position.
+            // Non-phrasing nodes
             Node::Root(_)
             | Node::Blockquote(_)
             | Node::FootnoteDefinition(_)
@@ -226,88 +207,126 @@ impl MarkupBuilder {
             | Node::TableCell(_)
             | Node::ListItem(_)
             | Node::Definition(_)
-            | Node::Paragraph(_) => unreachable!("flow node in phrasing context"),
-        }
-    }
-
-    fn finish(self) -> Markup {
-        Markup {
-            plain_text: self.plain_text,
-            control: self.control,
+            | Node::Paragraph(_)
+            // Unsupported nodes, library shouldn't produce these
+            | Node::MdxTextExpression(_)
+            | Node::MdxJsxTextElement(_)
+                => unreachable!("broken markdown AST"),
         }
     }
 }
 
-/// Returns `style` with bold enabled.
-fn bold(mut style: TextStyle) -> TextStyle {
-    style.bold = true;
-    style
+fn write_style(out: &mut String, style: TextStyle) {
+    let _ = SetStyle(ContentStyle::from(style)).write_ansi(out);
 }
 
-/// Returns `style` with italic enabled.
-fn italic(mut style: TextStyle) -> TextStyle {
-    style.italic = true;
-    style
-}
-
-/// Returns `style` with underline enabled.
-fn underline(mut style: TextStyle) -> TextStyle {
-    style.underline = true;
-    style
-}
-
-/// Converts phrasing nodes (inline) into markup. Panics on invalid nodes.
-///
-/// Not all syntax can be properly displayed in the terminal. In these cases,
-/// as a fallback, we emit a text representation of the original markdown.
-fn to_markup(theme: &'static Theme, node: &Node) -> Markup {
+fn paragraph_to_rows<'a>(
+    theme: &'static Theme,
+    width: usize,
+    paragraph: &'a Paragraph,
+) -> Box<dyn Iterator<Item = String> + 'a> {
     let mut builder = MarkupBuilder::new(theme);
-    builder.push_node(node);
-    builder.finish()
+    builder.push_all(&paragraph.children);
+    let MarkupBuilder {
+        plain_text,
+        markers,
+        ..
+    } = builder;
+
+    Box::new(iter!(move || {
+        let mut cur_style = theme.text_base;
+        let mut marker_idx = 0usize;
+        let mut offset = 0usize;
+
+        for line in plain_text.split('\n') {
+            let rows = wrap_line(width, line);
+
+            for row in rows {
+                let mut out = String::new();
+
+                // Update and reapply styles at start of row
+                while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
+                    cur_style = markers[marker_idx].style;
+                    marker_idx += 1;
+                }
+                write_style(&mut out, cur_style);
+                let mut last_style = cur_style;
+
+                for g in &row.graphemes {
+                    // Newline added by wrap_line, not part of the source text
+                    if g.data == "\n" {
+                        continue;
+                    }
+
+                    while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
+                        cur_style = markers[marker_idx].style;
+                        marker_idx += 1;
+                    }
+                    if cur_style != last_style {
+                        write_style(&mut out, cur_style);
+                        last_style = cur_style;
+                    }
+
+                    out.push_str(g.formatted());
+                    offset += g.data.len();
+                }
+
+                yield out;
+            }
+
+            // Skip the newline separating this line from the next
+            offset += 1;
+        }
+    })())
 }
 
 /// Renders formatted lines from a flow (multiline) node. Panics on invalid
 /// nodes.
-fn to_rows(
+fn to_rows<'a>(
     theme: &'static Theme,
     width: usize,
-    node: &Node,
-) -> Box<dyn Iterator<Item = String>> {
+    node: &'a Node,
+) -> Box<dyn Iterator<Item = String> + 'a> {
     match node {
-        Node::Root(root) => todo!(),
-        Node::Blockquote(blockquote) => todo!(),
-        Node::FootnoteDefinition(footnote_definition) => todo!(),
-        Node::MdxJsxFlowElement(mdx_jsx_flow_element) => todo!(),
-        Node::List(list) => todo!(),
-        Node::MdxjsEsm(mdxjs_esm) => todo!(),
-        Node::Toml(toml) => todo!(),
-        Node::Yaml(yaml) => todo!(),
-        Node::Break(_) => todo!(),
-        Node::InlineCode(inline_code) => todo!(),
-        Node::InlineMath(inline_math) => todo!(),
-        Node::Delete(delete) => todo!(),
-        Node::Emphasis(emphasis) => todo!(),
-        Node::MdxTextExpression(mdx_text_expression) => todo!(),
-        Node::FootnoteReference(footnote_reference) => todo!(),
-        Node::Html(html) => todo!(),
-        Node::Image(image) => todo!(),
-        Node::ImageReference(image_reference) => todo!(),
-        Node::MdxJsxTextElement(mdx_jsx_text_element) => todo!(),
-        Node::Link(link) => todo!(),
-        Node::LinkReference(link_reference) => todo!(),
-        Node::Strong(strong) => todo!(),
-        Node::Text(text) => todo!(),
-        Node::Code(code) => todo!(),
-        Node::Math(math) => todo!(),
-        Node::MdxFlowExpression(mdx_flow_expression) => todo!(),
-        Node::Heading(heading) => todo!(),
-        Node::Table(table) => todo!(),
-        Node::ThematicBreak(thematic_break) => todo!(),
-        Node::TableRow(table_row) => todo!(),
-        Node::TableCell(table_cell) => todo!(),
-        Node::ListItem(list_item) => todo!(),
-        Node::Definition(definition) => todo!(),
-        Node::Paragraph(paragraph) => todo!(),
+        Node::Root(_)
+        | Node::Blockquote(_)
+        | Node::FootnoteDefinition(_)
+        | Node::MdxJsxFlowElement(_)
+        | Node::List(_)
+        | Node::MdxjsEsm(_)
+        | Node::Toml(_)
+        | Node::Yaml(_)
+        | Node::Code(_)
+        | Node::Math(_)
+        | Node::Heading(_)
+        | Node::Table(_)
+        | Node::ThematicBreak(_)
+        | Node::TableRow(_)
+        | Node::TableCell(_)
+        | Node::ListItem(_)
+        | Node::Definition(_)
+        | Node::Html(_) => todo!(),
+
+        Node::Paragraph(paragraph) => paragraph_to_rows(theme, width, paragraph),
+
+        // Phrasing nodes
+        | Node::Break(_)
+        | Node::InlineCode(_)
+        | Node::InlineMath(_)
+        | Node::Delete(_)
+        | Node::Emphasis(_)
+        | Node::MdxTextExpression(_)
+        | Node::FootnoteReference(_)
+        | Node::Image(_)
+        | Node::ImageReference(_)
+        | Node::MdxJsxTextElement(_)
+        | Node::Link(_)
+        | Node::LinkReference(_)
+        | Node::Strong(_)
+        | Node::Text(_)
+        // Unsupported nodes
+        | Node::MdxFlowExpression(_)
+        => unreachable!("broken markdown AST")
     }
 }
 
@@ -318,4 +337,47 @@ pub fn render_markdown(
     width: usize,
 ) -> Vec<String> {
     todo!()
+}
+#[cfg(test)]
+mod test_paragraph {
+    use super::paragraph_to_rows;
+    use crate::ui::style::THEME_DARK;
+    use markdown::mdast::Node;
+
+    fn render(text: &str, width: usize) -> Vec<String> {
+        let node = markdown::to_mdast(text, &markdown::ParseOptions::default()).unwrap();
+        let Node::Root(root) = node else { panic!() };
+        let Node::Paragraph(p) = &root.children[0] else { panic!() };
+        paragraph_to_rows(&THEME_DARK, width, p).collect()
+    }
+
+    #[test]
+    fn plain() {
+        assert_eq!(render("hello world", 80), vec!["\x1b[38;5;15mhello world "]);
+    }
+
+    #[test]
+    fn bold() {
+        assert_eq!(render("**hi**", 80), vec!["\x1b[38;5;15m\x1b[1mhi "]);
+    }
+
+    #[test]
+    fn wrap() {
+        assert_eq!(render("hello world foo", 8), vec![
+            "\x1b[38;5;15mhello ",
+            "\x1b[38;5;15mworld ",
+            "\x1b[38;5;15mfoo ",
+        ]);
+    }
+
+    #[test]
+    fn styles() {
+        assert_eq!(
+            render("**bold** *italic*\\\n`code`", 80),
+            vec![
+                "\x1b[38;5;15m\x1b[1mbold \x1b[38;5;15m\x1b[3mitalic ",
+                "\x1b[38;2;254;240;138mcode",
+            ],
+        );
+    }
 }
