@@ -1,4 +1,6 @@
 // FIXME maybe: accumulate nested prefixes instead of concatenating repeatedly.
+// FIXME: need to cap prefix size/set a lower bound on width to prevent
+// underflow and broken layout
 use std::iter::iter;
 
 use crossterm::Command;
@@ -23,6 +25,7 @@ struct Context {
     theme: &'static Theme,
     width: usize,
     base_style: TextStyle,
+    block_quote: bool,
 }
 
 impl Context {
@@ -39,6 +42,20 @@ impl Context {
     const fn with_base_style(mut self, base_style: TextStyle) -> Self {
         self.base_style = base_style;
         self
+    }
+
+    const fn set_block_quote(mut self, block_quote: bool) -> Self {
+        self.block_quote = block_quote;
+        self
+    }
+
+    fn update_style(&self, out: &mut String, prev: TextStyle, style: TextStyle) {
+        if self.block_quote {
+            // FIXME: This is a crude hack; ideally block quotes would flip the
+            // meaning of italic and non-italic
+            return;
+        }
+        let _ = UpdateStyle(prev, style).write_ansi(out);
     }
 }
 
@@ -76,10 +93,6 @@ fn collapse_whitespace(s: &str) -> String {
         out.push(' ');
     }
     out
-}
-
-fn update_style(out: &mut String, prev: TextStyle, style: TextStyle) {
-    let _ = UpdateStyle(prev, style).write_ansi(out);
 }
 
 impl MarkupBuilder {
@@ -282,7 +295,7 @@ fn paragraph_to_rows<'a>(
                     cur_style = markers[marker_idx].style;
                     marker_idx += 1;
                 }
-                update_style(&mut out, ctx.base_style, cur_style);
+                ctx.update_style(&mut out, ctx.base_style, cur_style);
 
                 for g in &row.graphemes {
                     // Newline added by wrap_line, not part of the source text
@@ -295,7 +308,7 @@ fn paragraph_to_rows<'a>(
                         cur_style = markers[marker_idx].style;
                         marker_idx += 1;
                     }
-                    update_style(&mut out, prev_style, cur_style);
+                    ctx.update_style(&mut out, prev_style, cur_style);
 
                     out.push_str(g.formatted());
                     offset += g.data.len();
@@ -325,7 +338,8 @@ fn blockquote_to_rows<'a>(
         .map(move |child| {
             to_rows(
                 ctx.with_width(inner_width)
-                    .with_base_style(content_style),
+                    .with_base_style(content_style)
+                    .set_block_quote(true),
                 child,
             )
         });
@@ -334,7 +348,7 @@ fn blockquote_to_rows<'a>(
         for rows in &mut children {
             for row in rows {
                 let mut out = String::new();
-                update_style(&mut out, ctx.base_style, ctx.theme.text_quote);
+                ctx.update_style(&mut out, ctx.base_style, ctx.theme.text_quote);
                 out.push('\u{2595}');
                 out.push_str(&row);
                 yield out;
@@ -379,8 +393,6 @@ fn to_rows<'a>(
         | Node::MdxJsxFlowElement(_)
         | Node::List(_)
         | Node::MdxjsEsm(_)
-        | Node::Toml(_)
-        | Node::Yaml(_)
         | Node::Code(_)
         | Node::Math(_)
         | Node::Heading(_)
@@ -410,7 +422,9 @@ fn to_rows<'a>(
         | Node::LinkReference(_)
         | Node::Strong(_)
         | Node::Text(_)
-        // Unsupported nodes
+        // Unsupported nodes, library shouldn't produce these
+        | Node::Toml(_)
+        | Node::Yaml(_)
         | Node::MdxFlowExpression(_)
         => unreachable!("broken markdown AST")
     }
@@ -435,6 +449,7 @@ mod test_paragraph {
                 theme: &THEME_DARK,
                 width,
                 base_style: THEME_DARK.text_base,
+                block_quote: false,
             },
             &node,
         )
@@ -484,6 +499,14 @@ mod test_paragraph {
         assert_eq!(
             render("> hello *world*", 80),
             vec!["\x1b[38;2;168;162;158m\x1b[3m▕hello world"],
+        );
+    }
+
+    #[test]
+    fn blockquote_freezes_style() {
+        assert_eq!(
+            render("> **bold** `code`", 80),
+            vec!["\x1b[38;2;168;162;158m\x1b[3m▕bold code"],
         );
     }
 
