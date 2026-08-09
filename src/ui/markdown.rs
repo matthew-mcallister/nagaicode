@@ -17,6 +17,31 @@ struct Marker {
     style: TextStyle,
 }
 
+/// Rendering state threaded through the markdown renderer.
+#[derive(Clone, Copy)]
+struct Context {
+    theme: &'static Theme,
+    width: usize,
+    base_style: TextStyle,
+}
+
+impl Context {
+    const fn with_width(mut self, width: usize) -> Self {
+        self.width = width;
+        self
+    }
+
+    const fn with_theme(mut self, theme: &'static Theme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    const fn with_base_style(mut self, base_style: TextStyle) -> Self {
+        self.base_style = base_style;
+        self
+    }
+}
+
 #[derive(Debug)]
 struct MarkupBuilder {
     theme: &'static Theme,
@@ -58,12 +83,12 @@ fn update_style(out: &mut String, prev: TextStyle, style: TextStyle) {
 }
 
 impl MarkupBuilder {
-    fn new(theme: &'static Theme, base: TextStyle) -> Self {
+    fn new(ctx: Context) -> Self {
         Self {
-            theme,
+            theme: ctx.theme,
             plain_text: String::new(),
             markers: Vec::new(),
-            cur_style: base,
+            cur_style: ctx.base_style,
         }
     }
 
@@ -230,12 +255,10 @@ impl MarkupBuilder {
 }
 
 fn paragraph_to_rows<'a>(
-    theme: &'static Theme,
-    width: usize,
-    base_style: TextStyle,
+    ctx: Context,
     paragraph: &'a Paragraph,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
-    let mut builder = MarkupBuilder::new(theme, base_style);
+    let mut builder = MarkupBuilder::new(ctx);
     builder.push_all(&paragraph.children);
     let MarkupBuilder {
         plain_text,
@@ -244,12 +267,12 @@ fn paragraph_to_rows<'a>(
     } = builder;
 
     Box::new(iter!(move || {
-        let mut cur_style = base_style;
+        let mut cur_style = ctx.base_style;
         let mut marker_idx = 0usize;
         let mut offset = 0usize;
 
         for line in plain_text.split('\n') {
-            let rows = wrap_line(width, line);
+            let rows = wrap_line(ctx.width, line);
 
             for row in rows {
                 let mut out = String::new();
@@ -259,7 +282,7 @@ fn paragraph_to_rows<'a>(
                     cur_style = markers[marker_idx].style;
                     marker_idx += 1;
                 }
-                update_style(&mut out, base_style, cur_style);
+                update_style(&mut out, ctx.base_style, cur_style);
 
                 for g in &row.graphemes {
                     // Newline added by wrap_line, not part of the source text
@@ -288,31 +311,31 @@ fn paragraph_to_rows<'a>(
 }
 
 fn blockquote_to_rows<'a>(
-    theme: &'static Theme,
-    width: usize,
-    style: TextStyle,
+    ctx: Context,
     quote: &'a Blockquote,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
     // One column for the left border prefix
-    let inner_width = width.saturating_sub(1);
+    let inner_width = ctx.width.saturating_sub(1);
 
-    let content_style = theme.text_subtle.italicized();
+    let content_style = ctx.theme.text_subtle.italicized();
 
     let mut children = quote
         .children
         .iter()
-        .map(move |child| to_rows(theme, inner_width, content_style, child));
+        .map(move |child| {
+            to_rows(
+                ctx.with_width(inner_width)
+                    .with_base_style(content_style),
+                child,
+            )
+        });
 
     Box::new(iter!(move || {
         for rows in &mut children {
             for row in rows {
                 let mut out = String::new();
-                update_style(&mut out, style, theme.text_subtle);
+                update_style(&mut out, ctx.base_style, ctx.theme.text_quote);
                 out.push('\u{2595}');
-                // The content is italicized, so step the terminal from the
-                // non-italic prefix style up to the italicized content style
-                // before the child row takes over.
-                update_style(&mut out, theme.text_subtle, content_style);
                 out.push_str(&row);
                 yield out;
             }
@@ -321,14 +344,15 @@ fn blockquote_to_rows<'a>(
 }
 
 fn root_to_rows<'a>(
-    theme: &'static Theme,
-    width: usize,
+    ctx: Context,
     root: &'a Root,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
     let mut children = root
         .children
         .iter()
-        .map(move |child| to_rows(theme, width, theme.text_base, child));
+        .map(move |child| {
+            to_rows(ctx.with_base_style(ctx.theme.text_base), child)
+        });
 
     Box::new(iter!(move || {
         let mut first = true;
@@ -345,13 +369,11 @@ fn root_to_rows<'a>(
 }
 
 fn to_rows<'a>(
-    theme: &'static Theme,
-    width: usize,
-    style: TextStyle,
+    ctx: Context,
     node: &'a Node,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
     match node {
-        Node::Root(root) => root_to_rows(theme, width, root),
+        Node::Root(root) => root_to_rows(ctx, root),
 
         Node::FootnoteDefinition(_)
         | Node::MdxJsxFlowElement(_)
@@ -370,8 +392,8 @@ fn to_rows<'a>(
         | Node::Definition(_)
         | Node::Html(_) => todo!(),
 
-        Node::Paragraph(paragraph) => paragraph_to_rows(theme, width, style, paragraph),
-        Node::Blockquote(quote) => blockquote_to_rows(theme, width, style, quote),
+        Node::Paragraph(paragraph) => paragraph_to_rows(ctx, paragraph),
+        Node::Blockquote(quote) => blockquote_to_rows(ctx, quote),
 
         // Phrasing nodes
         | Node::Break(_)
@@ -408,7 +430,15 @@ mod test_paragraph {
 
     fn render(text: &str, width: usize) -> Vec<String> {
         let node = markdown::to_mdast(text, &markdown::ParseOptions::default()).unwrap();
-        super::to_rows(&THEME_DARK, width, THEME_DARK.text_base, &node).collect()
+        super::to_rows(
+            super::Context {
+                theme: &THEME_DARK,
+                width,
+                base_style: THEME_DARK.text_base,
+            },
+            &node,
+        )
+        .collect()
     }
 
     #[test]
@@ -453,7 +483,7 @@ mod test_paragraph {
     fn blockquote() {
         assert_eq!(
             render("> hello *world*", 80),
-            vec!["\x1b[38;2;168;162;158m▕\x1b[3mhello world"],
+            vec!["\x1b[38;2;168;162;158m\x1b[3m▕hello world"],
         );
     }
 
@@ -462,9 +492,9 @@ mod test_paragraph {
         assert_eq!(
             render("> hello world foo", 8),
             vec![
-                "\x1b[38;2;168;162;158m▕\x1b[3mhello ",
-                "\x1b[38;2;168;162;158m▕\x1b[3mworld ",
-                "\x1b[38;2;168;162;158m▕\x1b[3mfoo",
+                "\x1b[38;2;168;162;158m\x1b[3m▕hello ",
+                "\x1b[38;2;168;162;158m\x1b[3m▕world ",
+                "\x1b[38;2;168;162;158m\x1b[3m▕foo",
             ],
         );
     }

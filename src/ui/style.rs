@@ -135,6 +135,7 @@ pub struct Theme {
     pub text_base: TextStyle,
     pub text_header: TextStyle,
     pub text_subtle: TextStyle,
+    pub text_quote: TextStyle,
     pub text_code: TextStyle,
 }
 
@@ -160,6 +161,7 @@ pub const THEME_DARK: Theme = Theme {
     text_base: text_style! { fg_color: WHITE },
     text_header: text_style! { fg_color: WHITE, bold: true },
     text_subtle: text_style! { fg_color: GREY_400 },
+    text_quote: text_style! { fg_color: GREY_400, italic: true },
     text_code: text_style! { fg_color: YELLOW_200 },
     bg_base: GREY_950,
     bg_collapsible: GREY_950,
