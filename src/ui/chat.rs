@@ -26,6 +26,11 @@ struct Chat {
 
 impl Chat {
     fn new(w: u16, h: u16, theme: &'static Theme) -> Self {
+        // Minimum dimensions are 80x24. If the terminal is smaller the UI will
+        // just overflow the screen. This helps avoid crashes or bizarre bugs
+        // caused by pathologically tiny terminals.
+        let w = w.max(20);
+        let h = h.max(16);
         Self {
             theme,
             stacked: Padded::new(
@@ -161,7 +166,7 @@ impl Chat {
         let bg = self.theme.bg_base;
         queue!(stdout,
             Hide,
-            SetForegroundColor(text_style.foreground_color),
+            SetForegroundColor(text_style.fg_color),
             SetBackgroundColor(bg),
         )?;
         for (y, row) in self.stacked.drawable_rows().enumerate() {

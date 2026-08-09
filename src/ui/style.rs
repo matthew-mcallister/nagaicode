@@ -1,42 +1,79 @@
 #![allow(dead_code)]
 
-use crossterm::style::{Attribute, Attributes, Color, ContentStyle};
+use crossterm::Command;
+use crossterm::style::{
+    Attribute, Color, SetAttribute, SetForegroundColor,
+};
 
 pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb { r, g, b }
 }
 
 macro_rules! text_style {
-    (
-        foreground_color: $fg:expr
-        $(; $($deco:expr),*)?
-        $(,)?
-    ) => {{
+    ($($attr:ident: $value:expr),*$(,)?) => {{
         TextStyle {
-            foreground_color: $fg,
-            underline_color: None,
-            attributes: Attributes::none()$( $(.with($deco))* )?,
+            $($attr: $value,)*
+            ..TextStyle::default()
         }
     }};
 }
 
-/// Text style with a mandatory foreground color and no background. Convertible
-/// to a crossterm [`ContentStyle`].
 #[derive(Clone, Copy, Debug)]
 pub struct TextStyle {
-    pub foreground_color: Color,
-    pub underline_color: Option<Color>,
-    pub attributes: Attributes,
+    pub fg_color: Color,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
 }
 
-impl From<TextStyle> for ContentStyle {
-    fn from(style: TextStyle) -> Self {
-        ContentStyle {
-            foreground_color: Some(style.foreground_color),
-            background_color: None,
-            underline_color: style.underline_color,
-            attributes: style.attributes,
+impl TextStyle {
+    const fn default() -> Self {
+        Self {
+            fg_color: WHITE,
+            bold: false,
+            italic: false,
+            underline: false,
         }
+    }
+}
+
+/// Tuple `(old, new)`, replaces terminal text style
+#[derive(Clone, Copy, Debug)]
+pub struct UpdateStyle(TextStyle, TextStyle);
+
+impl Command for UpdateStyle {
+    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+        let UpdateStyle(old, new) = self;
+
+        if old.fg_color != new.fg_color {
+            SetForegroundColor(new.fg_color).write_ansi(f)?;
+        }
+        if old.bold != new.bold {
+            SetAttribute(if new.bold {
+                Attribute::Bold
+            } else {
+                Attribute::NoBold
+            })
+            .write_ansi(f)?;
+        }
+        if old.italic != new.italic {
+            SetAttribute(if new.italic {
+                Attribute::Italic
+            } else {
+                Attribute::NoItalic
+            })
+            .write_ansi(f)?;
+        }
+        if old.underline != new.underline {
+            SetAttribute(if new.underline {
+                Attribute::Underlined
+            } else {
+                Attribute::NoUnderline
+            })
+            .write_ansi(f)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -49,10 +86,11 @@ pub struct Theme {
     pub text_base: TextStyle,
     pub text_header: TextStyle,
     pub text_subtle: TextStyle,
+    pub text_code: TextStyle,
 }
 
 // Stock Tailwind CSS colors
-const WHITE: Color = rgb(255, 255, 255);
+const WHITE: Color = Color::White;
 const GREY_50: Color = rgb(250, 250, 249);
 const GREY_100: Color = rgb(245, 245, 244);
 const GREY_200: Color = rgb(231, 229, 228);
@@ -64,13 +102,16 @@ const GREY_700: Color = rgb(68, 64, 60);
 const GREY_800: Color = rgb(41, 37, 36);
 const GREY_900: Color = rgb(28, 25, 23);
 const GREY_950: Color = rgb(12, 10, 9);
-const BLACK: Color = rgb(0, 0, 0);
+const BLACK: Color = Color::Black;
+
+const YELLOW_200: Color = rgb(254, 240, 138);
 
 /// Only available theme for now
 pub const THEME_DARK: Theme = Theme {
-    text_base: text_style! { foreground_color: WHITE },
-    text_header: text_style! { foreground_color: WHITE; Attribute::Bold },
-    text_subtle: text_style! { foreground_color: GREY_400 },
+    text_base: text_style! { fg_color: WHITE },
+    text_header: text_style! { fg_color: WHITE, bold: true },
+    text_subtle: text_style! { fg_color: GREY_400 },
+    text_code: text_style! { fg_color: YELLOW_200 },
     bg_base: GREY_950,
     bg_collapsible: GREY_950,
     bg_collapsible_hover: GREY_900,
