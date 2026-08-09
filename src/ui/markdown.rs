@@ -143,7 +143,8 @@ impl MarkupBuilder {
                 self.set_style(prev);
             }
 
-            // Nodes that can't be rendered faithfully in the terminal
+            // Nodes that can't be rendered faithfully in the terminal; we
+            // fall back to rendering as plaintext.
             Node::Link(link) => {
                 self.push_text("![");
                 self.push_all(&link.children);
@@ -231,10 +232,10 @@ impl MarkupBuilder {
 fn paragraph_to_rows<'a>(
     theme: &'static Theme,
     width: usize,
-    style: TextStyle,
+    base_style: TextStyle,
     paragraph: &'a Paragraph,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
-    let mut builder = MarkupBuilder::new(theme, style);
+    let mut builder = MarkupBuilder::new(theme, base_style);
     builder.push_all(&paragraph.children);
     let MarkupBuilder {
         plain_text,
@@ -243,7 +244,7 @@ fn paragraph_to_rows<'a>(
     } = builder;
 
     Box::new(iter!(move || {
-        let mut cur_style = style;
+        let mut cur_style = base_style;
         let mut marker_idx = 0usize;
         let mut offset = 0usize;
 
@@ -253,15 +254,12 @@ fn paragraph_to_rows<'a>(
             for row in rows {
                 let mut out = String::new();
 
-                // The parent is responsible for resetting the style at the
-                // start of each row, so begin from the base style and only
-                // emit the differences needed to reach the active style.
+                // Re-apply current style at start of each row
                 while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
                     cur_style = markers[marker_idx].style;
                     marker_idx += 1;
                 }
-                update_style(&mut out, style, cur_style);
-                let mut last_style = cur_style;
+                update_style(&mut out, base_style, cur_style);
 
                 for g in &row.graphemes {
                     // Newline added by wrap_line, not part of the source text
@@ -269,14 +267,12 @@ fn paragraph_to_rows<'a>(
                         continue;
                     }
 
+                    let prev_style = cur_style;
                     while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
                         cur_style = markers[marker_idx].style;
                         marker_idx += 1;
                     }
-                    if cur_style != last_style {
-                        update_style(&mut out, last_style, cur_style);
-                        last_style = cur_style;
-                    }
+                    update_style(&mut out, prev_style, cur_style);
 
                     out.push_str(g.formatted());
                     offset += g.data.len();
