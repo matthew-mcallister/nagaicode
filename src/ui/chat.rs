@@ -12,6 +12,7 @@ use crossterm::terminal::{
 };
 
 use crate::error::AnyResult;
+use crate::ui::history::HistoryItemContent;
 use crate::ui::style::{THEME_DARK, Theme};
 use crate::ui::padded::Padded;
 use crate::ui::stacked_view::StackedView;
@@ -112,11 +113,9 @@ impl Chat {
             }
             (KeyCode::Enter, _, _, _) => {
                 let text = input.get_text();
-                let text = text.strip_suffix('\n').unwrap_or(&text);
                 input.set_text("");
-                if !text.is_empty() {
-                    self.stacked.inner_mut().history_mut().markdown_message(text);
-                }
+                let text = text.strip_suffix('\n').unwrap_or(&text);
+                self.process_command(&text);
                 false
             }
             (KeyCode::Tab, _, _, _) => {
@@ -158,6 +157,32 @@ impl Chat {
             }
             _ => false,
         }
+    }
+
+    fn process_command(&mut self, command: &str) {
+        if command.trim().is_empty() {
+            return;
+        }
+
+        let history = self.stacked.inner_mut().history_mut();
+        if !command.contains('\n') {
+            let slash_command = command.starts_with('/');
+            let bang_command = command.starts_with('!');
+            if slash_command || bang_command {
+                let command = &command[1..];
+                if slash_command {
+                    let command = format!("nagai {}", command);
+                    let output = crate::command::run_command(&command);
+                    if !output.trim().is_empty() {
+                        history.add_item(HistoryItemContent::HelpMessage(output));
+                    }
+                } else {
+                    todo!("call system()")
+                };
+                return;
+            }
+        }
+        history.add_item(HistoryItemContent::Markdown(command.into()));
     }
 
     // TODO: cap redraw frequency

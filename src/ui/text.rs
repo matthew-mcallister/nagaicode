@@ -47,6 +47,26 @@ impl Grapheme {
 #[derive(Debug, Default)]
 pub struct Row {
     pub graphemes: Vec<Grapheme>,
+    pub width: usize,
+}
+
+impl Row {
+    /// Concatenates all graphemes into a string and pads with spaces to fill
+    /// the desired width.
+    pub fn to_padded_string(&self, padded_width: usize) -> String {
+        let mut s = String::with_capacity(2 * padded_width);
+        for grapheme in &self.graphemes {
+            // Omit the trailing zero-width newline marker, if present.
+            if grapheme.data == "\n" {
+                continue;
+            }
+            s.push_str(grapheme.formatted());
+        }
+        if self.width < padded_width {
+            s.push_str(&SPACES[..padded_width - self.width]);
+        }
+        s
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -67,8 +87,6 @@ pub struct Analysis {
     rows: Vec<Row>,
     /// Current row
     row: Row,
-    /// Current row width
-    row_width: usize,
     src_col: usize,
     src_offset: usize,
 }
@@ -89,18 +107,20 @@ impl Analysis {
     }
 
     fn cur_column(&self) -> usize {
-        self.row_width
+        self.row.width
     }
 
     fn end_row(&mut self) {
         let mut old_row = std::mem::replace(&mut self.row, Row {
             graphemes: Vec::with_capacity(self.max_width),
+            width: 0,
         });
         if let Some((index, column)) = self.break_point.take() {
             self.row.graphemes = old_row.graphemes.split_off(index.get());
-            self.row_width -= column.get();
+            self.row.width = old_row.width - column.get();
+            old_row.width = column.get();
         } else {
-            self.row_width = 0;
+            self.row.width = 0;
         }
         self.rows.push(old_row);
     }
@@ -135,7 +155,7 @@ impl Analysis {
             data: CompactString::new(grapheme),
             width: width as u8,
         });
-        self.row_width += width;
+        self.row.width += width;
         self.src_col += width;
         self.src_offset += grapheme.len();
     }
@@ -205,6 +225,7 @@ pub fn wrap_line_naive(max_width: usize, line: &str) -> Vec<Row> {
             grapheme.width()
         };
         if width + grapheme_width > max_width {
+            row.width = width;
             rows.push(row);
             row = Row::default();
             width = 0;
@@ -216,6 +237,7 @@ pub fn wrap_line_naive(max_width: usize, line: &str) -> Vec<Row> {
         width += grapheme_width;
     }
 
+    row.width = width;
     rows.push(row);
     rows.last_mut().unwrap().graphemes.push(Grapheme::newline());
     rows
@@ -243,6 +265,7 @@ pub fn truncate_line(max_width: usize, line: &str) -> Row {
         width += grapheme_width;
     }
 
+    row.width = width;
     row
 }
 

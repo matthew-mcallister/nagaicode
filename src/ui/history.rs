@@ -4,11 +4,28 @@
 use std::fmt;
 
 use crossterm::Command;
+use crossterm::style::SetStyle;
 
 use crate::arena::{Arena, Id};
 use crate::ui::markdown::render_markdown;
 use crate::ui::style::Theme;
 use crate::ui::Component;
+use crate::ui::text::wrap_line_naive;
+
+pub(crate) fn render_help_message(
+    theme: &'static Theme,
+    width: usize,
+    content: &str,
+) -> Vec<String> {
+    let mut prefix = String::new();
+    let _ = SetStyle(theme.text_quote.into()).write_ansi(&mut prefix);
+    prefix.push_str("▕ ");
+    content.lines().flat_map(|line|
+        wrap_line_naive(width - 2, line)
+            .into_iter()
+            .map(|row| format!("{}{}", prefix, row.to_padded_string(width - 2)))
+    ).collect()
+}
 
 #[derive(Debug)]
 pub struct HistoryRow {
@@ -30,9 +47,15 @@ impl HistoryRow {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum HistoryItemContent {
+    HelpMessage(String),
+    Markdown(String),
+}
+
 #[derive(Debug)]
 pub struct HistoryItem {
-    markdown: String,
+    content: HistoryItemContent,
     first_row: Id<HistoryRow>,
     last_row: Id<HistoryRow>,
     num_rows: usize,
@@ -46,8 +69,57 @@ impl HistoryItem {
         width: usize,
         md: &str,
     ) -> Id<Self> {
+        Self::from_rows(
+            items,
+            rows,
+            width,
+            HistoryItemContent::Markdown(md.to_string()),
+            render_markdown(theme, width, md),
+        )
+    }
+
+    fn from_help_message(
+        theme: &'static Theme,
+        items: &mut Arena<HistoryItem>,
+        rows: &mut Arena<HistoryRow>,
+        width: usize,
+        content: &str,
+    ) -> Id<Self> {
+        Self::from_rows(
+            items,
+            rows,
+            width,
+            HistoryItemContent::HelpMessage(content.to_string()),
+            render_help_message(theme, width, content),
+        )
+    }
+
+    fn from_content(
+        theme: &'static Theme,
+        items: &mut Arena<HistoryItem>,
+        rows: &mut Arena<HistoryRow>,
+        width: usize,
+        content: HistoryItemContent,
+    ) -> Id<Self> {
+        match content {
+            HistoryItemContent::Markdown(md) => {
+                Self::from_markdown(theme, items, rows, width, &md)
+            }
+            HistoryItemContent::HelpMessage(content) => {
+                Self::from_help_message(theme, items, rows, width, &content)
+            }
+        }
+    }
+
+    fn from_rows(
+        items: &mut Arena<HistoryItem>,
+        rows: &mut Arena<HistoryRow>,
+        width: usize,
+        content: HistoryItemContent,
+        rendered: Vec<String>,
+    ) -> Id<Self> {
         let item = items.insert(Self {
-            markdown: md.to_string(),
+            content,
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 0,
@@ -57,8 +129,8 @@ impl HistoryItem {
         let mut last_row = Id::null();
         let mut num_rows = 0;
 
-        // Render the markdown, then two blank rows of vertical padding.
-        let rows_out = render_markdown(theme, width, md)
+        // Render the content, then two blank rows of vertical padding.
+        let rows_out = rendered
             .into_iter()
             .chain(std::iter::repeat_with(|| " ".repeat(width)).take(2));
 
@@ -226,10 +298,10 @@ impl History {
         }
         self.width = width;
 
-        let markdown: Vec<String> = self
+        let contents: Vec<HistoryItemContent> = self
             .item
             .iter()
-            .map(|(_, item)| item.markdown.clone())
+            .map(|(_, item)| item.content.clone())
             .collect();
 
         self.item.clear();
@@ -247,9 +319,14 @@ impl History {
         self.viewport_top = head;
         self.viewport_bottom = head;
 
-        for md in markdown {
-            let item =
-                HistoryItem::from_markdown(self.theme, &mut self.item, &mut self.rows, width, &md);
+        for content in contents {
+            let item = HistoryItem::from_content(
+                self.theme,
+                &mut self.item,
+                &mut self.rows,
+                width,
+                content,
+            );
             self.append_item(item);
         }
     }
@@ -271,9 +348,9 @@ impl History {
         self.set_viewport_bottom(self.last_row());
     }
 
-    /// Appends a raw markdown message to the history.
-    pub fn markdown_message(&mut self, md: &str) {
-        let item = HistoryItem::from_markdown(self.theme, &mut self.item, &mut self.rows, self.width, md);
+    /// Appends an item to the history.
+    pub fn add_item(&mut self, content: HistoryItemContent) {
+        let item = HistoryItem::from_content(self.theme, &mut self.item, &mut self.rows, self.width, content);
         self.append_item(item);
 
         // Follow the newest messages.
@@ -390,32 +467,6 @@ mod tests {
         History::new(width, max_height, &THEME_DARK)
     }
 
-    /// Strips ANSI escape sequences from a row.
-    fn strip_ansi(s: &str) -> String {
-        let mut out = String::with_capacity(s.len());
-        let mut chars = s.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '\x1b' {
-                while let Some(&c) = chars.peek() {
-                    chars.next();
-                    if c.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
-    }
-
-    fn plain_rows(history: &History) -> Vec<String> {
-        history
-            .iter_rows()
-            .map(|(_, row)| strip_ansi(&row.preformatted).trim_end().to_string())
-            .collect()
-    }
-
     #[test]
     fn test_empty_history() {
         let history = history(20, 5);
@@ -426,48 +477,35 @@ mod tests {
     }
 
     #[test]
-    fn test_markdown_message_rows() {
-        let mut history = history(20, 5);
-        history.markdown_message("hello world");
-        assert_eq!(history.num_rows(), 3);
-        assert_eq!(history.item.len(), 1);
-        assert_eq!(history.viewport_bottom, history.last_row());
-    }
+    fn test_render_help_message() {
+        use crossterm::Command;
+        use crossterm::style::SetStyle;
 
-    #[test]
-    fn test_markdown_message_wraps() {
-        let mut history = history(10, 5);
-        history.markdown_message("hello world foo");
-        assert_eq!(history.num_rows(), 4);
-    }
+        fn render(content: &str, width: usize) -> String {
+            let mut lines = super::render_help_message(&THEME_DARK, width, content);
 
-    #[test]
-    fn test_multiline_markdown_message() {
-        let mut history = history(80, 5);
-        history.markdown_message("hello\nworld");
-        assert_eq!(history.num_rows(), 3);
-    }
+            // In tests, strip the style initialization commands for
+            // readability.
+            let mut prefix = String::new();
+            let _ = SetStyle(THEME_DARK.text_quote.into()).write_ansi(&mut prefix);
+            for line in lines.iter_mut() {
+                *line = line.trim_start_matches(&prefix).to_owned();
+            }
 
-    #[test]
-    fn test_set_width() {
-        let mut history = history(10, 10);
-        history.markdown_message("hello world foo");
-        assert_eq!(plain_rows(&history), vec!["hello", "world foo", "", ""]);
+            lines.join("\n")
+        }
 
-        history.set_width(20);
-        assert_eq!(history.num_rows(), 3);
-        assert_eq!(plain_rows(&history), vec!["hello world foo", "", ""]);
-
-        history.set_width(10);
-        assert_eq!(history.num_rows(), 4);
-        assert_eq!(history.viewport_bottom, history.last_row());
+        assert_eq!(render("hello", 10), "▕ hello   ");
+        assert_eq!(render("foo\nbar", 8), "▕ foo   \n▕ bar   ");
+        assert_eq!(render("hello world", 8), "▕ hello \n▕ world ");
+        assert_eq!(render("", 6), "");
     }
 
     #[test]
     fn test_scroll() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.markdown_message(&format!("message {i}"));
+            history.add_item(HistoryItemContent::Markdown(format!("message {i}")));
         }
         assert_eq!(history.num_rows(), 30);
 

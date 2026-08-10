@@ -234,6 +234,13 @@ impl InputBox {
         self.lines.len()
     }
 
+    /// Returns true if the first character of the input is `c`.
+    pub fn starts_with(&self, c: char) -> bool {
+        self.iter_graphemes(self.grapheme_start(), self.grapheme_end())
+            .next()
+            .is_some_and(|(_, g)| g.data.starts_with(c))
+    }
+
     fn first_row(&self) -> Id<InputRow> {
         self.rows[self.head].next
     }
