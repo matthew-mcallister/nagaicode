@@ -56,7 +56,13 @@ impl HistoryItem {
         let mut first_row = Id::null();
         let mut last_row = Id::null();
         let mut num_rows = 0;
-        for row in render_markdown(theme, width, md) {
+
+        // Render the markdown, then two blank rows of vertical padding.
+        let rows_out = render_markdown(theme, width, md)
+            .into_iter()
+            .chain(std::iter::repeat_with(|| " ".repeat(width)).take(2));
+
+        for row in rows_out {
             let mut history_row = HistoryRow::from_preformatted(row);
             history_row.item = item;
             history_row.prev = last_row;
@@ -423,7 +429,7 @@ mod tests {
     fn test_markdown_message_rows() {
         let mut history = history(20, 5);
         history.markdown_message("hello world");
-        assert_eq!(history.num_rows(), 1);
+        assert_eq!(history.num_rows(), 3);
         assert_eq!(history.item.len(), 1);
         assert_eq!(history.viewport_bottom, history.last_row());
     }
@@ -432,28 +438,28 @@ mod tests {
     fn test_markdown_message_wraps() {
         let mut history = history(10, 5);
         history.markdown_message("hello world foo");
-        assert_eq!(history.num_rows(), 2);
+        assert_eq!(history.num_rows(), 4);
     }
 
     #[test]
     fn test_multiline_markdown_message() {
         let mut history = history(80, 5);
         history.markdown_message("hello\nworld");
-        assert_eq!(history.num_rows(), 1);
+        assert_eq!(history.num_rows(), 3);
     }
 
     #[test]
     fn test_set_width() {
         let mut history = history(10, 10);
         history.markdown_message("hello world foo");
-        assert_eq!(plain_rows(&history), vec!["hello", "world foo"]);
+        assert_eq!(plain_rows(&history), vec!["hello", "world foo", "", ""]);
 
         history.set_width(20);
-        assert_eq!(history.num_rows(), 1);
-        assert_eq!(plain_rows(&history), vec!["hello world foo"]);
+        assert_eq!(history.num_rows(), 3);
+        assert_eq!(plain_rows(&history), vec!["hello world foo", "", ""]);
 
         history.set_width(10);
-        assert_eq!(history.num_rows(), 2);
+        assert_eq!(history.num_rows(), 4);
         assert_eq!(history.viewport_bottom, history.last_row());
     }
 
@@ -463,7 +469,7 @@ mod tests {
         for i in 0..10 {
             history.markdown_message(&format!("message {i}"));
         }
-        assert_eq!(history.num_rows(), 10);
+        assert_eq!(history.num_rows(), 30);
 
         let last = history.last_row();
         let top = history.viewport_top;

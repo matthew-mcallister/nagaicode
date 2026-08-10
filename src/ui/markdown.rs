@@ -27,6 +27,8 @@ struct Marker {
 struct Context {
     theme: &'static Theme,
     width: usize,
+    // Base text style used by the current node. Child nodes assume the parent
+    // is responsible for setting this style as part of its prefix.
     base_style: TextStyle,
     // FIXME: Current behavior is a slightly crude hack; ideally block quotes
     // would flip the meaning of italic and non-italic.
@@ -359,7 +361,15 @@ fn heading_to_rows(
         position: None,
     }));
     children.extend(heading.children.iter().cloned());
-    phrasing_to_rows(ctx.with_base_style(ctx.theme.text_header), &children)
+    let rows = phrasing_to_rows(ctx.with_base_style(ctx.theme.text_header), &children);
+    Box::new(rows.map(move |row| {
+        let mut out = String::with_capacity(row.len() + 16);
+        // Step into the header style from the terminal's base style, which is
+        // re-applied at the start of every row by render_markdown.
+        ctx.update_style(&mut out, ctx.theme.text_base, ctx.theme.text_header);
+        out.push_str(&row);
+        out
+    }))
 }
 
 /// Wraps `text` at `width` using naive wrapping and renders each row to a
@@ -423,8 +433,8 @@ fn blockquote_to_rows<'a>(
     ctx: Context,
     quote: &'a Blockquote,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
-    // One column for the left border prefix
-    let inner_width = ctx.width.saturating_sub(1);
+    // One column for the left border prefix, plus one for padding
+    let inner_width = ctx.width.saturating_sub(2);
 
     let content_style = ctx.theme.text_subtle.italicized();
 
@@ -441,11 +451,22 @@ fn blockquote_to_rows<'a>(
         });
 
     Box::new(iter!(move || {
+        let mut first = true;
         for rows in &mut children {
+            if !first {
+                let mut out = String::with_capacity(ctx.width);
+                ctx.update_style(&mut out, ctx.base_style, ctx.theme.text_quote);
+                out.push('\u{2595}');
+                out.push(' ');
+                push_spaces(&mut out, ctx.width - 2);
+                yield out;
+            }
+            first = false;
             for row in rows {
                 let mut out = String::with_capacity(row.len() + 16);
                 ctx.update_style(&mut out, ctx.base_style, ctx.theme.text_quote);
                 out.push('\u{2595}');
+                out.push(' ');
                 out.push_str(&row);
                 yield out;
             }
@@ -697,15 +718,19 @@ mod test_paragraph {
     fn blockquote() {
         assert_eq!(
             render("> hello *world*", 20),
-            "\x1b[38;2;168;162;158m\x1b[3m▕hello world        ",
+            "\x1b[38;2;168;162;158m\x1b[3m▕ hello world       ",
         );
         assert_eq!(
             render("> **bold** `code`", 20),
-            "\x1b[38;2;168;162;158m\x1b[3m▕bold code          ",
+            "\x1b[38;2;168;162;158m\x1b[3m▕ bold code         ",
         );
         assert_eq!(
             render("> hello world foo", 8),
-            "\x1b[38;2;168;162;158m\x1b[3m▕hello  \n\x1b[38;2;168;162;158m\x1b[3m▕world  \n\x1b[38;2;168;162;158m\x1b[3m▕foo    ",
+            "\x1b[38;2;168;162;158m\x1b[3m▕ hello \n\x1b[38;2;168;162;158m\x1b[3m▕ world \n\x1b[38;2;168;162;158m\x1b[3m▕ foo   ",
+        );
+        assert_eq!(
+            render("> first\n>\n> second", 16),
+            "\x1b[38;2;168;162;158m\x1b[3m▕ first         \n\x1b[38;2;168;162;158m\x1b[3m▕               \n\x1b[38;2;168;162;158m\x1b[3m▕ second        ",
         );
     }
 
@@ -791,11 +816,11 @@ mod test_paragraph {
 
     #[test]
     fn heading() {
-        assert_eq!(render("# Hello", 20), "# Hello             ");
-        assert_eq!(render("#### Deep", 20), "#### Deep           ");
+        assert_eq!(render("# Hello", 20), "\x1b[1m# Hello             ");
+        assert_eq!(render("#### Deep", 20), "\x1b[1m#### Deep           ");
         assert_eq!(
             render("## Hello *world*", 20),
-            "## Hello \x1b[3mworld      ",
+            "\x1b[1m## Hello \x1b[3mworld      ",
         );
     }
 
