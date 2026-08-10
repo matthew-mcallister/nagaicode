@@ -6,6 +6,7 @@
 use std::iter::iter;
 
 use crossterm::Command;
+use crossterm::style::SetStyle;
 use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Text};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -601,6 +602,10 @@ pub fn render_markdown(
         },
     )
     .expect("invalid markdown");
+
+    let mut style_prefix = String::new();
+    let _ = SetStyle(theme.text_base.into()).write_ansi(&mut style_prefix);
+
     flow_to_rows(
         Context {
             theme,
@@ -611,15 +616,28 @@ pub fn render_markdown(
         },
         &node,
     )
+    .map(|row| format!("{}{}", style_prefix, &row))
     .collect()
 }
 
 #[cfg(test)]
 mod test_paragraph {
+    use crossterm::Command;
+    use crossterm::style::SetStyle;
+
     use crate::ui::style::THEME_DARK;
 
     fn render(text: &str, width: usize) -> String {
-        super::render_markdown(&THEME_DARK, width, text).join("\n")
+        let mut lines = super::render_markdown(&THEME_DARK, width, text);
+
+        // In tests, strip the style initialization commands for readability
+        let mut prefix = String::new();
+        let _ = SetStyle(THEME_DARK.text_base.into()).write_ansi(&mut prefix);
+        for line in lines.iter_mut() {
+            *line = line.trim_start_matches(&prefix).to_owned();
+        }
+
+        lines.join("\n")
     }
 
     #[test]
