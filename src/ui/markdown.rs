@@ -1,12 +1,12 @@
 // FIXME maybe: accumulate nested prefixes instead of concatenating repeatedly.
+// Probably switch to an append-only implementation.
 // FIXME: need to cap prefix size/set a lower bound on width to prevent
 // underflow and broken layout
-// FIXME: probably should escape actual escape sequences if they appear in the
-// source
+// FIXME: probably should escape the actual escape char if it appears in source
 use std::iter::iter;
 
 use crossterm::Command;
-use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, Node, Text};
+use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Text};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ui::style::{TextStyle, Theme, UpdateStyle};
@@ -388,6 +388,18 @@ fn preformatted_to_rows<'a>(
     })())
 }
 
+/// Renders a thematic break as a row of `width` hyphens.
+fn thematic_break_to_rows(
+    ctx: Context,
+) -> Box<dyn Iterator<Item = String>> {
+    Box::new(iter!(move || {
+        let mut out = String::with_capacity(ctx.width + 32);
+        ctx.update_style(&mut out, ctx.base_style, ctx.theme.text_subtle);
+        out.push_str(&"┄".repeat(ctx.width));
+        yield out;
+    })())
+}
+
 fn blockquote_to_rows<'a>(
     ctx: Context,
     quote: &'a Blockquote,
@@ -424,6 +436,7 @@ fn blockquote_to_rows<'a>(
 
 fn flow_content_to_rows<'a>(
     ctx: Context,
+    spread: bool,
     children: &'a [Node],
 ) -> Box<dyn Iterator<Item = String> + 'a> {
     let mut children = children
@@ -435,7 +448,7 @@ fn flow_content_to_rows<'a>(
     Box::new(iter!(move || {
         let mut first = true;
         for rows in &mut children {
-            if !first {
+            if !first && spread {
                 yield String::new();
             }
             first = false;
@@ -452,7 +465,7 @@ fn footnote_definition_to_rows<'a>(
 ) -> Box<dyn Iterator<Item = String> + 'a> {
     // Reserve two columns for the indent prefix
     let inner_width = ctx.width.saturating_sub(2);
-    let children = flow_content_to_rows(ctx.with_width(inner_width), &footnote.children);
+    let children = flow_content_to_rows(ctx.with_width(inner_width), true, &footnote.children);
     let header = format!("[^{}]:", footnote.identifier);
     Box::new(
         wrap_naive_rows(ctx.width, &header)
@@ -468,19 +481,51 @@ fn definition_to_rows<'a>(
     Box::new(wrap_naive_rows(ctx.width, &line))
 }
 
+/// Renders a standard (unordered) list. Each child is prefixed with "- " for
+/// the first child and "  " for subsequent ones. When the list is spread, a
+/// blank line separates the children.
+fn list_to_rows<'a>(
+    ctx: Context,
+    list: &'a List,
+) -> Box<dyn Iterator<Item = String> + 'a> {
+    // Reserve two columns for the bullet or indent prefix
+    let inner_width = ctx.width.saturating_sub(2);
+
+    let children = list
+        .children
+        .iter()
+        .map(move |child| flow_to_rows(ctx.with_width(inner_width), child));
+
+    Box::new(iter!(move || {
+        let mut first = true;
+        let mut is_first_row = true;
+        for rows in children {
+            if !first && list.spread {
+                yield String::new();
+            }
+            first = false;
+            for row in rows {
+                let prefix = if is_first_row { "- " } else { "  " };
+                is_first_row = false;
+                let mut out = String::with_capacity(2 + row.len());
+                out.push_str(prefix);
+                out.push_str(&row);
+                yield out;
+            }
+        }
+    })())
+}
+
 fn flow_to_rows<'a>(
     ctx: Context,
     node: &'a Node,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
     match node {
-        Node::Root(root) => flow_content_to_rows(ctx, &root.children),
+        Node::Root(root) => flow_content_to_rows(ctx, true, &root.children),
 
-        Node::List(_)
-        | Node::Table(_)
-        | Node::ThematicBreak(_)
+        Node::Table(_)
         | Node::TableRow(_)
-        | Node::TableCell(_)
-        | Node::ListItem(_) => todo!(),
+        | Node::TableCell(_) => todo!(),
 
         Node::Paragraph(paragraph) => phrasing_to_rows(ctx, &paragraph.children),
         Node::Blockquote(quote) => blockquote_to_rows(ctx, quote),
@@ -490,6 +535,11 @@ fn flow_to_rows<'a>(
         Node::Definition(definition) => definition_to_rows(ctx, definition),
         Node::Html(html) => preformatted_to_rows(ctx, ctx.theme.text_code, &html.value),
         Node::Heading(heading) => heading_to_rows(ctx, heading),
+        Node::ThematicBreak(_) => thematic_break_to_rows(ctx),
+        Node::ListItem(list_item) => {
+            flow_content_to_rows(ctx, list_item.spread, &list_item.children)
+        },
+        Node::List(list) => list_to_rows(ctx, list),
 
         // Phrasing nodes
         | Node::Break(_)
@@ -716,6 +766,44 @@ mod test_paragraph {
         assert_eq!(
             render("## Hello *world*", 80),
             vec!["## Hello \x1b[3mworld"],
+        );
+    }
+
+    #[test]
+    fn thematic_break() {
+        assert_eq!(
+            render("---", 10),
+            vec!["\x1b[38;2;168;162;158m┄┄┄┄┄┄┄┄┄┄"],
+        );
+    }
+
+    #[test]
+    fn unordered_list() {
+        assert_eq!(render("- a", 80), vec!["- a"]);
+        assert_eq!(render("- a\n- b", 80), vec!["- a", "  b"]);
+    }
+
+    #[test]
+    fn unordered_list_spread() {
+        assert_eq!(
+            render("- a\n\n- b", 80),
+            vec!["- a", "", "  b"],
+        );
+    }
+
+    #[test]
+    fn unordered_list_inline() {
+        assert_eq!(
+            render("- *hi*", 80),
+            vec!["- \x1b[3mhi"],
+        );
+    }
+
+    #[test]
+    fn unordered_list_wrap() {
+        assert_eq!(
+            render("- hello world foo", 8),
+            vec!["- hello ", "  world ", "  foo"],
         );
     }
 }
