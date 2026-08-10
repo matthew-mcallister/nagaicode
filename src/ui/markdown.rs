@@ -481,34 +481,48 @@ fn definition_to_rows<'a>(
     Box::new(wrap_naive_rows(ctx.width, &line))
 }
 
-/// Renders a standard (unordered) list. Each child is prefixed with "- " for
-/// the first child and "  " for subsequent ones. When the list is spread, a
-/// blank line separates the children.
+/// Renders a list. Unordered lists prefix the first row of each item with
+/// "- ", ordered lists with a left-aligned number. Continuation rows are
+/// indented to align with the item content. When the list is spread, a blank
+/// line separates the children.
 fn list_to_rows<'a>(
     ctx: Context,
     list: &'a List,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
-    // Reserve two columns for the bullet or indent prefix
-    let inner_width = ctx.width.saturating_sub(2);
+    // The number prefix is padded so all items share a common width
+    let prefix_width = if list.ordered {
+        3 + list.children.len().ilog10() as usize
+    } else {
+        2
+    };
+    // Reserve the prefix width for the number/indent
+    let inner_width = ctx.width.saturating_sub(prefix_width);
+    let indent = " ".repeat(prefix_width);
 
     let children = list
         .children
         .iter()
-        .map(move |child| flow_to_rows(ctx.with_width(inner_width), child));
+        .enumerate()
+        .map(move |(i, child)| {
+            let prefix = if list.ordered {
+                format!("{:<width$}", format!("{}.", i + 1), width = prefix_width)
+            } else {
+                "- ".to_string()
+            };
+            (flow_to_rows(ctx.with_width(inner_width), child), prefix)
+        });
 
     Box::new(iter!(move || {
         let mut first = true;
-        let mut is_first_row = true;
-        for rows in children {
+        for (rows, prefix) in children {
             if !first && list.spread {
                 yield String::new();
             }
             first = false;
-            for row in rows {
-                let prefix = if is_first_row { "- " } else { "  " };
-                is_first_row = false;
-                let mut out = String::with_capacity(2 + row.len());
-                out.push_str(prefix);
+            for (i, row) in rows.enumerate() {
+                let p = if i == 0 { &prefix } else { &indent };
+                let mut out = String::with_capacity(p.len() + row.len());
+                out.push_str(p);
                 out.push_str(&row);
                 yield out;
             }
@@ -650,18 +664,10 @@ mod test_paragraph {
             render("> hello *world*", 80),
             vec!["\x1b[38;2;168;162;158m\x1b[3m▕hello world"],
         );
-    }
-
-    #[test]
-    fn blockquote_freezes_style() {
         assert_eq!(
             render("> **bold** `code`", 80),
             vec!["\x1b[38;2;168;162;158m\x1b[3m▕bold code"],
         );
-    }
-
-    #[test]
-    fn blockquote_wrap() {
         assert_eq!(
             render("> hello world foo", 8),
             vec![
@@ -780,30 +786,61 @@ mod test_paragraph {
     #[test]
     fn unordered_list() {
         assert_eq!(render("- a", 80), vec!["- a"]);
-        assert_eq!(render("- a\n- b", 80), vec!["- a", "  b"]);
-    }
-
-    #[test]
-    fn unordered_list_spread() {
+        assert_eq!(render("- a\n- b", 80), vec!["- a", "- b"]);
         assert_eq!(
             render("- a\n\n- b", 80),
-            vec!["- a", "", "  b"],
+            vec!["- a", "", "- b"],
         );
-    }
-
-    #[test]
-    fn unordered_list_inline() {
         assert_eq!(
             render("- *hi*", 80),
             vec!["- \x1b[3mhi"],
         );
-    }
-
-    #[test]
-    fn unordered_list_wrap() {
         assert_eq!(
             render("- hello world foo", 8),
             vec!["- hello ", "  world ", "  foo"],
+        );
+    }
+
+    #[test]
+    fn ordered_list() {
+        assert_eq!(render("1. a\n2. b", 80), vec!["1. a", "2. b"]);
+
+        let md = (1..=10)
+            .map(|i| format!("{}. item", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let expected: Vec<String> = (1..=10)
+            .map(|i| format!("{:<4}{}", format!("{}.", i), "item"))
+            .collect();
+        assert_eq!(render(&md, 80), expected);
+
+        assert_eq!(
+            render("1. hello world foo", 8),
+            vec!["1. hello", "    ", "   world", "    foo"],
+        );
+
+        assert_eq!(render("1. a\n1. b", 80), vec!["1. a", "2. b"]);
+    }
+
+    #[test]
+    fn nested_lists() {
+        // N.B. Commonmark requires nested lists to be indented 4 spaces, but
+        // we render aligned with the other ListItem siblings
+        assert_eq!(
+            render("- one\n  - two\n  - three", 12),
+            vec!["- one", "  - two", "  - three"],
+        );
+        assert_eq!(
+            render("- one\n  1. two\n  2. three", 12),
+            vec!["- one", "  1. two", "  2. three"],
+        );
+        assert_eq!(
+            render("1. one\n    - two\n    - three", 12),
+            vec!["1. one", "   - two", "   - three"],
+        );
+        assert_eq!(
+            render("1. one\n    1. two\n    2. three", 12),
+            vec!["1. one", "   1. two", "   2. three"],
         );
     }
 }
