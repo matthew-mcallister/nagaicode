@@ -137,6 +137,7 @@ pub struct Theme {
     pub text_subtle: TextStyle,
     pub text_quote: TextStyle,
     pub text_code: TextStyle,
+    pub text_math: TextStyle,
 }
 
 // Stock Tailwind CSS colors
@@ -163,6 +164,7 @@ pub const THEME_DARK: Theme = Theme {
     text_subtle: text_style! { fg_color: GREY_400 },
     text_quote: text_style! { fg_color: GREY_400, italic: true },
     text_code: text_style! { fg_color: YELLOW_200 },
+    text_math: text_style! { fg_color: YELLOW_200, italic: true },
     bg_base: GREY_950,
     bg_collapsible: GREY_950,
     bg_collapsible_hover: GREY_900,

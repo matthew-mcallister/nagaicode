@@ -6,7 +6,7 @@
 use std::iter::iter;
 
 use crossterm::Command;
-use markdown::mdast::{Blockquote, Code, InlineCode, Node, Paragraph, Root};
+use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, InlineCode, Node, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ui::style::{TextStyle, Theme, UpdateStyle};
@@ -82,14 +82,13 @@ struct MarkupBuilder {
 /// diacritic, e.g. " \u{0301}", but no one renders this correctly, making
 /// usage so rare that it is not worth supporting. Poor design decision by the
 /// Unicode Consortium.
-fn collapse_whitespace(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
+fn collapse_whitespace(out: &mut String, s: &str) {
     if s.starts_with(char::is_whitespace) {
         out.push(' ');
     }
 
     let mut words = s.split_whitespace();
-    let Some(t) = words.next() else { return out };
+    let Some(t) = words.next() else { return };
     out.push_str(t);
 
     for t in words {
@@ -100,7 +99,6 @@ fn collapse_whitespace(s: &str) -> String {
     if s.ends_with(char::is_whitespace) {
         out.push(' ');
     }
-    out
 }
 
 impl MarkupBuilder {
@@ -114,7 +112,7 @@ impl MarkupBuilder {
     }
 
     fn push_text(&mut self, s: &str) {
-        self.plain_text.push_str(&collapse_whitespace(s));
+        collapse_whitespace(&mut self.plain_text, s);
     }
 
     /// Removes newlines, expands tabs, but preserves otherwise whitespace.
@@ -230,9 +228,10 @@ impl MarkupBuilder {
                 self.push_text("]");
             }
             Node::InlineMath(math) => {
-                self.push_text("$");
-                self.push_text(&math.value);
-                self.push_text("$");
+                let prev = self.cur_style;
+                self.set_style(self.theme.text_math);
+                self.push_inline_code(&math.value);
+                self.set_style(prev);
             }
             Node::FootnoteReference(footnote) => {
                 self.push_text("[^");
@@ -296,7 +295,7 @@ fn paragraph_to_rows<'a>(
             let rows = wrap_line(ctx.width, line);
 
             for row in rows {
-                let mut out = String::new();
+                let mut out = String::with_capacity(2 * row.graphemes.len());
 
                 // Re-apply current style at start of each row
                 while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
@@ -331,29 +330,41 @@ fn paragraph_to_rows<'a>(
     })())
 }
 
-fn code_to_rows<'a>(
+/// Wraps `text` at `width` using naive wrapping and renders each row to a
+/// plain string.
+fn wrap_naive_rows(width: usize, text: &str) -> impl Iterator<Item = String> + use<> {
+    wrap_line_naive(width, text).into_iter().map(|row| {
+        let mut out = String::with_capacity(row.graphemes.len());
+        for g in &row.graphemes {
+            // Newline added by wrap_line_naive, not part of the source
+            if g.data == "\n" {
+                continue;
+            }
+            out.push_str(g.formatted());
+        }
+        out
+    })
+}
+
+fn preformatted_to_rows<'a>(
     ctx: Context,
-    code: &'a Code,
+    style: TextStyle,
+    value: &'a str,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
-    // Base style is text_code; style updates are frozen so the preformatted
-    // content renders with one uniform style.
-    let code_ctx = ctx
-        .with_base_style(ctx.theme.text_code)
+    // Style updates are frozen so the preformatted content renders with one
+    // uniform style.
+    let pre_ctx = ctx
+        .with_base_style(style)
         .set_code(true);
 
     Box::new(iter!(move || {
-        for line in code.value.split('\n') {
-            for row in wrap_line_naive(code_ctx.width, line) {
-                let mut out = String::new();
-                // Step into the code style from the enclosing context's style
-                ctx.update_style(&mut out, ctx.base_style, code_ctx.base_style);
-                for g in &row.graphemes {
-                    // Newline added by wrap_line_naive, not part of the source
-                    if g.data == "\n" {
-                        continue;
-                    }
-                    out.push_str(g.formatted());
-                }
+        for line in value.split('\n') {
+            for row in wrap_naive_rows(pre_ctx.width, line) {
+                let mut out = String::with_capacity(row.len() + 32);
+                // Step into the preformatted style from the enclosing context's
+                // style
+                ctx.update_style(&mut out, ctx.base_style, pre_ctx.base_style);
+                out.push_str(&row);
                 yield out;
             }
         }
@@ -384,7 +395,7 @@ fn blockquote_to_rows<'a>(
     Box::new(iter!(move || {
         for rows in &mut children {
             for row in rows {
-                let mut out = String::new();
+                let mut out = String::with_capacity(row.len() + 16);
                 ctx.update_style(&mut out, ctx.base_style, ctx.theme.text_quote);
                 out.push('\u{2595}');
                 out.push_str(&row);
@@ -394,12 +405,11 @@ fn blockquote_to_rows<'a>(
     })())
 }
 
-fn root_to_rows<'a>(
+fn flow_content_to_rows<'a>(
     ctx: Context,
-    root: &'a Root,
+    children: &'a [Node],
 ) -> Box<dyn Iterator<Item = String> + 'a> {
-    let mut children = root
-        .children
+    let mut children = children
         .iter()
         .map(move |child| {
             to_rows(ctx.with_base_style(ctx.theme.text_base), child)
@@ -419,29 +429,50 @@ fn root_to_rows<'a>(
     })())
 }
 
+fn footnote_definition_to_rows<'a>(
+    ctx: Context,
+    footnote: &'a FootnoteDefinition,
+) -> Box<dyn Iterator<Item = String> + 'a> {
+    // Reserve two columns for the indent prefix
+    let inner_width = ctx.width.saturating_sub(2);
+    let children = flow_content_to_rows(ctx.with_width(inner_width), &footnote.children);
+    let header = format!("[^{}]:", footnote.identifier);
+    Box::new(
+        wrap_naive_rows(ctx.width, &header)
+            .chain(children.map(|row| format!("  {}", row))),
+    )
+}
+
+fn definition_to_rows<'a>(
+    ctx: Context,
+    definition: &'a Definition,
+) -> Box<dyn Iterator<Item = String> + 'a> {
+    let line = format!("[{}]: {}", definition.identifier, definition.url);
+    Box::new(wrap_naive_rows(ctx.width, &line))
+}
+
 fn to_rows<'a>(
     ctx: Context,
     node: &'a Node,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
     match node {
-        Node::Root(root) => root_to_rows(ctx, root),
+        Node::Root(root) => flow_content_to_rows(ctx, &root.children),
 
-        Node::FootnoteDefinition(_)
-        | Node::List(_)
-        | Node::MdxjsEsm(_)
-        | Node::Math(_)
+        Node::List(_)
         | Node::Heading(_)
         | Node::Table(_)
         | Node::ThematicBreak(_)
         | Node::TableRow(_)
         | Node::TableCell(_)
         | Node::ListItem(_)
-        | Node::Definition(_)
         | Node::Html(_) => todo!(),
 
         Node::Paragraph(paragraph) => paragraph_to_rows(ctx, paragraph),
         Node::Blockquote(quote) => blockquote_to_rows(ctx, quote),
-        Node::Code(code) => code_to_rows(ctx, code),
+        Node::Code(code) => preformatted_to_rows(ctx, ctx.theme.text_code, &code.value),
+        Node::Math(math) => preformatted_to_rows(ctx, ctx.theme.text_math, &math.value),
+        Node::FootnoteDefinition(footnote) => footnote_definition_to_rows(ctx, footnote),
+        Node::Definition(definition) => definition_to_rows(ctx, definition),
 
         // Phrasing nodes
         | Node::Break(_)
@@ -451,6 +482,8 @@ fn to_rows<'a>(
         | Node::Emphasis(_)
         | Node::MdxTextExpression(_)
         | Node::MdxJsxFlowElement(_)
+        | Node::MdxFlowExpression(_)
+        | Node::MdxjsEsm(_)
         | Node::FootnoteReference(_)
         | Node::Image(_)
         | Node::ImageReference(_)
@@ -462,7 +495,6 @@ fn to_rows<'a>(
         // Unsupported nodes, library shouldn't produce these
         | Node::Toml(_)
         | Node::Yaml(_)
-        | Node::MdxFlowExpression(_)
         => unreachable!("broken markdown AST")
     }
 }
@@ -480,7 +512,20 @@ mod test_paragraph {
     use crate::ui::style::THEME_DARK;
 
     fn render(text: &str, width: usize) -> Vec<String> {
-        let node = markdown::to_mdast(text, &markdown::ParseOptions::default()).unwrap();
+        let node = markdown::to_mdast(
+            text,
+            &markdown::ParseOptions {
+                constructs: markdown::Constructs {
+                    gfm_footnote_definition: true,
+                    gfm_label_start_footnote: true,
+                    math_flow: true,
+                    math_text: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
         super::to_rows(
             super::Context {
                 theme: &THEME_DARK,
@@ -584,6 +629,54 @@ mod test_paragraph {
                 "\x1b[38;2;254;240;138mabcd",
                 "\x1b[38;2;254;240;138mefgh",
             ],
+        );
+    }
+
+    #[test]
+    fn math() {
+        assert_eq!(
+            render("$$\nx^2 + y^2 = z^2\n$$", 80),
+            vec!["\x1b[38;2;254;240;138m\x1b[3mx^2 + y^2 = z^2"],
+        );
+    }
+
+    #[test]
+    fn inline_math() {
+        assert_eq!(
+            render("a $x^2$ b", 80),
+            vec!["a \x1b[38;2;254;240;138m\x1b[3mx^2\x1b[38;5;15m\x1b[23m b"],
+        );
+    }
+
+    #[test]
+    fn footnote_definition() {
+        assert_eq!(
+            render("text[^1]\n\n[^1]: the note", 80),
+            vec!["text[^1]", "", "[^1]:", "  the note"],
+        );
+    }
+
+    #[test]
+    fn footnote_definition_wrap() {
+        assert_eq!(
+            render("[^1]: aaaabbbb", 8),
+            vec!["[^1]:", "  aaaabb", "  bb"],
+        );
+    }
+
+    #[test]
+    fn definition() {
+        assert_eq!(
+            render("[foo]: https://example.com", 80),
+            vec!["[foo]: https://example.com"],
+        );
+    }
+
+    #[test]
+    fn definition_wrap() {
+        assert_eq!(
+            render("[foo]: https://example.com", 16),
+            vec!["[foo]: https://e", "xample.com"],
         );
     }
 }
