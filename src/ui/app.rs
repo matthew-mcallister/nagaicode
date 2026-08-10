@@ -40,7 +40,7 @@ impl Chat {
             TEXT_INPUT_MAX_HEIGHT.min(h.saturating_sub(2)) as usize,
             theme,
         );
-        stacked.history_mut().add_item(HistoryItemContent::HelpMessage(dedent!("
+        stacked.history_mut().add_item(HistoryItemContent::Help(dedent!("
             Welcome to NagaiChat!
 
             Type /help for a list of commands."
@@ -180,7 +180,7 @@ impl Chat {
                     let command = format!("nagai {}", command);
                     let output = crate::command::run_command(&command);
                     if !output.trim().is_empty() {
-                        history.add_item(HistoryItemContent::HelpMessage(output));
+                        history.add_item(HistoryItemContent::Help(output));
                     }
                 } else {
                     todo!("call system()")

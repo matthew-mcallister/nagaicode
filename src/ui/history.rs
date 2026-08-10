@@ -10,9 +10,9 @@ use crate::arena::{Arena, Id};
 use crate::ui::markdown::render_markdown;
 use crate::ui::style::Theme;
 use crate::ui::Component;
-use crate::ui::text::wrap_line_naive;
+use crate::ui::text::wrap_line;
 
-pub(crate) fn render_help_message(
+pub(crate) fn render_help(
     theme: &'static Theme,
     width: usize,
     content: &str,
@@ -21,9 +21,23 @@ pub(crate) fn render_help_message(
     let _ = SetStyle(theme.text_quote.into()).write_ansi(&mut prefix);
     prefix.push_str("▕ ");
     content.lines().flat_map(|line|
-        wrap_line_naive(width - 2, line)
+        wrap_line(width - 2, line)
             .into_iter()
             .map(|row| format!("{}{}", prefix, row.to_padded_string(width - 2)))
+    ).collect()
+}
+
+pub(crate) fn render_error(
+    theme: &'static Theme,
+    width: usize,
+    content: &str,
+) -> Vec<String> {
+    let mut prefix = String::new();
+    let _ = SetStyle(theme.text_error.into()).write_ansi(&mut prefix);
+    content.lines().flat_map(|line|
+        wrap_line(width, line)
+            .into_iter()
+            .map(|row| format!("{}{}", prefix, row.to_padded_string(width)))
     ).collect()
 }
 
@@ -49,7 +63,8 @@ impl HistoryRow {
 
 #[derive(Clone, Debug)]
 pub enum HistoryItemContent {
-    HelpMessage(String),
+    Help(String),
+    Error(String),
     Markdown(String),
 }
 
@@ -78,7 +93,7 @@ impl HistoryItem {
         )
     }
 
-    fn from_help_message(
+    fn from_help(
         theme: &'static Theme,
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
@@ -89,8 +104,24 @@ impl HistoryItem {
             items,
             rows,
             width,
-            HistoryItemContent::HelpMessage(content.to_string()),
-            render_help_message(theme, width, content),
+            HistoryItemContent::Help(content.to_string()),
+            render_help(theme, width, content),
+        )
+    }
+
+    fn from_error(
+        theme: &'static Theme,
+        items: &mut Arena<HistoryItem>,
+        rows: &mut Arena<HistoryRow>,
+        width: usize,
+        content: &str,
+    ) -> Id<Self> {
+        Self::from_rows(
+            items,
+            rows,
+            width,
+            HistoryItemContent::Error(content.to_string()),
+            render_error(theme, width, content),
         )
     }
 
@@ -105,8 +136,11 @@ impl HistoryItem {
             HistoryItemContent::Markdown(md) => {
                 Self::from_markdown(theme, items, rows, width, &md)
             }
-            HistoryItemContent::HelpMessage(content) => {
-                Self::from_help_message(theme, items, rows, width, &content)
+            HistoryItemContent::Help(content) => {
+                Self::from_help(theme, items, rows, width, &content)
+            }
+            HistoryItemContent::Error(content) => {
+                Self::from_error(theme, items, rows, width, &content)
             }
         }
     }
@@ -477,12 +511,12 @@ mod tests {
     }
 
     #[test]
-    fn test_render_help_message() {
+    fn test_render_help() {
         use crossterm::Command;
         use crossterm::style::SetStyle;
 
         fn render(content: &str, width: usize) -> String {
-            let mut lines = super::render_help_message(&THEME_DARK, width, content);
+            let mut lines = super::render_help(&THEME_DARK, width, content);
 
             // In tests, strip the style initialization commands for
             // readability.
@@ -498,6 +532,29 @@ mod tests {
         assert_eq!(render("hello", 10), "▕ hello   ");
         assert_eq!(render("foo\nbar", 8), "▕ foo   \n▕ bar   ");
         assert_eq!(render("hello world", 8), "▕ hello \n▕ world ");
+        assert_eq!(render("", 6), "");
+    }
+
+    #[test]
+    fn test_render_error() {
+        use crossterm::Command;
+        use crossterm::style::SetStyle;
+
+        fn render(content: &str, width: usize) -> String {
+            let mut lines = super::render_error(&THEME_DARK, width, content);
+
+            let mut prefix = String::new();
+            let _ = SetStyle(THEME_DARK.text_error.into()).write_ansi(&mut prefix);
+            for line in lines.iter_mut() {
+                *line = line.trim_start_matches(&prefix).to_owned();
+            }
+
+            lines.join("\n")
+        }
+
+        assert_eq!(render("hello", 10), "hello     ");
+        assert_eq!(render("foo\nbar", 8), "foo     \nbar     ");
+        assert_eq!(render("hello world", 8), "hello   \nworld   ");
         assert_eq!(render("", 6), "");
     }
 

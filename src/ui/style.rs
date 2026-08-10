@@ -138,6 +138,7 @@ pub struct Theme {
     pub text_quote: TextStyle,
     pub text_code: TextStyle,
     pub text_math: TextStyle,
+    pub text_error: TextStyle,
 }
 
 // Stock Tailwind CSS colors
@@ -157,6 +158,8 @@ const BLACK: Color = Color::Black;
 
 const YELLOW_200: Color = rgb(254, 240, 138);
 
+const RED_400: Color = rgb(248, 113, 113);
+
 /// Only available theme for now
 pub const THEME_DARK: Theme = Theme {
     text_base: text_style! { fg_color: WHITE },
@@ -165,6 +168,7 @@ pub const THEME_DARK: Theme = Theme {
     text_quote: text_style! { fg_color: GREY_400, italic: true },
     text_code: text_style! { fg_color: YELLOW_200 },
     text_math: text_style! { fg_color: YELLOW_200, italic: true },
+    text_error: text_style! { fg_color: RED_400 },
     bg_base: GREY_950,
     bg_collapsible: GREY_950,
     bg_collapsible_hover: GREY_900,
