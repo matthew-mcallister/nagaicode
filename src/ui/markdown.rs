@@ -585,76 +585,74 @@ fn flow_to_rows<'a>(
 pub fn render_markdown(
     theme: &'static Theme,
     width: usize,
+    text: &str,
 ) -> Vec<String> {
-    todo!()
+    let node = markdown::to_mdast(
+        text,
+        &markdown::ParseOptions {
+            constructs: markdown::Constructs {
+                gfm_footnote_definition: true,
+                gfm_label_start_footnote: true,
+                math_flow: true,
+                math_text: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .expect("invalid markdown");
+    flow_to_rows(
+        Context {
+            theme,
+            width,
+            base_style: theme.text_base,
+            block_quote: false,
+            code: false,
+        },
+        &node,
+    )
+    .collect()
 }
+
 #[cfg(test)]
 mod test_paragraph {
     use crate::ui::style::THEME_DARK;
 
-    fn render(text: &str, width: usize) -> Vec<String> {
-        let node = markdown::to_mdast(
-            text,
-            &markdown::ParseOptions {
-                constructs: markdown::Constructs {
-                    gfm_footnote_definition: true,
-                    gfm_label_start_footnote: true,
-                    math_flow: true,
-                    math_text: true,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        super::flow_to_rows(
-            super::Context {
-                theme: &THEME_DARK,
-                width,
-                base_style: THEME_DARK.text_base,
-                block_quote: false,
-                code: false,
-            },
-            &node,
-        )
-        .collect()
+    fn render(text: &str, width: usize) -> String {
+        super::render_markdown(&THEME_DARK, width, text).join("\n")
     }
 
     #[test]
     fn plain() {
-        assert_eq!(render("hello world", 80), vec!["hello world"]);
+        assert_eq!(render("hello world", 80), "hello world");
     }
 
     #[test]
     fn bold() {
-        assert_eq!(render("**hi**", 80), vec!["\x1b[1mhi"]);
+        assert_eq!(render("**hi**", 80), "\x1b[1mhi");
     }
 
     #[test]
     fn inline_spacing() {
-        assert_eq!(render("a*b*c", 80), vec!["a\x1b[3mb\x1b[23mc"]);
-        assert_eq!(render("a *h*c", 80), vec!["a \x1b[3mh\x1b[23mc"]);
-        assert_eq!(render("a*h* c", 80), vec!["a\x1b[3mh\x1b[23m c"]);
-        assert_eq!(render("a *h* c", 80), vec!["a \x1b[3mh\x1b[23m c"]);
+        assert_eq!(render("a*b*c", 80), "a\x1b[3mb\x1b[23mc");
+        assert_eq!(render("a *h*c", 80), "a \x1b[3mh\x1b[23mc");
+        assert_eq!(render("a*h* c", 80), "a\x1b[3mh\x1b[23m c");
+        assert_eq!(render("a *h* c", 80), "a \x1b[3mh\x1b[23m c");
     }
 
     #[test]
     fn wrap() {
-        assert_eq!(render("hello world foo", 8), vec![
-            "hello ",
-            "world ",
-            "foo",
-        ]);
+        assert_eq!(
+            render("hello world foo", 8),
+            "hello \nworld \nfoo",
+        );
     }
 
     #[test]
     fn styles() {
         assert_eq!(
             render("**bold** *italic*\\\n`code`", 80),
-            vec![
-                "\x1b[1mbold\x1b[22m \x1b[3mitalic",
-                "\x1b[38;2;254;240;138mcode",
-            ],
+            "\x1b[1mbold\x1b[22m \x1b[3mitalic\n\x1b[38;2;254;240;138mcode",
         );
     }
 
@@ -662,19 +660,15 @@ mod test_paragraph {
     fn blockquote() {
         assert_eq!(
             render("> hello *world*", 80),
-            vec!["\x1b[38;2;168;162;158m\x1b[3m▕hello world"],
+            "\x1b[38;2;168;162;158m\x1b[3m▕hello world",
         );
         assert_eq!(
             render("> **bold** `code`", 80),
-            vec!["\x1b[38;2;168;162;158m\x1b[3m▕bold code"],
+            "\x1b[38;2;168;162;158m\x1b[3m▕bold code",
         );
         assert_eq!(
             render("> hello world foo", 8),
-            vec![
-                "\x1b[38;2;168;162;158m\x1b[3m▕hello ",
-                "\x1b[38;2;168;162;158m\x1b[3m▕world ",
-                "\x1b[38;2;168;162;158m\x1b[3m▕foo",
-            ],
+            "\x1b[38;2;168;162;158m\x1b[3m▕hello \n\x1b[38;2;168;162;158m\x1b[3m▕world \n\x1b[38;2;168;162;158m\x1b[3m▕foo",
         );
     }
 
@@ -682,7 +676,7 @@ mod test_paragraph {
     fn two_paragraphs() {
         assert_eq!(
             render("first paragraph\n\nsecond paragraph", 80),
-            vec!["first paragraph", "", "second paragraph"],
+            "first paragraph\n\nsecond paragraph",
         );
     }
 
@@ -690,7 +684,7 @@ mod test_paragraph {
     fn code() {
         assert_eq!(
             render("```\nfn main() {}\n```", 80),
-            vec!["\x1b[38;2;254;240;138mfn main() {}"],
+            "\x1b[38;2;254;240;138mfn main() {}",
         );
     }
 
@@ -698,10 +692,7 @@ mod test_paragraph {
     fn code_wrap() {
         assert_eq!(
             render("```\nabcdefgh\n```", 4),
-            vec![
-                "\x1b[38;2;254;240;138mabcd",
-                "\x1b[38;2;254;240;138mefgh",
-            ],
+            "\x1b[38;2;254;240;138mabcd\n\x1b[38;2;254;240;138mefgh",
         );
     }
 
@@ -709,7 +700,7 @@ mod test_paragraph {
     fn math() {
         assert_eq!(
             render("$$\nx^2 + y^2 = z^2\n$$", 80),
-            vec!["\x1b[38;2;254;240;138m\x1b[3mx^2 + y^2 = z^2"],
+            "\x1b[38;2;254;240;138m\x1b[3mx^2 + y^2 = z^2",
         );
     }
 
@@ -717,7 +708,7 @@ mod test_paragraph {
     fn inline_math() {
         assert_eq!(
             render("a $x^2$ b", 80),
-            vec!["a \x1b[38;2;254;240;138m\x1b[3mx^2\x1b[38;5;15m\x1b[23m b"],
+            "a \x1b[38;2;254;240;138m\x1b[3mx^2\x1b[38;5;15m\x1b[23m b",
         );
     }
 
@@ -725,7 +716,7 @@ mod test_paragraph {
     fn footnote_definition() {
         assert_eq!(
             render("text[^1]\n\n[^1]: the note", 80),
-            vec!["text[^1]", "", "[^1]:", "  the note"],
+            "text[^1]\n\n[^1]:\n  the note",
         );
     }
 
@@ -733,7 +724,7 @@ mod test_paragraph {
     fn footnote_definition_wrap() {
         assert_eq!(
             render("[^1]: aaaabbbb", 8),
-            vec!["[^1]:", "  aaaabb", "  bb"],
+            "[^1]:\n  aaaabb\n  bb",
         );
     }
 
@@ -741,7 +732,7 @@ mod test_paragraph {
     fn definition() {
         assert_eq!(
             render("[foo]: https://example.com", 80),
-            vec!["[foo]: https://example.com"],
+            "[foo]: https://example.com",
         );
     }
 
@@ -749,7 +740,7 @@ mod test_paragraph {
     fn definition_wrap() {
         assert_eq!(
             render("[foo]: https://example.com", 16),
-            vec!["[foo]: https://e", "xample.com"],
+            "[foo]: https://e\nxample.com",
         );
     }
 
@@ -757,21 +748,17 @@ mod test_paragraph {
     fn html() {
         assert_eq!(
             render("<div>\n<p>hi</p>\n</div>", 80),
-            vec![
-                "\x1b[38;2;254;240;138m<div>",
-                "\x1b[38;2;254;240;138m<p>hi</p>",
-                "\x1b[38;2;254;240;138m</div>",
-            ],
+            "\x1b[38;2;254;240;138m<div>\n\x1b[38;2;254;240;138m<p>hi</p>\n\x1b[38;2;254;240;138m</div>",
         );
     }
 
     #[test]
     fn heading() {
-        assert_eq!(render("# Hello", 80), vec!["# Hello"]);
-        assert_eq!(render("#### Deep", 80), vec!["#### Deep"]);
+        assert_eq!(render("# Hello", 80), "# Hello");
+        assert_eq!(render("#### Deep", 80), "#### Deep");
         assert_eq!(
             render("## Hello *world*", 80),
-            vec!["## Hello \x1b[3mworld"],
+            "## Hello \x1b[3mworld",
         );
     }
 
@@ -779,47 +766,48 @@ mod test_paragraph {
     fn thematic_break() {
         assert_eq!(
             render("---", 10),
-            vec!["\x1b[38;2;168;162;158m┄┄┄┄┄┄┄┄┄┄"],
+            "\x1b[38;2;168;162;158m┄┄┄┄┄┄┄┄┄┄",
         );
     }
 
     #[test]
     fn unordered_list() {
-        assert_eq!(render("- a", 80), vec!["- a"]);
-        assert_eq!(render("- a\n- b", 80), vec!["- a", "- b"]);
+        assert_eq!(render("- a", 80), "- a");
+        assert_eq!(render("- a\n- b", 80), "- a\n- b");
         assert_eq!(
             render("- a\n\n- b", 80),
-            vec!["- a", "", "- b"],
+            "- a\n\n- b",
         );
         assert_eq!(
             render("- *hi*", 80),
-            vec!["- \x1b[3mhi"],
+            "- \x1b[3mhi",
         );
         assert_eq!(
             render("- hello world foo", 8),
-            vec!["- hello ", "  world ", "  foo"],
+            "- hello \n  world \n  foo",
         );
     }
 
     #[test]
     fn ordered_list() {
-        assert_eq!(render("1. a\n2. b", 80), vec!["1. a", "2. b"]);
+        assert_eq!(render("1. a\n2. b", 80), "1. a\n2. b");
 
         let md = (1..=10)
             .map(|i| format!("{}. item", i))
             .collect::<Vec<_>>()
             .join("\n");
-        let expected: Vec<String> = (1..=10)
+        let expected: String = (1..=10)
             .map(|i| format!("{:<4}{}", format!("{}.", i), "item"))
-            .collect();
+            .collect::<Vec<_>>()
+            .join("\n");
         assert_eq!(render(&md, 80), expected);
 
         assert_eq!(
             render("1. hello world foo", 8),
-            vec!["1. hello", "    ", "   world", "    foo"],
+            "1. hello\n    \n   world\n    foo",
         );
 
-        assert_eq!(render("1. a\n1. b", 80), vec!["1. a", "2. b"]);
+        assert_eq!(render("1. a\n1. b", 80), "1. a\n2. b");
     }
 
     #[test]
@@ -828,19 +816,19 @@ mod test_paragraph {
         // we render aligned with the other ListItem siblings
         assert_eq!(
             render("- one\n  - two\n  - three", 12),
-            vec!["- one", "  - two", "  - three"],
+            "- one\n  - two\n  - three",
         );
         assert_eq!(
             render("- one\n  1. two\n  2. three", 12),
-            vec!["- one", "  1. two", "  2. three"],
+            "- one\n  1. two\n  2. three",
         );
         assert_eq!(
             render("1. one\n    - two\n    - three", 12),
-            vec!["1. one", "   - two", "   - three"],
+            "1. one\n   - two\n   - three",
         );
         assert_eq!(
             render("1. one\n    1. two\n    2. three", 12),
-            vec!["1. one", "   1. two", "   2. three"],
+            "1. one\n   1. two\n   2. three",
         );
     }
 }
