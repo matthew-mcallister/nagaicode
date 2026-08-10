@@ -10,6 +10,7 @@ use crossterm::terminal::{
     DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
     enable_raw_mode, size,
 };
+use dedent::dedent;
 
 use crate::error::AnyResult;
 use crate::ui::history::HistoryItemContent;
@@ -32,19 +33,22 @@ impl Chat {
         // caused by pathologically tiny terminals.
         let w = w.max(20);
         let h = h.max(16);
+
+        let mut stacked = StackedView::new(
+            w as usize - 4,
+            h as usize - 2,
+            TEXT_INPUT_MAX_HEIGHT.min(h.saturating_sub(2)) as usize,
+            theme,
+        );
+        stacked.history_mut().add_item(HistoryItemContent::HelpMessage(dedent!("
+            Welcome to NagaiChat!
+
+            Type /help for a list of commands."
+        ).into()));
+
         Self {
             theme,
-            stacked: Padded::new(
-                StackedView::new(
-                    w as usize - 4,
-                    h as usize - 2,
-                    TEXT_INPUT_MAX_HEIGHT.min(h.saturating_sub(2)) as usize,
-                    theme,
-                ),
-                2,
-                1,
-                Some(theme.bg_base),
-            ),
+            stacked: Padded::new(stacked, 2, 1, Some(theme.bg_base)),
         }
     }
 
@@ -54,6 +58,8 @@ impl Chat {
     }
 
     /// Handles a key event. Returns true if the app should quit.
+    // TODO: pass input events down to components, bubble up generated events
+    // to parents.
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);

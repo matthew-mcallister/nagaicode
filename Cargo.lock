@@ -405,6 +405,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dedent"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8a3dee4e932355439992a45dc631b0979abf9c677958674bd94298bf9002870"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -802,6 +813,7 @@ dependencies = [
  "clap",
  "compact_str",
  "crossterm",
+ "dedent",
  "diesel",
  "diesel_migrations",
  "dirs",
