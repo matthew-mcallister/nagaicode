@@ -1,3 +1,5 @@
+// TODO maybe: write a diffing system that compares each row with the row from
+// the previous draw and only redraws the portions which changed.
 mod chat;
 mod input_box;
 mod history;

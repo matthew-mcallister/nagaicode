@@ -29,7 +29,7 @@ struct Context {
     width: usize,
     base_style: TextStyle,
     // FIXME: Current behavior is a slightly crude hack; ideally block quotes
-    // would flip the meaning of italic and non-italic
+    // would flip the meaning of italic and non-italic.
     block_quote: bool,
     code: bool,
 }
@@ -99,6 +99,16 @@ fn collapse_whitespace(out: &mut String, s: &str) {
 
     if s.ends_with(char::is_whitespace) {
         out.push(' ');
+    }
+}
+
+/// Appends `count` spaces to `out`.
+fn push_spaces(out: &mut String, count: usize) {
+    let mut remaining = count;
+    while remaining > 0 {
+        let n = remaining.min(SPACES.len());
+        out.push_str(&SPACES[..n]);
+        remaining -= n;
     }
 }
 
@@ -300,6 +310,7 @@ fn phrasing_to_rows(
 
             for row in rows {
                 let mut out = String::with_capacity(2 * row.graphemes.len());
+                let mut row_width = 0usize;
 
                 // Re-apply current style at start of each row
                 while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
@@ -323,8 +334,11 @@ fn phrasing_to_rows(
 
                     out.push_str(g.formatted());
                     offset += g.data.len();
+                    row_width += g.width as usize;
                 }
 
+                // Every row must be exactly `ctx.width` columns wide
+                push_spaces(&mut out, ctx.width - row_width);
                 yield out;
             }
 
@@ -351,15 +365,19 @@ fn heading_to_rows(
 /// Wraps `text` at `width` using naive wrapping and renders each row to a
 /// plain string.
 fn wrap_naive_rows(width: usize, text: &str) -> impl Iterator<Item = String> + use<> {
-    wrap_line_naive(width, text).into_iter().map(|row| {
+    wrap_line_naive(width, text).into_iter().map(move |row| {
         let mut out = String::with_capacity(row.graphemes.len());
+        let mut row_width = 0usize;
         for g in &row.graphemes {
             // Newline added by wrap_line_naive, not part of the source
             if g.data == "\n" {
                 continue;
             }
             out.push_str(g.formatted());
+            row_width += g.width as usize;
         }
+        // Every row must be exactly `width` columns wide
+        push_spaces(&mut out, width - row_width);
         out
     })
 }
@@ -450,7 +468,9 @@ fn flow_content_to_rows<'a>(
         let mut first = true;
         for rows in &mut children {
             if !first && spread {
-                yield String::new();
+                let mut out = String::with_capacity(ctx.width);
+                push_spaces(&mut out, ctx.width);
+                yield out;
             }
             first = false;
             for row in rows {
@@ -517,7 +537,9 @@ fn list_to_rows<'a>(
         let mut first = true;
         for (rows, prefix) in children {
             if !first && list.spread {
-                yield String::new();
+                let mut out = String::with_capacity(ctx.width);
+                push_spaces(&mut out, ctx.width);
+                yield out;
             }
             first = false;
             for (i, row) in rows.enumerate() {
@@ -582,7 +604,7 @@ fn flow_to_rows<'a>(
 }
 
 /// Converts a markdown document into preformatted lines ready to be printed
-/// to stdout.
+/// to stdout. Every row is exactly `width` columns wide.
 pub fn render_markdown(
     theme: &'static Theme,
     width: usize,
@@ -642,67 +664,64 @@ mod test_paragraph {
 
     #[test]
     fn plain() {
-        assert_eq!(render("hello world", 80), "hello world");
+        assert_eq!(render("hello world", 20), "hello world         ");
     }
 
     #[test]
     fn bold() {
-        assert_eq!(render("**hi**", 80), "\x1b[1mhi");
+        assert_eq!(render("**hi**", 20), "\x1b[1mhi                  ");
     }
 
     #[test]
     fn inline_spacing() {
-        assert_eq!(render("a*b*c", 80), "a\x1b[3mb\x1b[23mc");
-        assert_eq!(render("a *h*c", 80), "a \x1b[3mh\x1b[23mc");
-        assert_eq!(render("a*h* c", 80), "a\x1b[3mh\x1b[23m c");
-        assert_eq!(render("a *h* c", 80), "a \x1b[3mh\x1b[23m c");
+        assert_eq!(render("a*b*c", 20), "a\x1b[3mb\x1b[23mc                 ");
+        assert_eq!(render("a *h*c", 20), "a \x1b[3mh\x1b[23mc                ");
+        assert_eq!(render("a*h* c", 20), "a\x1b[3mh\x1b[23m c                ");
+        assert_eq!(render("a *h* c", 20), "a \x1b[3mh\x1b[23m c               ");
     }
 
     #[test]
     fn wrap() {
-        assert_eq!(
-            render("hello world foo", 8),
-            "hello \nworld \nfoo",
-        );
+        assert_eq!(render("hello world foo", 8), "hello   \nworld   \nfoo     ");
     }
 
     #[test]
     fn styles() {
         assert_eq!(
-            render("**bold** *italic*\\\n`code`", 80),
-            "\x1b[1mbold\x1b[22m \x1b[3mitalic\n\x1b[38;2;254;240;138mcode",
+            render("**bold** *italic*\\\n`code`", 20),
+            "\x1b[1mbold\x1b[22m \x1b[3mitalic         \n\x1b[38;2;254;240;138mcode                ",
         );
     }
 
     #[test]
     fn blockquote() {
         assert_eq!(
-            render("> hello *world*", 80),
-            "\x1b[38;2;168;162;158m\x1b[3m▕hello world",
+            render("> hello *world*", 20),
+            "\x1b[38;2;168;162;158m\x1b[3m▕hello world        ",
         );
         assert_eq!(
-            render("> **bold** `code`", 80),
-            "\x1b[38;2;168;162;158m\x1b[3m▕bold code",
+            render("> **bold** `code`", 20),
+            "\x1b[38;2;168;162;158m\x1b[3m▕bold code          ",
         );
         assert_eq!(
             render("> hello world foo", 8),
-            "\x1b[38;2;168;162;158m\x1b[3m▕hello \n\x1b[38;2;168;162;158m\x1b[3m▕world \n\x1b[38;2;168;162;158m\x1b[3m▕foo",
+            "\x1b[38;2;168;162;158m\x1b[3m▕hello  \n\x1b[38;2;168;162;158m\x1b[3m▕world  \n\x1b[38;2;168;162;158m\x1b[3m▕foo    ",
         );
     }
 
     #[test]
     fn two_paragraphs() {
         assert_eq!(
-            render("first paragraph\n\nsecond paragraph", 80),
-            "first paragraph\n\nsecond paragraph",
+            render("first paragraph\n\nsecond paragraph", 20),
+            "first paragraph     \n                    \nsecond paragraph    ",
         );
     }
 
     #[test]
     fn code() {
         assert_eq!(
-            render("```\nfn main() {}\n```", 80),
-            "\x1b[38;2;254;240;138mfn main() {}",
+            render("```\nfn main() {}\n```", 20),
+            "\x1b[38;2;254;240;138mfn main() {}        ",
         );
     }
 
@@ -717,24 +736,24 @@ mod test_paragraph {
     #[test]
     fn math() {
         assert_eq!(
-            render("$$\nx^2 + y^2 = z^2\n$$", 80),
-            "\x1b[38;2;254;240;138m\x1b[3mx^2 + y^2 = z^2",
+            render("$$\nx^2 + y^2 = z^2\n$$", 20),
+            "\x1b[38;2;254;240;138m\x1b[3mx^2 + y^2 = z^2     ",
         );
     }
 
     #[test]
     fn inline_math() {
         assert_eq!(
-            render("a $x^2$ b", 80),
-            "a \x1b[38;2;254;240;138m\x1b[3mx^2\x1b[38;5;15m\x1b[23m b",
+            render("a $x^2$ b", 20),
+            "a \x1b[38;2;254;240;138m\x1b[3mx^2\x1b[38;5;15m\x1b[23m b             ",
         );
     }
 
     #[test]
     fn footnote_definition() {
         assert_eq!(
-            render("text[^1]\n\n[^1]: the note", 80),
-            "text[^1]\n\n[^1]:\n  the note",
+            render("text[^1]\n\n[^1]: the note", 20),
+            "text[^1]            \n                    \n[^1]:               \n  the note          ",
         );
     }
 
@@ -742,15 +761,15 @@ mod test_paragraph {
     fn footnote_definition_wrap() {
         assert_eq!(
             render("[^1]: aaaabbbb", 8),
-            "[^1]:\n  aaaabb\n  bb",
+            "[^1]:   \n  aaaabb\n  bb    ",
         );
     }
 
     #[test]
     fn definition() {
         assert_eq!(
-            render("[foo]: https://example.com", 80),
-            "[foo]: https://example.com",
+            render("[foo]: https://example.com", 28),
+            "[foo]: https://example.com  ",
         );
     }
 
@@ -758,25 +777,25 @@ mod test_paragraph {
     fn definition_wrap() {
         assert_eq!(
             render("[foo]: https://example.com", 16),
-            "[foo]: https://e\nxample.com",
+            "[foo]: https://e\nxample.com      ",
         );
     }
 
     #[test]
     fn html() {
         assert_eq!(
-            render("<div>\n<p>hi</p>\n</div>", 80),
-            "\x1b[38;2;254;240;138m<div>\n\x1b[38;2;254;240;138m<p>hi</p>\n\x1b[38;2;254;240;138m</div>",
+            render("<div>\n<p>hi</p>\n</div>", 20),
+            "\x1b[38;2;254;240;138m<div>               \n\x1b[38;2;254;240;138m<p>hi</p>           \n\x1b[38;2;254;240;138m</div>              ",
         );
     }
 
     #[test]
     fn heading() {
-        assert_eq!(render("# Hello", 80), "# Hello");
-        assert_eq!(render("#### Deep", 80), "#### Deep");
+        assert_eq!(render("# Hello", 20), "# Hello             ");
+        assert_eq!(render("#### Deep", 20), "#### Deep           ");
         assert_eq!(
-            render("## Hello *world*", 80),
-            "## Hello \x1b[3mworld",
+            render("## Hello *world*", 20),
+            "## Hello \x1b[3mworld      ",
         );
     }
 
@@ -790,42 +809,37 @@ mod test_paragraph {
 
     #[test]
     fn unordered_list() {
-        assert_eq!(render("- a", 80), "- a");
-        assert_eq!(render("- a\n- b", 80), "- a\n- b");
+        assert_eq!(render("- a", 16), "- a             ");
+        assert_eq!(render("- a\n- b", 16), "- a             \n- b             ");
         assert_eq!(
-            render("- a\n\n- b", 80),
-            "- a\n\n- b",
+            render("- a\n\n- b", 16),
+            "- a             \n                \n- b             ",
         );
-        assert_eq!(
-            render("- *hi*", 80),
-            "- \x1b[3mhi",
-        );
-        assert_eq!(
-            render("- hello world foo", 8),
-            "- hello \n  world \n  foo",
-        );
+        assert_eq!(render("- *hi*", 16), "- \x1b[3mhi            ");
+        assert_eq!(render("- hello world foo", 8), "- hello \n  world \n  foo   ");
     }
 
     #[test]
     fn ordered_list() {
-        assert_eq!(render("1. a\n2. b", 80), "1. a\n2. b");
-
-        let md = (1..=10)
-            .map(|i| format!("{}. item", i))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let expected: String = (1..=10)
-            .map(|i| format!("{:<4}{}", format!("{}.", i), "item"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert_eq!(render(&md, 80), expected);
-
+        assert_eq!(render("1. a\n2. b", 16), "1. a            \n2. b            ");
+        let src = "\
+            1. item\n\
+            1. item\n\
+            1. item\n\
+            1. item\
+        ";
+        assert_eq!(
+            render(&src, 12),
+            "1. item     \n\
+             2. item     \n\
+             3. item     \n\
+             4. item     ",
+        );
         assert_eq!(
             render("1. hello world foo", 8),
-            "1. hello\n    \n   world\n    foo",
+            "1. hello\n        \n   world\n    foo ",
         );
-
-        assert_eq!(render("1. a\n1. b", 80), "1. a\n2. b");
+        assert_eq!(render("1. a\n1. b", 16), "1. a            \n2. b            ");
     }
 
     #[test]
@@ -834,19 +848,19 @@ mod test_paragraph {
         // we render aligned with the other ListItem siblings
         assert_eq!(
             render("- one\n  - two\n  - three", 12),
-            "- one\n  - two\n  - three",
+            "- one       \n  - two     \n  - three   ",
         );
         assert_eq!(
             render("- one\n  1. two\n  2. three", 12),
-            "- one\n  1. two\n  2. three",
+            "- one       \n  1. two    \n  2. three  ",
         );
         assert_eq!(
             render("1. one\n    - two\n    - three", 12),
-            "1. one\n   - two\n   - three",
+            "1. one      \n   - two    \n   - three  ",
         );
         assert_eq!(
             render("1. one\n    1. two\n    2. three", 12),
-            "1. one\n   1. two\n   2. three",
+            "1. one      \n   1. two   \n   2. three ",
         );
     }
 }
