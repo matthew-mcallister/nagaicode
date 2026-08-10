@@ -6,7 +6,7 @@
 use std::iter::iter;
 
 use crossterm::Command;
-use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, InlineCode, Node, Paragraph};
+use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, Node, Text};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ui::style::{TextStyle, Theme, UpdateStyle};
@@ -274,12 +274,15 @@ impl MarkupBuilder {
     }
 }
 
-fn paragraph_to_rows<'a>(
+/// Renders phrasing content (the inline children of a paragraph or heading).
+/// The returned iterator is owned, so `children` need only live for the
+/// duration of this call.
+fn phrasing_to_rows(
     ctx: Context,
-    paragraph: &'a Paragraph,
-) -> Box<dyn Iterator<Item = String> + 'a> {
+    children: &[Node],
+) -> Box<dyn Iterator<Item = String>> {
     let mut builder = MarkupBuilder::new(ctx);
-    builder.push_all(&paragraph.children);
+    builder.push_all(children);
     let MarkupBuilder {
         plain_text,
         markers,
@@ -328,6 +331,20 @@ fn paragraph_to_rows<'a>(
             offset += 1;
         }
     })())
+}
+
+/// Renders a heading: `#{depth} ` prefix followed by the heading content.
+fn heading_to_rows(
+    ctx: Context,
+    heading: &Heading,
+) -> Box<dyn Iterator<Item = String>> {
+    let mut children = Vec::with_capacity(heading.children.len() + 1);
+    children.push(Node::Text(Text {
+        value: format!("{} ", "#".repeat(heading.depth as usize)),
+        position: None,
+    }));
+    children.extend(heading.children.iter().cloned());
+    phrasing_to_rows(ctx.with_base_style(ctx.theme.text_header), &children)
 }
 
 /// Wraps `text` at `width` using naive wrapping and renders each row to a
@@ -384,7 +401,7 @@ fn blockquote_to_rows<'a>(
         .children
         .iter()
         .map(move |child| {
-            to_rows(
+            flow_to_rows(
                 ctx.with_width(inner_width)
                     .with_base_style(content_style)
                     .set_block_quote(true),
@@ -412,7 +429,7 @@ fn flow_content_to_rows<'a>(
     let mut children = children
         .iter()
         .map(move |child| {
-            to_rows(ctx.with_base_style(ctx.theme.text_base), child)
+            flow_to_rows(ctx.with_base_style(ctx.theme.text_base), child)
         });
 
     Box::new(iter!(move || {
@@ -451,7 +468,7 @@ fn definition_to_rows<'a>(
     Box::new(wrap_naive_rows(ctx.width, &line))
 }
 
-fn to_rows<'a>(
+fn flow_to_rows<'a>(
     ctx: Context,
     node: &'a Node,
 ) -> Box<dyn Iterator<Item = String> + 'a> {
@@ -459,20 +476,20 @@ fn to_rows<'a>(
         Node::Root(root) => flow_content_to_rows(ctx, &root.children),
 
         Node::List(_)
-        | Node::Heading(_)
         | Node::Table(_)
         | Node::ThematicBreak(_)
         | Node::TableRow(_)
         | Node::TableCell(_)
-        | Node::ListItem(_)
-        | Node::Html(_) => todo!(),
+        | Node::ListItem(_) => todo!(),
 
-        Node::Paragraph(paragraph) => paragraph_to_rows(ctx, paragraph),
+        Node::Paragraph(paragraph) => phrasing_to_rows(ctx, &paragraph.children),
         Node::Blockquote(quote) => blockquote_to_rows(ctx, quote),
         Node::Code(code) => preformatted_to_rows(ctx, ctx.theme.text_code, &code.value),
         Node::Math(math) => preformatted_to_rows(ctx, ctx.theme.text_math, &math.value),
         Node::FootnoteDefinition(footnote) => footnote_definition_to_rows(ctx, footnote),
         Node::Definition(definition) => definition_to_rows(ctx, definition),
+        Node::Html(html) => preformatted_to_rows(ctx, ctx.theme.text_code, &html.value),
+        Node::Heading(heading) => heading_to_rows(ctx, heading),
 
         // Phrasing nodes
         | Node::Break(_)
@@ -526,7 +543,7 @@ mod test_paragraph {
             },
         )
         .unwrap();
-        super::to_rows(
+        super::flow_to_rows(
             super::Context {
                 theme: &THEME_DARK,
                 width,
@@ -677,6 +694,28 @@ mod test_paragraph {
         assert_eq!(
             render("[foo]: https://example.com", 16),
             vec!["[foo]: https://e", "xample.com"],
+        );
+    }
+
+    #[test]
+    fn html() {
+        assert_eq!(
+            render("<div>\n<p>hi</p>\n</div>", 80),
+            vec![
+                "\x1b[38;2;254;240;138m<div>",
+                "\x1b[38;2;254;240;138m<p>hi</p>",
+                "\x1b[38;2;254;240;138m</div>",
+            ],
+        );
+    }
+
+    #[test]
+    fn heading() {
+        assert_eq!(render("# Hello", 80), vec!["# Hello"]);
+        assert_eq!(render("#### Deep", 80), vec!["#### Deep"]);
+        assert_eq!(
+            render("## Hello *world*", 80),
+            vec!["## Hello \x1b[3mworld"],
         );
     }
 }
