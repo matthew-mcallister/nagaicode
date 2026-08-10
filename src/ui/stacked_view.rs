@@ -26,7 +26,7 @@ impl StackedView {
         let mut this = Self {
             width,
             height,
-            history: History::new(width, 0),
+            history: History::new(width, 0, theme),
             input: Padded::new(
                 InputBox::new(width.saturating_sub(4), input_max_height.saturating_sub(2)),
                 2,

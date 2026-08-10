@@ -6,32 +6,24 @@ use std::fmt;
 use crossterm::Command;
 
 use crate::arena::{Arena, Id};
-use crate::ui::text::{Row, wrap_line};
-use crate::ui::{write_spaces, Component};
+use crate::ui::markdown::render_markdown;
+use crate::ui::style::Theme;
+use crate::ui::Component;
 
 #[derive(Debug)]
 pub struct HistoryRow {
     item: Id<HistoryItem>,
-    /// Width in columns
-    width: usize,
+    /// Preformatted, pre-padded row contents
     preformatted: String,
     prev: Id<HistoryRow>,
     next: Id<HistoryRow>,
 }
 
 impl HistoryRow {
-    fn from_row(row: Row) -> Self {
-        let num_bytes = row.graphemes.iter().map(|g| g.formatted().len()).sum();
-        let mut content = String::with_capacity(num_bytes);
-        let mut width = 0;
-        for g in &row.graphemes {
-            content.push_str(g.formatted());
-            width += g.width as usize;
-        }
+    fn from_preformatted(preformatted: String) -> Self {
         Self {
             item: Id::null(),
-            width,
-            preformatted: content,
+            preformatted,
             next: Id::null(),
             prev: Id::null(),
         }
@@ -40,19 +32,22 @@ impl HistoryRow {
 
 #[derive(Debug)]
 pub struct HistoryItem {
+    markdown: String,
     first_row: Id<HistoryRow>,
     last_row: Id<HistoryRow>,
     num_rows: usize,
 }
 
 impl HistoryItem {
-    fn from_str(
+    fn from_markdown(
+        theme: &'static Theme,
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
         width: usize,
-        s: &str,
+        md: &str,
     ) -> Id<Self> {
         let item = items.insert(Self {
+            markdown: md.to_string(),
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 0,
@@ -61,21 +56,19 @@ impl HistoryItem {
         let mut first_row = Id::null();
         let mut last_row = Id::null();
         let mut num_rows = 0;
-        for line in s.split('\n') {
-            for row in wrap_line(width, line).into_iter() {
-                let mut history_row = HistoryRow::from_row(row);
-                history_row.item = item;
-                history_row.prev = last_row;
+        for row in render_markdown(theme, width, md) {
+            let mut history_row = HistoryRow::from_preformatted(row);
+            history_row.item = item;
+            history_row.prev = last_row;
 
-                let id = rows.insert(history_row);
-                if last_row != Id::null() {
-                    rows[last_row].next = id;
-                } else {
-                    first_row = id;
-                }
-                last_row = id;
-                num_rows += 1;
+            let id = rows.insert(history_row);
+            if last_row != Id::null() {
+                rows[last_row].next = id;
+            } else {
+                first_row = id;
             }
+            last_row = id;
+            num_rows += 1;
         }
 
         items[item].first_row = first_row;
@@ -91,6 +84,7 @@ pub struct History {
     item: Arena<HistoryItem>,
     rows: Arena<HistoryRow>,
     width: usize,
+    theme: &'static Theme,
     /// Maximum viewport size
     max_height: usize,
     /// Head of circularly linked list. Contains no real data.
@@ -100,14 +94,13 @@ pub struct History {
 }
 
 impl History {
-    pub fn new(width: usize, max_height: usize) -> Self {
+    pub fn new(width: usize, max_height: usize, theme: &'static Theme) -> Self {
         let item = Arena::new();
         let mut rows = Arena::new();
 
         // Insert dummy head, distinct from all other rows.
         let head = rows.insert(HistoryRow {
             item: Id::null(),
-            width: 0,
             preformatted: String::new(),
             prev: Id::null(),
             next: Id::null(),
@@ -119,6 +112,7 @@ impl History {
             item,
             rows,
             width,
+            theme,
             max_height,
             head,
             viewport_top: head,
@@ -218,32 +212,18 @@ impl History {
         self.set_viewport_bottom(self.viewport_bottom);
     }
 
-    /// Updates the wrapping width, re-wrapping all items. The viewport
-    /// continues to follow the newest messages.
+    /// Updates the wrapping width, re-rendering all markdown items. The
+    /// viewport continues to follow the newest messages.
     pub fn set_width(&mut self, width: usize) {
         if width == self.width {
             return;
         }
         self.width = width;
 
-        // Reconstruct the original text of each item. Wrapping never discards
-        // characters, so concatenating the wrapped rows restores the source.
-        let items: Vec<String> = self
+        let markdown: Vec<String> = self
             .item
             .iter()
-            .map(|(_, item)| {
-                let mut text = String::new();
-                let mut row = item.first_row;
-                loop {
-                    let current = &self.rows[row];
-                    text.push_str(&current.preformatted);
-                    if row == item.last_row {
-                        break;
-                    }
-                    row = current.next;
-                }
-                text
-            })
+            .map(|(_, item)| item.markdown.clone())
             .collect();
 
         self.item.clear();
@@ -251,7 +231,6 @@ impl History {
 
         let head = self.rows.insert(HistoryRow {
             item: Id::null(),
-            width: 0,
             preformatted: String::new(),
             prev: Id::null(),
             next: Id::null(),
@@ -262,8 +241,9 @@ impl History {
         self.viewport_top = head;
         self.viewport_bottom = head;
 
-        for text in items {
-            let item = HistoryItem::from_str(&mut self.item, &mut self.rows, width, &text);
+        for md in markdown {
+            let item =
+                HistoryItem::from_markdown(self.theme, &mut self.item, &mut self.rows, width, &md);
             self.append_item(item);
         }
     }
@@ -285,21 +265,10 @@ impl History {
         self.set_viewport_bottom(self.last_row());
     }
 
-    /// Appends a plaintext system message to the history.
-    pub fn system_message(&mut self, text: &str) {
-        let header = HistoryItem::from_str(&mut self.item, &mut self.rows, self.width, "System");
-        self.append_item(header);
-
-        let padding = HistoryItem::from_str(&mut self.item, &mut self.rows, self.width, "");
-        self.append_item(padding);
-
-        let content = HistoryItem::from_str(&mut self.item, &mut self.rows, self.width, text);
-        self.append_item(content);
-
-        for _ in 0..2 {
-            let padding = HistoryItem::from_str(&mut self.item, &mut self.rows, self.width, "");
-            self.append_item(padding);
-        }
+    /// Appends a raw markdown message to the history.
+    pub fn markdown_message(&mut self, md: &str) {
+        let item = HistoryItem::from_markdown(self.theme, &mut self.item, &mut self.rows, self.width, md);
+        self.append_item(item);
 
         // Follow the newest messages.
         self.set_viewport_bottom(self.last_row());
@@ -326,13 +295,11 @@ impl History {
 #[derive(Debug)]
 pub struct HistoryRowRef<'a> {
     row: &'a HistoryRow,
-    width: usize,
 }
 
 impl Command for HistoryRowRef<'_> {
     fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        f.write_str(&self.row.preformatted)?;
-        write_spaces(f, self.width.saturating_sub(self.row.width))
+        f.write_str(&self.row.preformatted)
     }
 }
 
@@ -342,10 +309,9 @@ impl Component for History {
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let prev = self.rows[self.viewport_top].prev;
-        let width = self.width;
         Box::new(
             self.iter_range(prev, self.viewport_bottom)
-                .map(move |(_, row)| HistoryRowRef { row, width }),
+                .map(|(_, row)| HistoryRowRef { row }),
         )
     }
 
@@ -412,9 +378,41 @@ impl<'i> std::iter::FusedIterator for HistoryRowIter<'i> {}
 mod tests {
     use super::*;
 
+    use crate::ui::style::THEME_DARK;
+
+    fn history(width: usize, max_height: usize) -> History {
+        History::new(width, max_height, &THEME_DARK)
+    }
+
+    /// Strips ANSI escape sequences from a row.
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                while let Some(&c) = chars.peek() {
+                    chars.next();
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn plain_rows(history: &History) -> Vec<String> {
+        history
+            .iter_rows()
+            .map(|(_, row)| strip_ansi(&row.preformatted).trim_end().to_string())
+            .collect()
+    }
+
     #[test]
     fn test_empty_history() {
-        let history = History::new(20, 5);
+        let history = history(20, 5);
         assert_eq!(history.num_rows(), 0);
         assert_eq!(history.item.len(), 0);
         assert_eq!(history.viewport_top, history.head);
@@ -422,58 +420,50 @@ mod tests {
     }
 
     #[test]
-    fn test_system_message_rows() {
-        let mut history = History::new(20, 5);
-        history.system_message("hello world");
-        assert_eq!(history.num_rows(), 5);
-        assert_eq!(history.item.len(), 5);
+    fn test_markdown_message_rows() {
+        let mut history = history(20, 5);
+        history.markdown_message("hello world");
+        assert_eq!(history.num_rows(), 1);
+        assert_eq!(history.item.len(), 1);
         assert_eq!(history.viewport_bottom, history.last_row());
     }
 
     #[test]
-    fn test_system_message_wraps() {
-        let mut history = History::new(10, 5);
-        history.system_message("hello world foo");
-        assert_eq!(history.num_rows(), 6);
+    fn test_markdown_message_wraps() {
+        let mut history = history(10, 5);
+        history.markdown_message("hello world foo");
+        assert_eq!(history.num_rows(), 2);
     }
 
     #[test]
-    fn test_multiline_system_message() {
-        let mut history = History::new(80, 5);
-        history.system_message("hello\nworld");
-        assert_eq!(history.num_rows(), 6);
+    fn test_multiline_markdown_message() {
+        let mut history = history(80, 5);
+        history.markdown_message("hello\nworld");
+        assert_eq!(history.num_rows(), 1);
     }
 
     #[test]
     fn test_set_width() {
-        let mut history = History::new(10, 10);
-        history.system_message("hello world foo");
-        let rows: Vec<String> = history
-            .iter_rows()
-            .map(|(_, row)| row.preformatted.clone())
-            .collect();
-        assert_eq!(rows, vec!["System", "", "hello ", "world foo", "", ""]);
+        let mut history = history(10, 10);
+        history.markdown_message("hello world foo");
+        assert_eq!(plain_rows(&history), vec!["hello", "world foo"]);
 
         history.set_width(20);
-        assert_eq!(history.num_rows(), 5);
-        let rows: Vec<String> = history
-            .iter_rows()
-            .map(|(_, row)| row.preformatted.clone())
-            .collect();
-        assert_eq!(rows, vec!["System", "", "hello world foo", "", ""]);
+        assert_eq!(history.num_rows(), 1);
+        assert_eq!(plain_rows(&history), vec!["hello world foo"]);
 
         history.set_width(10);
-        assert_eq!(history.num_rows(), 6);
+        assert_eq!(history.num_rows(), 2);
         assert_eq!(history.viewport_bottom, history.last_row());
     }
 
     #[test]
     fn test_scroll() {
-        let mut history = History::new(80, 4);
+        let mut history = history(80, 4);
         for i in 0..10 {
-            history.system_message(&format!("message {i}"));
+            history.markdown_message(&format!("message {i}"));
         }
-        assert_eq!(history.num_rows(), 50);
+        assert_eq!(history.num_rows(), 10);
 
         let last = history.last_row();
         let top = history.viewport_top;
