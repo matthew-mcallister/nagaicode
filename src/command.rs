@@ -9,12 +9,12 @@ use crate::db;
 use crate::provider::Provider;
 use crate::schema::provider::dsl;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Command {
     Provider(ProviderCommand),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum ProviderCommand {
     Ls,
     New {
@@ -278,6 +278,45 @@ fn run_provider_command(command: ProviderCommand) -> Result<String, Box<dyn Erro
             } else {
                 Err(format!("no provider named '{name}' found").into())
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_help() {
+        let expected = "List of commands:\n\n  /provider\n  /help";
+        let result = parse_args(vec!["help".into()]).unwrap_err().to_string();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_provider() {
+        let cmd = parse_args(vec!["provider".into(), "ls".into()]).expect("parse ls failed");
+        assert_eq!(cmd, Command::Provider(ProviderCommand::Ls));
+
+        let cmd = parse_args(vec!["provider".into(), "rm".into(), "foo".into()])
+            .expect("parse rm failed");
+        assert_eq!(cmd, Command::Provider(ProviderCommand::Rm("foo".into())));
+
+        let args = "provider new -name foo -interface openai -api-key sk-123";
+        let cmd = parse_args(shellwords::split(args).unwrap()).unwrap();
+        match cmd {
+            Command::Provider(ProviderCommand::New {
+                name,
+                interface,
+                api_key,
+                base_url,
+            }) => {
+                assert_eq!(name, "foo");
+                assert_eq!(interface, "openai");
+                assert_eq!(api_key, "sk-123");
+                assert_eq!(base_url, None);
+            }
+            other => panic!("expected New, got {:?}", other),
         }
     }
 }
