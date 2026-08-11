@@ -5,6 +5,7 @@ pub mod arena;
 pub mod command;
 pub mod db;
 pub mod error;
+pub mod interface;
 pub mod ui;
 pub mod model;
 pub mod provider;

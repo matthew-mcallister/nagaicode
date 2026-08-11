@@ -6,6 +6,7 @@ use diesel::RunQueryDsl;
 use diesel::expression_methods::ExpressionMethods;
 
 use crate::db;
+use crate::interface::InterfaceId;
 use crate::provider::Provider;
 use crate::schema::provider::dsl;
 
@@ -20,7 +21,7 @@ pub enum ProviderCommand {
     Ls,
     New {
         name: String,
-        interface: String,
+        interface: InterfaceId,
         api_key: String,
         base_url: Option<String>,
     },
@@ -235,7 +236,7 @@ fn parse_provider_new(args: &[&str]) -> Result<Command, Box<dyn Error>> {
 
     let name = name.ok_or_else(|| missing_argument(USAGE, "-name"))?;
     let api_key = api_key.ok_or_else(|| missing_argument(USAGE, "-api-key"))?;
-    let interface = interface.ok_or_else(|| missing_argument(USAGE, "-interface"))?;
+    let interface = interface.ok_or_else(|| missing_argument(USAGE, "-interface"))?.parse()?;
 
     Ok(Command::Provider(ProviderCommand::New {
         name,
@@ -276,7 +277,7 @@ pub fn run_provider_command(command: ProviderCommand) -> Result<String, Box<dyn 
             base_url,
         } => {
             let base_url_ref = base_url.as_deref();
-            Provider::create(&mut conn, &name, &interface, &api_key, base_url_ref)?;
+            Provider::create(&mut conn, &name, interface, &api_key, base_url_ref)?;
             Ok(format!("Created provider \"{name}\""))
         }
         ProviderCommand::Rm(name) => {
@@ -320,7 +321,7 @@ mod tests {
                 base_url,
             }) => {
                 assert_eq!(name, "foo");
-                assert_eq!(interface, "openai");
+                assert_eq!(interface, InterfaceId::Openai);
                 assert_eq!(api_key, "sk-123");
                 assert_eq!(base_url, None);
             }

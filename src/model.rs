@@ -1,8 +1,11 @@
-use chrono::NaiveDateTime;
+use chrono::{Duration, NaiveDateTime, Utc};
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
+use futures::future::join_all;
 
-use crate::error::AnyResult;
+use crate::error::{AnyError, AnyResult};
+use crate::interface::InterfaceModel;
+use crate::provider::Provider;
 use crate::schema::model;
 use crate::schema::model::dsl;
 
@@ -87,15 +90,75 @@ impl Model {
         .execute(conn)?;
         Ok(count > 0)
     }
+
+    pub fn delete_all(conn: &mut SqliteConnection) -> AnyResult<usize> {
+        let count = diesel::delete(dsl::model).execute(conn)?;
+        Ok(count)
+    }
+
+    pub fn create_all(
+        conn: &mut SqliteConnection,
+        new_models: Vec<NewModel>,
+    ) -> AnyResult<()> {
+        if new_models.is_empty() {
+            return Ok(());
+        }
+        diesel::insert_into(model::table)
+            .values(&new_models)
+            .execute(conn)?;
+        Ok(())
+    }
+}
+
+pub async fn revalidate_models(conn: &mut SqliteConnection) -> AnyResult<()> {
+    let cutoff = Utc::now().naive_utc() - Duration::hours(24);
+
+    let stale_exists = dsl::model
+        .filter(dsl::updated_at.lt(cutoff))
+        .first::<Model>(conn)
+        .optional()?
+        .is_some();
+    let is_empty: bool = dsl::model.count().get_result::<i64>(conn)? == 0;
+
+    if !is_empty && !stale_exists {
+        return Ok(());
+    }
+
+    let providers = Provider::all(conn)?;
+    let interfaces = providers.iter()
+        .map(|p| p.create_interface())
+        .collect::<AnyResult<Vec<_>>>()?;
+    let fetches: Vec<_> = interfaces.iter().map(|i| i.get_models()).collect();
+    let results: Vec<AnyResult<Vec<InterfaceModel>>> = join_all(fetches).await;
+
+    let mut new_models = Vec::new();
+    for (provider, result) in providers.iter().zip(results) {
+        let models = result?;
+        for m in models {
+            new_models.push(NewModel {
+                provider_id: provider.id,
+                id: m.id,
+            });
+        }
+    }
+
+    conn.transaction::<_, AnyError, _>(|conn| {
+        Model::delete_all(conn)?;
+        Model::create_all(conn, new_models)?;
+        Ok(())
+    })?;
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interface::InterfaceId;
     use crate::provider::Provider;
 
     fn seed_provider(conn: &mut SqliteConnection) -> Provider {
-        Provider::create(conn, "test", "openai", "key123", None).expect("create provider failed")
+        Provider::create(conn, "test", InterfaceId::Openai, "key123", None).expect("create provider failed")
     }
 
     #[test]
@@ -135,8 +198,8 @@ mod tests {
     #[test]
     fn test_model_isolation_by_provider() {
         let mut conn = crate::db::open_in_memory().expect("failed to open in-memory db");
-        let p1 = Provider::create(&mut conn, "p1", "openai", "k1", None).expect("create p1");
-        let p2 = Provider::create(&mut conn, "p2", "openai", "k2", None).expect("create p2");
+        let p1 = Provider::create(&mut conn, "p1", InterfaceId::Openai, "k1", None).expect("create p1");
+        let p2 = Provider::create(&mut conn, "p2", InterfaceId::Openai, "k2", None).expect("create p2");
 
         // The same model id can exist for two different providers.
         Model::create(&mut conn, p1.id, "gpt-4").expect("create p1 model");

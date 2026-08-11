@@ -21,3 +21,5 @@ compact_str = "0.10.0"
 markdown = "1.0.0"
 shellwords = "1.1.0"
 dedent = "0.1.1"
+async-openai = { version = "0.41", default-features = false, features = ["model", "rustls"] }
+futures = "0.3"

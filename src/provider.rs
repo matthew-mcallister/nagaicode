@@ -1,29 +1,11 @@
-use std::error::Error;
-use std::str::FromStr;
-
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 
 use crate::error::AnyResult;
+use crate::interface::{Interface, InterfaceId};
 use crate::schema::provider;
 use crate::schema::provider::dsl;
-
-#[derive(Debug, Clone, Copy)]
-pub enum Interface {
-    Openai,
-}
-
-impl FromStr for Interface {
-    type Err = Box<dyn Error>;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "openai" => Ok(Self::Openai),
-            _ => Err(From::from(format!("Invalid interface: '{}'", s))),
-        }
-    }
-}
 
 #[derive(Debug, Queryable, Selectable)]
 #[diesel(table_name = provider)]
@@ -51,7 +33,7 @@ impl Provider {
     pub fn create(
         conn: &mut SqliteConnection,
         name: &str,
-        interface: &str,
+        interface: InterfaceId,
         api_key: &str,
         base_url: Option<&str>,
     ) -> AnyResult<Provider> {
@@ -59,7 +41,7 @@ impl Provider {
 
         let new = NewProvider {
             name,
-            interface,
+            interface: interface.as_str(),
             api_key,
             base_url,
         };
@@ -90,6 +72,17 @@ impl Provider {
         let count = diesel::delete(dsl::provider.filter(dsl::name.eq(name))).execute(conn)?;
         Ok(count > 0)
     }
+
+    pub fn all(conn: &mut SqliteConnection) -> AnyResult<Vec<Provider>> {
+        let providers = dsl::provider
+            .order(dsl::id.asc())
+            .load::<Provider>(conn)?;
+        Ok(providers)
+    }
+
+    pub fn create_interface(&self) -> AnyResult<Interface> {
+        Interface::from_provider(self)
+    }
 }
 
 #[cfg(test)]
@@ -100,7 +93,7 @@ mod tests {
     fn test_provider() {
         let mut conn = crate::db::open_in_memory().expect("failed to open in-memory db");
 
-        let created = Provider::create(&mut conn, "test", "openai", "key123", None)
+        let created = Provider::create(&mut conn, "test", InterfaceId::Openai, "key123", None)
             .expect("create failed");
         assert_eq!(created.name, "test");
 
