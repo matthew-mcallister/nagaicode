@@ -41,7 +41,7 @@ impl Chat {
             theme,
         );
         stacked.history_mut().add_item(HistoryItemContent::Help(dedent!("
-            Welcome to NagaiChat!
+            Welcome to NagaiCode!
 
             Type /help for a list of commands."
         ).into()));
