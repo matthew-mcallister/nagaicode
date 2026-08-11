@@ -2,32 +2,28 @@ use std::io::Write;
 
 use compact_str::CompactString;
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::queue;
-use crossterm::execute;
 use crossterm::style::{ResetColor, SetBackgroundColor, SetForegroundColor};
-use crossterm::terminal::{
-    DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-    enable_raw_mode, size,
-};
 use dedent::dedent;
 
 use crate::error::AnyResult;
 use crate::ui::history::HistoryItemContent;
-use crate::ui::style::{THEME_DARK, Theme};
+use crate::ui::style::Theme;
 use crate::ui::padded::Padded;
 use crate::ui::stacked_view::StackedView;
 use crate::ui::Component;
 
 const TEXT_INPUT_MAX_HEIGHT: u16 = 24;
 
-struct Chat {
+#[derive(Debug)]
+pub struct Chat {
     theme: &'static Theme,
     stacked: Padded<StackedView>,
 }
 
 impl Chat {
-    fn new(w: u16, h: u16, theme: &'static Theme) -> Self {
+    pub fn new(w: u16, h: u16, theme: &'static Theme) -> Self {
         // Minimum dimensions are 80x24. If the terminal is smaller the UI will
         // just overflow the screen. This helps avoid crashes or bizarre bugs
         // caused by pathologically tiny terminals.
@@ -52,7 +48,7 @@ impl Chat {
         }
     }
 
-    fn resize(&mut self, w: u16, h: u16) {
+    pub fn resize(&mut self, w: u16, h: u16) {
         self.stacked.set_width(w as usize);
         self.stacked.set_height(h as usize);
     }
@@ -60,12 +56,12 @@ impl Chat {
     /// Handles a key event. Returns true if the app should quit.
     // TODO: pass input events down to components, bubble up generated events
     // to parents.
-    fn handle_key(&mut self, key: KeyEvent) -> bool {
+    pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let input = self.stacked.inner_mut().input_mut();
-        match (key.code, ctrl, shift, alt) {
+        let res = match (key.code, ctrl, shift, alt) {
             // Ctrl + char
             (KeyCode::Char('c'), true, _, _) => true,
             (KeyCode::Char('a'), true, _, _) => {
@@ -162,7 +158,9 @@ impl Chat {
                 false
             }
             _ => false,
-        }
+        };
+        self.stacked.inner_mut().resize();
+        res
     }
 
     fn process_command(&mut self, command: &str) {
@@ -197,7 +195,7 @@ impl Chat {
     }
 
     // TODO: cap redraw frequency
-    fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
+    pub fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
         let text_style = self.theme.text_base;
         let bg = self.theme.bg_base;
         queue!(stdout,
@@ -213,35 +211,4 @@ impl Chat {
         stdout.flush()?;
         Ok(())
     }
-}
-
-/// Runs the terminal app.
-pub fn run() -> AnyResult<()> {
-    enable_raw_mode()?;
-    let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen, DisableLineWrap)?;
-
-    let (w, h) = size()?;
-    let mut chat = Chat::new(w, h, &THEME_DARK);
-    chat.draw(&mut stdout)?;
-
-    let mut quit = false;
-    while !quit {
-        match event::read()? {
-            Event::Key(key) => {
-                quit = chat.handle_key(key);
-                chat.stacked.inner_mut().resize();
-                chat.draw(&mut stdout)?;
-            }
-            Event::Resize(w, h) => {
-                chat.resize(w, h);
-                chat.draw(&mut stdout)?;
-            }
-            _ => {}
-        }
-    }
-
-    execute!(stdout, EnableLineWrap, LeaveAlternateScreen)?;
-    disable_raw_mode()?;
-    Ok(())
 }

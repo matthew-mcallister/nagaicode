@@ -1,6 +1,6 @@
 use nagai::error::AnyResult;
-use nagai::ui;
+use nagai::app;
 
 fn main() -> AnyResult<()> {
-    ui::run()
+    app::run()
 }

@@ -1,17 +1,17 @@
 // TODO maybe: write a diffing system that compares each row with the row from
 // the previous draw and only redraws the portions which changed.
-mod app;
-mod input_box;
-mod history;
-mod markdown;
-mod padded;
-mod stacked_view;
-mod style;
-mod text;
+
+pub mod chat;
+pub mod input_box;
+pub mod history;
+pub mod markdown;
+pub mod padded;
+pub mod stacked_view;
+pub mod style;
+pub mod text;
 
 use std::fmt;
 
-pub use app::run;
 use crossterm::Command;
 
 use text::SPACES;

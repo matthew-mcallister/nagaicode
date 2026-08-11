@@ -547,6 +547,8 @@ mod tests {
 
             let mut prefix = String::new();
             let _ = SetStyle(THEME_DARK.text_error.into()).write_ansi(&mut prefix);
+            prefix.push_str("▕ ");
+            let _ = SetStyle(THEME_DARK.text_subtle.into()).write_ansi(&mut prefix);
             for line in lines.iter_mut() {
                 *line = line.trim_start_matches(&prefix).to_owned();
             }
@@ -554,9 +556,9 @@ mod tests {
             lines.join("\n")
         }
 
-        assert_eq!(render("hello", 10), "hello     ");
-        assert_eq!(render("foo\nbar", 8), "foo     \nbar     ");
-        assert_eq!(render("hello world", 8), "hello   \nworld   ");
+        assert_eq!(render("hello", 10), "hello   ");
+        assert_eq!(render("foo\nbar", 8), "foo   \nbar   ");
+        assert_eq!(render("hello world", 8), "hello \nworld ");
         assert_eq!(render("", 6), "");
     }
 

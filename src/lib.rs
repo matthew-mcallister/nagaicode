@@ -1,5 +1,6 @@
 #![feature(iter_macro, yield_expr)]
 
+pub mod app;
 pub mod arena;
 pub mod command;
 pub mod db;
