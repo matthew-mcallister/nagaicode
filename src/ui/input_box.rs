@@ -759,6 +759,16 @@ impl InputBox {
         self.cursor_col = self.rows[last_row].width;
     }
 
+    /// Moves the cursor to the very end of all input text and scrolls the
+    /// viewport so that the final row is visible.
+    pub fn go_to_end(&mut self) {
+        self.overwrite_buffer = true;
+        let last = self.last_row();
+        self.cursor_row = last;
+        self.cursor_col = self.rows[last].width;
+        self.set_viewport_bottom(last);
+    }
+
 
 
     /// Deletes all graphemes from the beginning of the current logical line up
@@ -895,8 +905,21 @@ impl InputBox {
             (KeyCode::Delete, _, _, _) => self.delete(),
             (KeyCode::Left, _, _, _) => self.move_left(),
             (KeyCode::Right, _, _, _) => self.move_right(),
-            (KeyCode::Up, _, _, _) => self.move_up(1),
-            (KeyCode::Down, _, _, _) => self.move_down(1),
+            (KeyCode::Up, _, _, _) => {
+                if self.cursor_row == self.first_row() && self.cursor_col == 0 {
+                    response = Some(AppEvent::HistoryPrev);
+                } else {
+                    self.move_up(1);
+                }
+            }
+            (KeyCode::Down, _, _, _) => {
+                let last = self.last_row();
+                if self.cursor_row == last && self.cursor_col == self.rows[last].width {
+                    response = Some(AppEvent::HistoryNext);
+                } else {
+                    self.move_down(1);
+                }
+            }
             (KeyCode::PageUp, _, _, _) => self.move_up(self.max_height()),
             (KeyCode::PageDown, _, _, _) => self.move_down(self.max_height()),
             _ => {},

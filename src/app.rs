@@ -16,6 +16,10 @@ use crate::ui::style::THEME_DARK;
 #[derive(Debug)]
 pub enum AppEvent {
     Command(String),
+    /// Navigate to the previous entry in the command history.
+    HistoryPrev,
+    /// Navigate to the next entry in the command history.
+    HistoryNext,
 }
 
 #[derive(Debug)]
@@ -99,6 +103,8 @@ impl App {
     fn process_event(&mut self, event: AppEvent) {
         match event {
             AppEvent::Command(cmd) => self.process_command(&cmd),
+            // Consumed by the StackedView; should never reach the App.
+            AppEvent::HistoryPrev | AppEvent::HistoryNext => {},
         }
     }
 }
