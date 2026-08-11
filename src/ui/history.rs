@@ -34,10 +34,12 @@ pub(crate) fn render_error(
 ) -> Vec<String> {
     let mut prefix = String::new();
     let _ = SetStyle(theme.text_error.into()).write_ansi(&mut prefix);
+    prefix.push_str("▕ ");
+    let _ = SetStyle(theme.text_subtle.into()).write_ansi(&mut prefix);
     content.lines().flat_map(|line|
-        wrap_line(width, line)
+        wrap_line(width - 2, line)
             .into_iter()
-            .map(|row| format!("{}{}", prefix, row.to_padded_string(width)))
+            .map(|row| format!("{}{}", prefix, row.to_padded_string(width - 2)))
     ).collect()
 }
 
