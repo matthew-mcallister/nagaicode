@@ -875,6 +875,7 @@ impl Command for InputBoxRow<'_> {
 impl Component for InputBox {
     type Row<'a> = InputBoxRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
+    type EventReponse = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let prev = self.rows[self.viewport_top].prev;
@@ -905,6 +906,10 @@ impl Component for InputBox {
     fn cursor_pos(&self) -> (usize, usize) {
         let row = self.row_diff(self.viewport_top, self.cursor_row) as usize;
         (row, self.cursor_col)
+    }
+
+    fn handle_event(&mut self, event: crossterm::event::Event) -> Self::EventReponse {
+        // Nothing yet
     }
 }
 

@@ -2,11 +2,12 @@ use std::io::Write;
 
 use compact_str::CompactString;
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::queue;
 use crossterm::style::{ResetColor, SetBackgroundColor, SetForegroundColor};
 use dedent::dedent;
 
+use crate::app::AppEvent;
 use crate::error::AnyResult;
 use crate::ui::history::HistoryItemContent;
 use crate::ui::style::Theme;
@@ -53,145 +54,55 @@ impl Chat {
         self.stacked.set_height(h as usize);
     }
 
-    /// Handles a key event. Returns true if the app should quit.
-    // TODO: pass input events down to components, bubble up generated events
-    // to parents.
-    pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+    pub fn handle_key(&mut self, key: KeyEvent) -> Option<AppEvent> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let input = self.stacked.inner_mut().input_mut();
-        let res = match (key.code, ctrl, shift, alt) {
+        let mut response = None;
+        match (key.code, ctrl, shift, alt) {
             // Ctrl + char
-            (KeyCode::Char('c'), true, _, _) => true,
-            (KeyCode::Char('a'), true, _, _) => {
-                input.go_to_line_start();
-                false
-            }
-            (KeyCode::Char('e'), true, _, _) => {
-                input.go_to_line_end();
-                false
-            }
-            (KeyCode::Char('u'), true, _, _) => {
-                input.delete_to_line_start();
-                false
-            }
-            (KeyCode::Char('k'), true, _, _) => {
-                input.delete_to_line_end();
-                false
-            }
-            (KeyCode::Char('w'), true, _, _) => {
-                input.delete_prev_word();
-                false
-            }
-            (KeyCode::Char('y'), true, _, _) => {
-                input.paste_buffer();
-                false
-            }
+            (KeyCode::Char('a'), true, _, _) => input.go_to_line_start(),
+            (KeyCode::Char('e'), true, _, _) => input.go_to_line_end(),
+            (KeyCode::Char('u'), true, _, _) => input.delete_to_line_start(),
+            (KeyCode::Char('k'), true, _, _) => input.delete_to_line_end(),
+            (KeyCode::Char('w'), true, _, _) => input.delete_prev_word(),
+            (KeyCode::Char('y'), true, _, _) => input.paste_buffer(),
             // Alt + char
-            (KeyCode::Char('f'), _, _, true) => {
-                input.go_to_word_end();
-                false
-            }
-            (KeyCode::Char('b'), _, _, true) => {
-                input.go_to_prev_word_start();
-                false
-            }
+            (KeyCode::Char('f'), _, _, true) => input.go_to_word_end(),
+            (KeyCode::Char('b'), _, _, true) => input.go_to_prev_word_start(),
             // Other combinations
             | (KeyCode::Char('j'), true, _, _)
             | (KeyCode::Char('j'), _, _, true)
             | (KeyCode::Enter, true, _, _)
             | (KeyCode::Enter, _, true, _)
-            | (KeyCode::Enter, _, _, true) => {
-                input.paste("\n");
-                false
-            }
+            | (KeyCode::Enter, _, _, true) => input.paste("\n"),
             // Ignoring modifiers
             (KeyCode::Char(c), _, _, _) => {
                 let mut s = CompactString::with_capacity(1);
                 s.push(c);
                 input.paste(&s);
-                false
             }
             (KeyCode::Enter, _, _, _) => {
-                let text = input.get_text();
+                let mut text = input.get_text();
                 input.set_text("");
-                let text = text.strip_suffix('\n').unwrap_or(&text);
-                self.process_command(&text);
-                false
+                if text.ends_with('\n') { text.pop(); }
+                response = Some(AppEvent::Command(text));
             }
-            (KeyCode::Tab, _, _, _) => {
-                // XXX: Maybe should expand to spaces when input via keyboard
-                input.paste("\t");
-                false
-            }
-            (KeyCode::Backspace, _, _, _) => {
-                input.backspace();
-                false
-            }
-            (KeyCode::Delete, _, _, _) => {
-                input.delete();
-                false
-            }
-            (KeyCode::Left, _, _, _) => {
-                input.move_left();
-                false
-            }
-            (KeyCode::Right, _, _, _) => {
-                input.move_right();
-                false
-            }
-            (KeyCode::Up, _, _, _) => {
-                input.move_up(1);
-                false
-            }
-            (KeyCode::Down, _, _, _) => {
-                input.move_down(1);
-                false
-            }
-            (KeyCode::PageUp, _, _, _) => {
-                input.move_up(input.max_height());
-                false
-            }
-            (KeyCode::PageDown, _, _, _) => {
-                input.move_down(input.max_height());
-                false
-            }
-            _ => false,
+            // XXX: Maybe should expand to spaces when input via keyboard
+            (KeyCode::Tab, _, _, _) => input.paste("\t"),
+            (KeyCode::Backspace, _, _, _) => input.backspace(),
+            (KeyCode::Delete, _, _, _) => input.delete(),
+            (KeyCode::Left, _, _, _) => input.move_left(),
+            (KeyCode::Right, _, _, _) => input.move_right(),
+            (KeyCode::Up, _, _, _) => input.move_up(1),
+            (KeyCode::Down, _, _, _) => input.move_down(1),
+            (KeyCode::PageUp, _, _, _) => input.move_up(input.max_height()),
+            (KeyCode::PageDown, _, _, _) => input.move_down(input.max_height()),
+            _ => {},
         };
         self.stacked.inner_mut().resize();
-        res
-    }
-
-    fn process_command(&mut self, command: &str) {
-        if command.trim().is_empty() {
-            return;
-        }
-
-        let history = self.stacked.inner_mut().history_mut();
-        if !command.contains('\n') {
-            let slash_command = command.starts_with('/');
-            let bang_command = command.starts_with('!');
-            if slash_command || bang_command {
-                let command = &command[1..];
-                if slash_command {
-                    match crate::command::run_command(&command) {
-                        Ok(output) => {
-                            if !output.trim().is_empty() {
-                                history.add_item(HistoryItemContent::Help(output));
-                            }
-                        }
-                        Err(e) => {
-                            history.add_item(HistoryItemContent::Error(e.to_string()));
-                        }
-                    }
-                } else {
-                    todo!("call system()")
-                };
-                return;
-            }
-        }
-        history.add_item(HistoryItemContent::Markdown(command.into()));
+        response
     }
 
     // TODO: cap redraw frequency
@@ -210,5 +121,22 @@ impl Chat {
         queue!(stdout, ResetColor, MoveTo(col as u16, row as u16), Show)?;
         stdout.flush()?;
         Ok(())
+    }
+
+    pub fn handle_event(&mut self, event: Event) -> Option<AppEvent> {
+        match event {
+            Event::Key(key) => {
+                self.handle_key(key)
+            }
+            Event::Resize(w, h) => {
+                self.resize(w, h);
+                None
+            }
+            _ => None,
+        }
+    }
+
+    pub fn add_item(&mut self, content: HistoryItemContent) {
+        self.stacked.inner_mut().history_mut().add_item(content);
     }
 }

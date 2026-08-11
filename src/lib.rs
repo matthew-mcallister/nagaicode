@@ -6,5 +6,6 @@ pub mod command;
 pub mod db;
 pub mod error;
 pub mod ui;
+pub mod model;
 pub mod provider;
 pub mod schema;

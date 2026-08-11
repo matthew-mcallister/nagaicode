@@ -12,6 +12,7 @@ use crate::schema::provider::dsl;
 #[derive(Debug, Eq, PartialEq)]
 pub enum Command {
     Provider(ProviderCommand),
+    Quit,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -142,13 +143,26 @@ fn parse_args<'a>(args: Vec<String>) -> Result<Command, Box<dyn Error>> {
 
           /provider
           /help
+          /quit
     ");
     let mut parser = Parser::new(USAGE, &args_[..], &[]);
     match parser.expect()? {
         "provider" => parse_provider(parser.args),
+        "quit" => parse_quit(parser.args),
         "help" => Err(show_usage(USAGE)),
         command => Err(unknown_command(USAGE, command)),
     }
+}
+
+fn parse_quit(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+    const USAGE: &str = dedent!("
+        Usage:
+
+            /quit
+    ");
+    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    parser.expect_empty()?;
+    Ok(Command::Quit)
 }
 
 fn parse_provider(args: &[&str]) -> Result<Command, Box<dyn Error>> {
@@ -231,18 +245,12 @@ fn parse_provider_new(args: &[&str]) -> Result<Command, Box<dyn Error>> {
     }))
 }
 
-pub fn run_command(text: &str) -> Result<String, Box<dyn Error>> {
+pub fn parse_command(text: &str) -> Result<Command, Box<dyn Error>> {
     let args = shellwords::split(text)?;
-    let cmd = match parse_args(args) {
-        Ok(c) => c,
-        Err(e) => return Ok(e.to_string()),
-    };
-    match cmd {
-        Command::Provider(command) => run_provider_command(command),
-    }
+    parse_args(args)
 }
 
-fn run_provider_command(command: ProviderCommand) -> Result<String, Box<dyn Error>> {
+pub fn run_provider_command(command: ProviderCommand) -> Result<String, Box<dyn Error>> {
     let mut conn = db::open()?;
     match command {
         ProviderCommand::Ls => {
@@ -288,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_help() {
-        let expected = "List of commands:\n\n  /provider\n  /help";
+        let expected = "List of commands:\n\n  /provider\n  /help\n  /quit";
         let result = parse_args(vec!["help".into()]).unwrap_err().to_string();
         assert_eq!(result, expected);
     }

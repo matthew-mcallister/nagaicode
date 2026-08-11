@@ -75,6 +75,7 @@ impl Command for StackedRow<'_> {
 impl Component for StackedView {
     type Row<'a> = StackedRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
+    type EventReponse = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let empty_rows = self
@@ -111,5 +112,9 @@ impl Component for StackedView {
     fn cursor_pos(&self) -> (usize, usize) {
         let (row, col) = self.input.cursor_pos();
         (self.height.saturating_sub(self.input.height()) + row, col)
+    }
+
+    fn handle_event(&mut self, event: crossterm::event::Event) -> Self::EventReponse {
+        // TODO: pass event to focused child
     }
 }

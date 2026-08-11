@@ -92,6 +92,7 @@ impl<R: Command> Command for PaddedRow<R> {
 impl<C: Component> Component for Padded<C> {
     type Row<'a> = PaddedRow<C::Row<'a>> where C: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where C: 'a;
+    type EventReponse = C::EventReponse;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let mut inner = self.inner.drawable_rows();
@@ -136,5 +137,9 @@ impl<C: Component> Component for Padded<C> {
     fn cursor_pos(&self) -> (usize, usize) {
         let (row, col) = self.inner.cursor_pos();
         (row + self.v_padding, col + self.h_padding)
+    }
+
+    fn handle_event(&mut self, event: crossterm::event::Event) -> Self::EventReponse {
+        self.inner.handle_event(event)
     }
 }

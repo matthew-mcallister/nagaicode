@@ -425,6 +425,7 @@ impl Command for HistoryRowRef<'_> {
 impl Component for History {
     type Row<'a> = HistoryRowRef<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
+    type EventReponse = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let prev = self.rows[self.viewport_top].prev;
@@ -453,6 +454,10 @@ impl Component for History {
 
     fn cursor_pos(&self) -> (usize, usize) {
         (0, 0)
+    }
+
+    fn handle_event(&mut self, event: crossterm::event::Event) -> Self::EventReponse {
+        // Nothing yet
     }
 }
 
