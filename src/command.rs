@@ -141,15 +141,15 @@ fn parse_args<'a>(args: Vec<String>) -> Result<Command, Box<dyn Error>> {
     const USAGE: &str = dedent!("
         List of commands:
 
-          /provider
-          /help
-          /quit
+          /provider     [/p]
+          /help         [/h]
+          /quit         [/q]
     ");
     let mut parser = Parser::new(USAGE, &args_[..], &[]);
     match parser.expect()? {
-        "provider" => parse_provider(parser.args),
-        "quit" => parse_quit(parser.args),
-        "help" => Err(show_usage(USAGE)),
+        "p" | "provider" => parse_provider(parser.args),
+        "q" | "quit" => parse_quit(parser.args),
+        "h" | "help" => Err(show_usage(USAGE)),
         command => Err(unknown_command(USAGE, command)),
     }
 }
