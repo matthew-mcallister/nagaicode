@@ -1,9 +1,29 @@
+use std::error::Error;
+use std::str::FromStr;
+
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 
 use crate::error::AnyResult;
 use crate::schema::provider;
+use crate::schema::provider::dsl;
+
+#[derive(Debug, Clone, Copy)]
+pub enum Interface {
+    Openai,
+}
+
+impl FromStr for Interface {
+    type Err = Box<dyn Error>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "openai" => Ok(Self::Openai),
+            _ => Err(From::from(format!("Invalid interface: '{}'", s))),
+        }
+    }
+}
 
 #[derive(Debug, Queryable, Selectable)]
 #[diesel(table_name = provider)]
@@ -58,21 +78,46 @@ impl Provider {
         }
     }
 
-    pub fn by_name(conn: &mut SqliteConnection, name: &str) -> AnyResult<Provider> {
-        use provider::dsl;
-
-        let p = dsl::provider
-            .filter(dsl::name.eq(name))
-            .first(conn)?;
-        Ok(p)
+    pub fn get_by_id(conn: &mut SqliteConnection, id: i32) -> AnyResult<Option<Provider>> {
+        let result = dsl::provider
+            .filter(dsl::id.eq(id))
+            .first::<Provider>(conn)
+            .optional()?;
+        Ok(result)
     }
 
-    pub fn all(conn: &mut SqliteConnection) -> AnyResult<Vec<Provider>> {
-        use provider::dsl;
+    pub fn delete_by_name(conn: &mut SqliteConnection, name: &str) -> AnyResult<bool> {
+        let count = diesel::delete(dsl::provider.filter(dsl::name.eq(name))).execute(conn)?;
+        Ok(count > 0)
+    }
+}
 
-        let rows = dsl::provider
-            .order_by(dsl::name)
-            .load::<Provider>(conn)?;
-        Ok(rows)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_provider() {
+        let mut conn = crate::db::open_in_memory().expect("failed to open in-memory db");
+
+        let created = Provider::create(&mut conn, "test", "openai", "key123", None)
+            .expect("create failed");
+        assert_eq!(created.name, "test");
+
+        let fetched = Provider::get_by_id(&mut conn, created.id)
+            .expect("get_by_id failed")
+            .expect("provider not found");
+        assert_eq!(fetched.id, created.id);
+        assert_eq!(fetched.name, "test");
+        assert_eq!(fetched.api_key, "key123");
+
+        let deleted = Provider::delete_by_name(&mut conn, "test").expect("delete failed");
+        assert!(deleted);
+
+        let gone = Provider::get_by_id(&mut conn, created.id).expect("get_by_id failed");
+        assert!(gone.is_none());
+
+        let already_deleted = Provider::delete_by_name(&mut conn, "test").expect("delete failed");
+        assert!(!already_deleted);
     }
 }

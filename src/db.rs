@@ -40,3 +40,16 @@ pub fn open() -> Result<SqliteConnection, Box<dyn std::error::Error>> {
 
     Ok(conn)
 }
+
+#[cfg(test)]
+pub fn open_in_memory() -> Result<SqliteConnection, Box<dyn std::error::Error>> {
+    let mut conn = SqliteConnection::establish(":memory:")?;
+    conn.batch_execute("PRAGMA foreign_keys = ON;")?;
+
+    let migrations = diesel_migrations::FileBasedMigrations::find_migrations_directory()
+        .map_err(|e| e.to_string())?;
+    conn.run_pending_migrations(migrations)
+        .map_err(|e| e.to_string())?;
+
+    Ok(conn)
+}

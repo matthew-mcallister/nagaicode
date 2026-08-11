@@ -177,10 +177,15 @@ impl Chat {
             if slash_command || bang_command {
                 let command = &command[1..];
                 if slash_command {
-                    let command = format!("nagai {}", command);
-                    let output = crate::command::run_command(&command);
-                    if !output.trim().is_empty() {
-                        history.add_item(HistoryItemContent::Help(output));
+                    match crate::command::run_command(&command) {
+                        Ok(output) => {
+                            if !output.trim().is_empty() {
+                                history.add_item(HistoryItemContent::Help(output));
+                            }
+                        }
+                        Err(e) => {
+                            history.add_item(HistoryItemContent::Error(e.to_string()));
+                        }
                     }
                 } else {
                     todo!("call system()")
