@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_help() {
-        let expected = "List of commands:\n\n  /provider\n  /help\n  /quit";
+        let expected = "List of commands:\n\n  /provider     [/p]\n  /help         [/h]\n  /quit         [/q]";
         let result = parse_args(vec!["help".into()]).unwrap_err().to_string();
         assert_eq!(result, expected);
     }

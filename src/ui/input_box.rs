@@ -5,7 +5,9 @@ use std::fmt;
 
 use compact_str::CompactString;
 use crossterm::Command;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
+use crate::app::AppEvent;
 use crate::arena::{Arena, Id};
 use crate::ui::text::{Row, SPACES, strip_cr, wrap_line};
 use crate::ui::{write_spaces, Component};
@@ -849,6 +851,58 @@ impl InputBox {
         self.buffer_prepend(start, pos);
         self.splice(start, pos, "");
     }
+
+    /// Handles a single keyboard event, applying the corresponding edit or
+    /// movement. Returns `Some(text)` when the input is submitted (bare
+    /// Enter), in which case the buffer is cleared.
+    pub fn handle_key(&mut self, key: KeyEvent) -> Option<AppEvent> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let mut response = None;
+        match (key.code, ctrl, shift, alt) {
+            // Ctrl + char
+            (KeyCode::Char('a'), true, _, _) => self.go_to_line_start(),
+            (KeyCode::Char('e'), true, _, _) => self.go_to_line_end(),
+            (KeyCode::Char('u'), true, _, _) => self.delete_to_line_start(),
+            (KeyCode::Char('k'), true, _, _) => self.delete_to_line_end(),
+            (KeyCode::Char('w'), true, _, _) => self.delete_prev_word(),
+            (KeyCode::Char('y'), true, _, _) => self.paste_buffer(),
+            // Alt + char
+            (KeyCode::Char('f'), _, _, true) => self.go_to_word_end(),
+            (KeyCode::Char('b'), _, _, true) => self.go_to_prev_word_start(),
+            // Other combinations
+            | (KeyCode::Char('j'), true, _, _)
+            | (KeyCode::Char('j'), _, _, true)
+            | (KeyCode::Enter, true, _, _)
+            | (KeyCode::Enter, _, true, _)
+            | (KeyCode::Enter, _, _, true) => self.paste("\n"),
+            // Ignoring modifiers
+            (KeyCode::Char(c), _, _, _) => {
+                let mut s = CompactString::with_capacity(1);
+                s.push(c);
+                self.paste(&s);
+            }
+            (KeyCode::Enter, _, _, _) => {
+                let mut text = self.get_text();
+                self.set_text("");
+                if text.ends_with('\n') { text.pop(); }
+                response = Some(AppEvent::Command(text));
+            }
+            // XXX: Maybe should expand to spaces when input via keyboard
+            (KeyCode::Tab, _, _, _) => self.paste("\t"),
+            (KeyCode::Backspace, _, _, _) => self.backspace(),
+            (KeyCode::Delete, _, _, _) => self.delete(),
+            (KeyCode::Left, _, _, _) => self.move_left(),
+            (KeyCode::Right, _, _, _) => self.move_right(),
+            (KeyCode::Up, _, _, _) => self.move_up(1),
+            (KeyCode::Down, _, _, _) => self.move_down(1),
+            (KeyCode::PageUp, _, _, _) => self.move_up(self.max_height()),
+            (KeyCode::PageDown, _, _, _) => self.move_down(self.max_height()),
+            _ => {},
+        };
+        response
+    }
 }
 
 /// A single drawable row of the input box. The cursor is rendered as a
@@ -875,7 +929,7 @@ impl Command for InputBoxRow<'_> {
 impl Component for InputBox {
     type Row<'a> = InputBoxRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type EventReponse = ();
+    type EventReponse = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let prev = self.rows[self.viewport_top].prev;
@@ -908,8 +962,11 @@ impl Component for InputBox {
         (row, self.cursor_col)
     }
 
-    fn handle_event(&mut self, event: crossterm::event::Event) -> Self::EventReponse {
-        // Nothing yet
+    fn handle_event(&mut self, event: Event) -> Self::EventReponse {
+        match event {
+            Event::Key(key) => self.handle_key(key),
+            _ => None,
+        }
     }
 }
 

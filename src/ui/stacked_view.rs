@@ -1,5 +1,6 @@
 use crossterm::Command;
 
+use crate::app::AppEvent;
 use crate::ui::style::Theme;
 use crate::ui::history::{History, HistoryRowRef};
 use crate::ui::input_box::{InputBox, InputBoxRow};
@@ -75,7 +76,7 @@ impl Command for StackedRow<'_> {
 impl Component for StackedView {
     type Row<'a> = StackedRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type EventReponse = ();
+    type EventReponse = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let empty_rows = self
@@ -115,6 +116,7 @@ impl Component for StackedView {
     }
 
     fn handle_event(&mut self, event: crossterm::event::Event) -> Self::EventReponse {
-        // TODO: pass event to focused child
+        // The input box is the focused child.
+        self.input.handle_event(event)
     }
 }

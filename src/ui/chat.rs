@@ -1,8 +1,7 @@
 use std::io::Write;
 
-use compact_str::CompactString;
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::Event;
 use crossterm::queue;
 use crossterm::style::{ResetColor, SetBackgroundColor, SetForegroundColor};
 use dedent::dedent;
@@ -54,57 +53,6 @@ impl Chat {
         self.stacked.set_height(h as usize);
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> Option<AppEvent> {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
-        let input = self.stacked.inner_mut().input_mut();
-        let mut response = None;
-        match (key.code, ctrl, shift, alt) {
-            // Ctrl + char
-            (KeyCode::Char('a'), true, _, _) => input.go_to_line_start(),
-            (KeyCode::Char('e'), true, _, _) => input.go_to_line_end(),
-            (KeyCode::Char('u'), true, _, _) => input.delete_to_line_start(),
-            (KeyCode::Char('k'), true, _, _) => input.delete_to_line_end(),
-            (KeyCode::Char('w'), true, _, _) => input.delete_prev_word(),
-            (KeyCode::Char('y'), true, _, _) => input.paste_buffer(),
-            // Alt + char
-            (KeyCode::Char('f'), _, _, true) => input.go_to_word_end(),
-            (KeyCode::Char('b'), _, _, true) => input.go_to_prev_word_start(),
-            // Other combinations
-            | (KeyCode::Char('j'), true, _, _)
-            | (KeyCode::Char('j'), _, _, true)
-            | (KeyCode::Enter, true, _, _)
-            | (KeyCode::Enter, _, true, _)
-            | (KeyCode::Enter, _, _, true) => input.paste("\n"),
-            // Ignoring modifiers
-            (KeyCode::Char(c), _, _, _) => {
-                let mut s = CompactString::with_capacity(1);
-                s.push(c);
-                input.paste(&s);
-            }
-            (KeyCode::Enter, _, _, _) => {
-                let mut text = input.get_text();
-                input.set_text("");
-                if text.ends_with('\n') { text.pop(); }
-                response = Some(AppEvent::Command(text));
-            }
-            // XXX: Maybe should expand to spaces when input via keyboard
-            (KeyCode::Tab, _, _, _) => input.paste("\t"),
-            (KeyCode::Backspace, _, _, _) => input.backspace(),
-            (KeyCode::Delete, _, _, _) => input.delete(),
-            (KeyCode::Left, _, _, _) => input.move_left(),
-            (KeyCode::Right, _, _, _) => input.move_right(),
-            (KeyCode::Up, _, _, _) => input.move_up(1),
-            (KeyCode::Down, _, _, _) => input.move_down(1),
-            (KeyCode::PageUp, _, _, _) => input.move_up(input.max_height()),
-            (KeyCode::PageDown, _, _, _) => input.move_down(input.max_height()),
-            _ => {},
-        };
-        self.stacked.inner_mut().resize();
-        response
-    }
-
     // TODO: cap redraw frequency
     pub fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
         let text_style = self.theme.text_base;
@@ -125,14 +73,17 @@ impl Chat {
 
     pub fn handle_event(&mut self, event: Event) -> Option<AppEvent> {
         match event {
-            Event::Key(key) => {
-                self.handle_key(key)
-            }
             Event::Resize(w, h) => {
                 self.resize(w, h);
                 None
             }
-            _ => None,
+            _ => {
+                let response = self.stacked.handle_event(event);
+                // The input box may have grown or shrunk, so recompute the
+                // history region's height.
+                self.stacked.inner_mut().resize();
+                response
+            }
         }
     }
 
