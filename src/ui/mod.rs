@@ -2,6 +2,7 @@
 // the previous draw and only redraws the portions which changed.
 
 pub mod chat;
+pub mod command_editor;
 pub mod component;
 pub mod input_box;
 pub mod history;

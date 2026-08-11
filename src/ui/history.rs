@@ -4,6 +4,7 @@
 use std::fmt;
 
 use crossterm::Command;
+use crossterm::event::{Event, KeyCode, KeyEvent};
 use crossterm::style::SetStyle;
 
 use crate::arena::{Arena, Id};
@@ -287,27 +288,22 @@ impl History {
     fn set_viewport_top(&mut self, viewport_top: Id<HistoryRow>) {
         let prev = self.rows[viewport_top].prev;
         self.viewport_top = viewport_top;
-        if let Some(row) = self
-            .iter_range(prev, self.last_row())
-            .nth(self.max_height - 1)
-            .map(|(id, _)| id)
-        {
+        if let Some(row) = self.row_offset(prev, self.max_height as _) {
             self.viewport_bottom = row;
-        } else {
+        } else if viewport_top == self.first_row() {
             self.viewport_bottom = self.last_row();
+        } else {
+            self.set_viewport_bottom(self.last_row());
         }
     }
 
     /// Attempts to set the viewport region based on last row.
     fn set_viewport_bottom(&mut self, viewport_bottom: Id<HistoryRow>) {
         self.viewport_bottom = viewport_bottom;
-        if let Some(row) = self
-            .iter_range(self.head, viewport_bottom)
-            .rev()
-            .nth(self.max_height - 1)
-            .map(|(id, _)| id)
-        {
+        if let Some(row) = self.row_offset(self.viewport_bottom, -(self.max_height as isize - 1)) {
             self.viewport_top = row;
+        } else if viewport_bottom == self.last_row() {
+            self.viewport_top = self.first_row();
         } else {
             self.viewport_top = self.first_row();
         }
@@ -456,8 +452,18 @@ impl Component for History {
         (0, 0)
     }
 
-    fn handle_event(&mut self, event: crossterm::event::Event) -> Self::EventReponse {
-        // Nothing yet
+    fn handle_event(&mut self, event: Event) -> Self::EventReponse {
+        let KeyEvent { code, .. } = match event {
+            Event::Key(key) => key,
+            _ => return,
+        };
+        match code {
+            KeyCode::Up => self.scroll_up(1),
+            KeyCode::Down => self.scroll_down(1),
+            KeyCode::PageUp => self.scroll_up(self.height() / 2),
+            KeyCode::PageDown => self.scroll_down(self.height() / 2),
+            _ => {}
+        }
     }
 }
 

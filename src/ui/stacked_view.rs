@@ -1,28 +1,31 @@
 use crossterm::Command;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::AppEvent;
 use crate::ui::style::Theme;
+use crate::ui::command_editor::{CommandEditor, CommandEditorRow};
 use crate::ui::history::{History, HistoryRowRef};
-use crate::ui::input_box::{InputBox, InputBoxRow};
-use crate::ui::padded::{Padded, PaddedRow};
 use crate::ui::{write_spaces, Component};
 
-/// Stacks components vertically. The input box is anchored to the bottom and
-/// grows upward; the history fills the remaining space.
+/// Which child of `StackedView` currently receives keyboard input.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+pub enum FocusState {
+    History,
+    #[default]
+    CommandEditor,
+}
+
+/// Stacks components vertically. The command editor is anchored to the bottom
+/// and grows upward; the history fills the remaining space. Input events are
+/// routed to whichever child is currently focused; Tab toggles focus between
+/// the two. All command history navigation logic lives in `CommandEditor`.
 #[derive(Debug)]
 pub struct StackedView {
     width: usize,
     height: usize,
     history: History,
-    input: Padded<InputBox>,
-    /// Submitted commands, most recent last. Only records newly sent commands
-    /// when different from the previously sent command.
-    command_history: Vec<String>,
-    /// Command history cursor. The current/buffered command is represented as
-    /// `command_history.len()`.
-    command_history_pos: usize,
-    /// Current unsent command from the input editor.
-    buffered_command: String,
+    input: CommandEditor,
+    focus_state: FocusState,
 }
 
 impl StackedView {
@@ -36,26 +39,24 @@ impl StackedView {
             width,
             height,
             history: History::new(width, 0, theme),
-            input: Padded::new(
-                InputBox::new(width.saturating_sub(4), input_max_height.saturating_sub(2)),
-                2,
-                1,
-                Some(theme.bg_input_box),
-            ),
-            command_history: Vec::new(),
-            command_history_pos: 0,
-            buffered_command: String::new(),
+            input: CommandEditor::new(width, input_max_height, theme),
+            focus_state: FocusState::default(),
         };
         this.resize();  // Compute history height
         this
     }
 
-    pub fn input_mut(&mut self) -> &mut InputBox {
-        self.input.inner_mut()
+    pub fn input_mut(&mut self) -> &mut CommandEditor {
+        &mut self.input
     }
 
     pub fn history_mut(&mut self) -> &mut History {
         &mut self.history
+    }
+
+    /// Returns the currently focused child.
+    pub fn focus_state(&self) -> FocusState {
+        self.focus_state
     }
 
     /// Recomputes the history region's height after the input box changes size.
@@ -65,13 +66,21 @@ impl StackedView {
             self.history.set_height(history_height);
         }
     }
+
+    /// Toggles focus between the two children.
+    fn toggle_focus(&mut self) {
+        self.focus_state = match self.focus_state {
+            FocusState::History => FocusState::CommandEditor,
+            FocusState::CommandEditor => FocusState::History,
+        };
+    }
 }
 
 #[derive(Debug)]
 pub enum StackedRow<'a> {
     Empty { width: usize },
     History(HistoryRowRef<'a>),
-    Input(PaddedRow<InputBoxRow<'a>>),
+    Input(CommandEditorRow<'a>),
 }
 
 impl Command for StackedRow<'_> {
@@ -122,50 +131,25 @@ impl Component for StackedView {
     }
 
     fn cursor_pos(&self) -> (usize, usize) {
+        // The cursor always remains in the command editor, regardless of which
+        // child is focused.
         let (row, col) = self.input.cursor_pos();
         (self.height.saturating_sub(self.input.height()) + row, col)
     }
 
-    fn handle_event(&mut self, event: crossterm::event::Event) -> Self::EventReponse {
-        let response = self.input.handle_event(event);
-        match &response {
-            Some(AppEvent::Command(text)) => {
-                if self.command_history.last() != Some(text) {
-                    self.command_history.push(text.clone());
-                }
-                self.command_history_pos = self.command_history.len();
-                self.buffered_command.clear();
-                response
-            }
-            Some(AppEvent::HistoryPrev) => {
-                if self.command_history_pos > 0 {
-                    let len = self.command_history.len();
-                    if self.command_history_pos == len {
-                        self.buffered_command = self.input.inner().get_text();
-                    }
-                    self.command_history_pos -= 1;
-                    let text = self.command_history[self.command_history_pos].clone();
-                    self.input.inner_mut().set_text(&text);
-                }
+    fn handle_event(&mut self, event: Event) -> Self::EventReponse {
+        // Tab (with no modifiers) toggles focus between children and is consumed
+        // rather than forwarded.
+        if let Event::Key(KeyEvent { code: KeyCode::Tab, modifiers: KeyModifiers::NONE, .. }) = event {
+            self.toggle_focus();
+            return None;
+        }
+        match self.focus_state {
+            FocusState::History => {
+                self.history.handle_event(event);
                 None
             }
-            Some(AppEvent::HistoryNext) => {
-                let len = self.command_history.len();
-                if self.command_history_pos < len {
-                    self.command_history_pos += 1;
-                    let input = self.input.inner_mut();
-                    if self.command_history_pos == len {
-                        // Restore unsent command from buffer
-                        input.set_text(&self.buffered_command);
-                        input.go_to_end();
-                    } else {
-                        input.set_text(&self.command_history[self.command_history_pos]);
-                        input.go_to_end();
-                    }
-                }
-                None
-            }
-            None => None,
+            FocusState::CommandEditor => self.input.handle_event(event),
         }
     }
 }
