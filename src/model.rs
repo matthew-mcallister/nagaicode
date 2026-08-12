@@ -1,3 +1,4 @@
+// TODO: Track recently used models (requires upsert but can do client-side)
 use chrono::{Duration, NaiveDateTime, Utc};
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
@@ -12,7 +13,7 @@ use crate::schema::model::dsl;
 /// Model from a provider. We fetch and cache these periodically.
 ///
 /// primary key: (provider_id, id)
-#[derive(Debug, Queryable, Selectable)]
+#[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = model)]
 #[diesel(primary_key(provider_id, id))]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
@@ -111,6 +112,8 @@ impl Model {
 }
 
 pub async fn revalidate_models(conn: &mut SqliteConnection) -> AnyResult<()> {
+    // XXX: This function is racey (e.g. provider is deleted while models are
+    // fetching) but risk is pretty low
     let cutoff = Utc::now().naive_utc() - Duration::hours(24);
 
     let stale_exists = dsl::model

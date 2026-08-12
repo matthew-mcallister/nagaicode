@@ -9,6 +9,7 @@ use crossterm::terminal::{
 
 use crate::command::Command;
 use crate::error::AnyResult;
+use crate::model::Model;
 use crate::ui::chat::Chat;
 use crate::ui::history::HistoryItemContent;
 use crate::ui::style::THEME_DARK;
@@ -25,6 +26,7 @@ pub enum AppEvent {
 #[derive(Debug)]
 pub struct App {
     chat: Chat,
+    selected_model: Option<Model>,
     quit: bool,
 }
 
@@ -34,8 +36,17 @@ impl App {
         let chat = Chat::new(w, h, &THEME_DARK);
         Ok(Self {
             chat,
+            selected_model: None,
             quit: false,
         })
+    }
+
+    pub fn selected_model(&self) -> Option<&Model> {
+        self.selected_model.as_ref()
+    }
+
+    pub fn switch_model(&mut self, model: Model) {
+        self.selected_model = Some(model);
     }
 
     pub fn run(&mut self) -> AnyResult<()> {
@@ -64,6 +75,7 @@ impl App {
         };
         match command {
             Command::Provider(cmd) => crate::command::run_provider_command(cmd),
+            Command::Model(cmd) => crate::command::run_model_command(self, cmd),
             Command::Quit => {
                 self.quit = true;
                 Ok(String::new())

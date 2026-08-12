@@ -68,6 +68,14 @@ impl Provider {
         Ok(result)
     }
 
+    pub fn get_by_name(conn: &mut SqliteConnection, name: &str) -> AnyResult<Option<Provider>> {
+        let result = dsl::provider
+            .filter(dsl::name.eq(name))
+            .first::<Provider>(conn)
+            .optional()?;
+        Ok(result)
+    }
+
     pub fn delete_by_name(conn: &mut SqliteConnection, name: &str) -> AnyResult<bool> {
         let count = diesel::delete(dsl::provider.filter(dsl::name.eq(name))).execute(conn)?;
         Ok(count > 0)
@@ -109,6 +117,9 @@ mod tests {
 
         let gone = Provider::get_by_id(&mut conn, created.id).expect("get_by_id failed");
         assert!(gone.is_none());
+
+        let by_name = Provider::get_by_name(&mut conn, "test").expect("get_by_name failed");
+        assert!(by_name.is_none(), "provider should be gone");
 
         let already_deleted = Provider::delete_by_name(&mut conn, "test").expect("delete failed");
         assert!(!already_deleted);

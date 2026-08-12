@@ -5,14 +5,17 @@ use diesel::QueryDsl;
 use diesel::RunQueryDsl;
 use diesel::expression_methods::ExpressionMethods;
 
+use crate::app::App;
 use crate::db;
 use crate::interface::InterfaceId;
+use crate::model::Model;
 use crate::provider::Provider;
 use crate::schema::provider::dsl;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Command {
     Provider(ProviderCommand),
+    Model(ModelCommand),
     Quit,
 }
 
@@ -26,6 +29,12 @@ pub enum ProviderCommand {
         base_url: Option<String>,
     },
     Rm(String),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum ModelCommand {
+    Ls,
+    Switch { provider: String, model: String },
 }
 
 #[derive(Clone, Debug)]
@@ -143,12 +152,14 @@ fn parse_args<'a>(args: Vec<String>) -> Result<Command, Box<dyn Error>> {
         List of commands:
 
           /provider     [/p]
+          /model        [/m]
           /help         [/h]
           /quit         [/q]
     ");
     let mut parser = Parser::new(USAGE, &args_[..], &[]);
     match parser.expect()? {
         "p" | "provider" => parse_provider(parser.args),
+        "m" | "model" => parse_model(parser.args),
         "q" | "quit" => parse_quit(parser.args),
         "h" | "help" => Err(show_usage(USAGE)),
         command => Err(unknown_command(USAGE, command)),
@@ -246,6 +257,48 @@ fn parse_provider_new(args: &[&str]) -> Result<Command, Box<dyn Error>> {
     }))
 }
 
+fn parse_model(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+    const USAGE: &str = dedent!("
+        List of commands:
+
+          /model ls
+          /model switch
+    ");
+    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    match parser.expect()? {
+        "ls" => parse_model_ls(parser.args),
+        "switch" => parse_model_switch(parser.args),
+        command => Err(unknown_command(USAGE, command)),
+    }
+}
+
+fn parse_model_ls(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+    const USAGE: &str = dedent!("
+        Usage:
+
+          /model ls
+    ");
+    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    parser.expect_empty()?;
+    Ok(Command::Model(ModelCommand::Ls))
+}
+
+fn parse_model_switch(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+    const USAGE: &str = dedent!("
+        Usage:
+
+          /model switch 'provider-name-here' 'model-id-here'
+    ");
+    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let provider = parser.expect()?;
+    let model = parser.expect()?;
+    parser.expect_empty()?;
+    Ok(Command::Model(ModelCommand::Switch {
+        provider: provider.into(),
+        model: model.into(),
+    }))
+}
+
 pub fn parse_command(text: &str) -> Result<Command, Box<dyn Error>> {
     let args = shellwords::split(text)?;
     parse_args(args)
@@ -291,13 +344,53 @@ pub fn run_provider_command(command: ProviderCommand) -> Result<String, Box<dyn 
     }
 }
 
+pub fn run_model_command(
+    app: &mut App,
+    command: ModelCommand,
+) -> Result<String, Box<dyn Error>> {
+    let mut conn = db::open()?;
+    match command {
+        ModelCommand::Ls => {
+            use crate::schema::model::dsl as model_dsl;
+
+            let rows: Vec<(Provider, Model)> = dsl::provider
+                .inner_join(model_dsl::model)
+                .order((dsl::id, model_dsl::id))
+                .load(&mut conn)?;
+            if rows.is_empty() {
+                return Ok("No models available. Add a provider by typing /provider".into());
+            }
+            let current = app
+                .selected_model()
+                .map(|m| m.id.clone())
+                .unwrap_or_default();
+            let mut out = String::new();
+            for (p, m) in rows {
+                let marker = if m.id == current { "* " } else { "  " };
+                out.push_str(&format!("{:<20} {}{}\n", p.name, marker, m.id));
+            }
+            Ok(out)
+        }
+        ModelCommand::Switch { provider, model } => {
+            let p = Provider::get_by_name(&mut conn, &provider)?
+                .ok_or_else(|| format!("No provider '{provider}'"))?;
+            let m = Model::get(&mut conn, p.id, &model)?
+                .ok_or_else(|| {
+                    format!("No model '{provider}:{model}''")
+                })?;
+            app.switch_model(m);
+            Ok(format!("Using '{provider}:{model}'"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_help() {
-        let expected = "List of commands:\n\n  /provider     [/p]\n  /help         [/h]\n  /quit         [/q]";
+        let expected = "List of commands:\n\n  /provider     [/p]\n  /model        [/m]\n  /help         [/h]\n  /quit         [/q]";
         let result = parse_args(vec!["help".into()]).unwrap_err().to_string();
         assert_eq!(result, expected);
     }
@@ -327,5 +420,32 @@ mod tests {
             }
             other => panic!("expected New, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_model() {
+        let cmd = parse_args(shellwords::split("model ls").unwrap()).unwrap();
+        assert_eq!(cmd, Command::Model(ModelCommand::Ls));
+
+        let cmd = parse_args(shellwords::split("m ls").unwrap()).unwrap();
+        assert_eq!(cmd, Command::Model(ModelCommand::Ls));
+
+        let extra = parse_args(shellwords::split("model ls extra").unwrap());
+        assert!(extra.is_err(), "expected error, got {:?}", extra.unwrap());
+
+        let cmd = parse_args(shellwords::split("model switch openai gpt-4").unwrap()).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Model(ModelCommand::Switch {
+                provider: "openai".into(),
+                model: "gpt-4".into(),
+            })
+        );
+
+        let missing = parse_args(shellwords::split("model switch openai").unwrap());
+        assert!(missing.is_err(), "expected error, got {:?}", missing.unwrap());
+
+        let extra = parse_args(shellwords::split("model switch openai gpt-4 x").unwrap());
+        assert!(extra.is_err(), "expected error, got {:?}", extra.unwrap());
     }
 }
