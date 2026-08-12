@@ -59,8 +59,10 @@ impl Interface {
         let id: InterfaceId = provider.interface.parse()?;
         Ok(match id {
             InterfaceId::Openai => Self::from(OpenaiInterface::new(
+                provider.base_url_normalized()
+                    .unwrap_or("https://api.openai.com/v1")
+                    .to_owned(),
                 provider.api_key.clone(),
-                provider.base_url.clone(),
             )),
         })
     }

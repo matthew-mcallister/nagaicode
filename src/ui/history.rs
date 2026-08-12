@@ -248,14 +248,6 @@ impl History {
         self.rows[self.head].prev
     }
 
-    fn iter_rows<'a>(&'a self) -> HistoryRowIter<'a> {
-        HistoryRowIter {
-            rows: &self.rows,
-            prev: self.head,
-            last: self.last_row(),
-        }
-    }
-
     /// Iterate over a range of rows. `prev` is not inclusive; `last` is
     /// inclusive.
     fn iter_range<'a>(&'a self, prev: Id<HistoryRow>, last: Id<HistoryRow>) -> HistoryRowIter<'a> {

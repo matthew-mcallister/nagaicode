@@ -42,11 +42,6 @@ impl Context {
         self
     }
 
-    const fn with_theme(mut self, theme: &'static Theme) -> Self {
-        self.theme = theme;
-        self
-    }
-
     const fn with_base_style(mut self, base_style: TextStyle) -> Self {
         self.base_style = base_style;
         self

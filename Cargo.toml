@@ -21,5 +21,7 @@ compact_str = "0.10.0"
 markdown = "1.0.0"
 shellwords = "1.1.0"
 dedent = "0.1.1"
-async-openai = { version = "0.41", default-features = false, features = ["model", "rustls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 futures = "0.3"

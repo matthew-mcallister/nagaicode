@@ -91,11 +91,40 @@ impl Provider {
     pub fn create_interface(&self) -> AnyResult<Interface> {
         Interface::from_provider(self)
     }
+
+    pub fn base_url_normalized(&self) -> Option<&str> {
+        self.base_url
+            .as_ref()
+            .filter(|url| !url.is_empty())
+            .map(|s| s.trim_end_matches('/'))
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::DateTime;
+
     use super::*;
+
+    #[test]
+    fn base_url_normalized_handles_normal_empty_and_trailing_slash() {
+        fn make(base_url: Option<&str>) -> Provider {
+            Provider {
+                id: 0,
+                name: "test".into(),
+                interface: "openai".into(),
+                api_key: "key".into(),
+                base_url: base_url.map(str::to_owned),
+                created_at: DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
+                updated_at: DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
+            }
+        }
+
+        assert_eq!(make(Some("https://example.test/v1")).base_url_normalized(), Some("https://example.test/v1"));
+        assert_eq!(make(Some("")).base_url_normalized(), None);
+        assert_eq!(make(Some("https://example.test/v1/")).base_url_normalized(), Some("https://example.test/v1"));
+        assert_eq!(make(None).base_url_normalized(), None);
+    }
 
     #[test]
     fn test_provider() {
