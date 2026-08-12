@@ -134,9 +134,10 @@ impl<C: Component> Component for Padded<C> {
         self.inner.height() + 2 * self.v_padding
     }
 
-    fn cursor_pos(&self) -> (usize, usize) {
-        let (row, col) = self.inner.cursor_pos();
-        (row + self.v_padding, col + self.h_padding)
+    fn cursor(&self) -> Option<(usize, usize)> {
+        self.inner
+            .cursor()
+            .map(|(row, col)| (row + self.v_padding, col + self.h_padding))
     }
 
     fn handle_event(&mut self, event: crossterm::event::Event) -> Self::EventReponse {

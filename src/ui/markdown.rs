@@ -6,7 +6,7 @@
 use std::iter::iter;
 
 use crossterm::Command;
-use crossterm::style::SetStyle;
+use crossterm::style::{Attribute, SetAttribute, SetStyle};
 use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Text};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -451,7 +451,9 @@ fn blockquote_to_rows<'a>(
             if !first {
                 let mut out = String::with_capacity(ctx.width);
                 ctx.update_style(&mut out, ctx.base_style, ctx.theme.text_quote);
-                out.push('\u{2595}');
+                let _ = SetAttribute(Attribute::Reverse).write_ansi(&mut out);
+                out.push('\u{258A}');
+                let _ = SetAttribute(Attribute::NoReverse).write_ansi(&mut out);
                 out.push(' ');
                 push_spaces(&mut out, ctx.width - 2);
                 yield out;
@@ -460,7 +462,9 @@ fn blockquote_to_rows<'a>(
             for row in rows {
                 let mut out = String::with_capacity(row.len() + 16);
                 ctx.update_style(&mut out, ctx.base_style, ctx.theme.text_quote);
-                out.push('\u{2595}');
+                let _ = SetAttribute(Attribute::Reverse).write_ansi(&mut out);
+                out.push('\u{258A}');
+                let _ = SetAttribute(Attribute::NoReverse).write_ansi(&mut out);
                 out.push(' ');
                 out.push_str(&row);
                 yield out;
@@ -713,19 +717,19 @@ mod test_paragraph {
     fn blockquote() {
         assert_eq!(
             render("> hello *world*", 20),
-            "\x1b[38;2;168;162;158m\x1b[3m▕ hello world       ",
+            "\x1b[38;2;168;162;158m\x1b[3m\x1b[7m▊\x1b[27m hello world       ",
         );
         assert_eq!(
             render("> **bold** `code`", 20),
-            "\x1b[38;2;168;162;158m\x1b[3m▕ bold code         ",
+            "\x1b[38;2;168;162;158m\x1b[3m\x1b[7m▊\x1b[27m bold code         ",
         );
         assert_eq!(
             render("> hello world foo", 8),
-            "\x1b[38;2;168;162;158m\x1b[3m▕ hello \n\x1b[38;2;168;162;158m\x1b[3m▕ world \n\x1b[38;2;168;162;158m\x1b[3m▕ foo   ",
+            "\x1b[38;2;168;162;158m\x1b[3m\x1b[7m▊\x1b[27m hello \n\x1b[38;2;168;162;158m\x1b[3m\x1b[7m▊\x1b[27m world \n\x1b[38;2;168;162;158m\x1b[3m\x1b[7m▊\x1b[27m foo   ",
         );
         assert_eq!(
             render("> first\n>\n> second", 16),
-            "\x1b[38;2;168;162;158m\x1b[3m▕ first         \n\x1b[38;2;168;162;158m\x1b[3m▕               \n\x1b[38;2;168;162;158m\x1b[3m▕ second        ",
+            "\x1b[38;2;168;162;158m\x1b[3m\x1b[7m▊\x1b[27m first         \n\x1b[38;2;168;162;158m\x1b[3m\x1b[7m▊\x1b[27m               \n\x1b[38;2;168;162;158m\x1b[3m\x1b[7m▊\x1b[27m second        ",
         );
     }
 

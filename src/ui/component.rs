@@ -26,7 +26,8 @@ pub trait Component {
 
     /// Returns the (row, column) the cursor should appear at, relative to the
     /// component's top-left corner, when the component is focused/active.
-    fn cursor_pos(&self) -> (usize, usize);
+    /// Returns `None` if the cursor should be hidden.
+    fn cursor(&self) -> Option<(usize, usize)>;
 
     /// Updates the component's width. The component should recompute its
     /// layout.

@@ -130,11 +130,17 @@ impl Component for StackedView {
         self.height
     }
 
-    fn cursor_pos(&self) -> (usize, usize) {
-        // The cursor always remains in the command editor, regardless of which
-        // child is focused.
-        let (row, col) = self.input.cursor_pos();
-        (self.height.saturating_sub(self.input.height()) + row, col)
+    fn cursor(&self) -> Option<(usize, usize)> {
+        // The cursor only appears when the command editor (input box) is
+        // focused; it is hidden while navigating the history.
+        match self.focus_state {
+            FocusState::CommandEditor => {
+                let (row, col) = self.input.cursor()?;
+                let row = self.height.saturating_sub(self.input.height()) + row;
+                Some((row, col))
+            },
+            FocusState::History => self.history.cursor(),
+        }
     }
 
     fn handle_event(&mut self, event: Event) -> Self::EventReponse {

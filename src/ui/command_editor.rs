@@ -72,8 +72,8 @@ impl Component for CommandEditor {
         self.input.height()
     }
 
-    fn cursor_pos(&self) -> (usize, usize) {
-        self.input.cursor_pos()
+    fn cursor(&self) -> Option<(usize, usize)> {
+        self.input.cursor()
     }
 
     fn handle_event(&mut self, event: Event) -> Self::EventReponse {

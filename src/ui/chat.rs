@@ -66,8 +66,9 @@ impl Chat {
         for (y, row) in self.stacked.drawable_rows().enumerate() {
             queue!(stdout, MoveTo(0, y as u16), row)?;
         }
-        let (row, col) = self.stacked.cursor_pos();
-        queue!(stdout, ResetColor, MoveTo(col as u16, row as u16), Show)?;
+        if let Some((row, col)) = self.stacked.cursor() {
+            queue!(stdout, ResetColor, MoveTo(col as u16, row as u16), Show)?;
+        }
         stdout.flush()?;
         Ok(())
     }

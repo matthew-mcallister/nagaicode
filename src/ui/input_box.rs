@@ -992,9 +992,9 @@ impl Component for InputBox {
         std::cmp::min(self.max_height, self.num_rows())
     }
 
-    fn cursor_pos(&self) -> (usize, usize) {
+    fn cursor(&self) -> Option<(usize, usize)> {
         let row = self.row_diff(self.viewport_top, self.cursor_row) as usize;
-        (row, self.cursor_col)
+        Some((row, self.cursor_col))
     }
 
     fn handle_event(&mut self, event: Event) -> Self::EventReponse {
