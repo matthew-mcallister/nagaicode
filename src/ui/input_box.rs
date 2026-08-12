@@ -759,6 +759,16 @@ impl InputBox {
         self.cursor_col = self.rows[last_row].width;
     }
 
+    /// Moves the cursor to the very beginning of all input text and scrolls
+    /// the viewport so that the first row is visible.
+    pub fn go_to_start(&mut self) {
+        self.overwrite_buffer = true;
+        let first = self.first_row();
+        self.cursor_row = first;
+        self.cursor_col = 0;
+        self.set_viewport_top(first);
+    }
+
     /// Moves the cursor to the very end of all input text and scrolls the
     /// viewport so that the final row is visible.
     pub fn go_to_end(&mut self) {
@@ -768,8 +778,6 @@ impl InputBox {
         self.cursor_col = self.rows[last].width;
         self.set_viewport_bottom(last);
     }
-
-
 
     /// Deletes all graphemes from the beginning of the current logical line up
     /// to the cursor.
@@ -922,6 +930,8 @@ impl InputBox {
             }
             (KeyCode::PageUp, _, _, _) => self.move_up(self.max_height()),
             (KeyCode::PageDown, _, _, _) => self.move_down(self.max_height()),
+            (KeyCode::Home, _, _, _) => self.go_to_start(),
+            (KeyCode::End, _, _, _) => self.go_to_end(),
             _ => {},
         };
         response
@@ -1731,5 +1741,28 @@ That on himself such murd'rous shame commits.
         input.delete_prev_word();
         assert_eq!(input.buffer, "hello");
         assert!(!input.overwrite_buffer);
+    }
+
+    #[test]
+    fn test_home_end() {
+        let mut input = InputBox::new(80, 4);
+        input.paste(&SAMPLE[..SAMPLE.len() - 1]);
+        let rows = row_ids(&input);
+        assert_eq!(rows.len(), 14);
+
+        // Cursor starts at the end; viewport follows the newest content.
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
+        assert_eq!(input.viewport_top, rows[10]);
+        assert_eq!(input.viewport_bottom, rows[13]);
+
+        // Home moves the cursor to the first grapheme and scrolls to the top.
+        input.handle_key(KeyEvent::from(KeyCode::Home));
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
+        assert_eq!(input.viewport_top, rows[0]);
+
+        // End moves the cursor to the end of the last row and scrolls down.
+        input.handle_key(KeyEvent::from(KeyCode::End));
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
+        assert_eq!(input.viewport_bottom, rows[13]);
     }
 }

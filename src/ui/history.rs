@@ -454,6 +454,8 @@ impl Component for History {
             KeyCode::Down => self.scroll_down(1),
             KeyCode::PageUp => self.scroll_up(self.height() / 2),
             KeyCode::PageDown => self.scroll_down(self.height() / 2),
+            KeyCode::Home => self.set_viewport_top(self.first_row()),
+            KeyCode::End => self.set_viewport_bottom(self.last_row()),
             _ => {}
         }
     }
@@ -592,6 +594,27 @@ mod tests {
 
         // Hit top
         history.scroll_up(1000);
+        assert_eq!(history.viewport_top, history.first_row());
+    }
+
+    #[test]
+    fn test_home_end() {
+        let mut history = history(80, 4);
+        for i in 0..10 {
+            history.add_item(HistoryItemContent::Markdown(format!("message {i}")));
+        }
+
+        // Start at the bottom; scroll up so we're not at either extreme.
+        history.scroll_up(5);
+        assert_ne!(history.viewport_top, history.first_row());
+        assert_ne!(history.viewport_bottom, history.last_row());
+
+        // End scrolls the viewport to the last row.
+        history.handle_event(Event::Key(KeyEvent::from(KeyCode::End)));
+        assert_eq!(history.viewport_bottom, history.last_row());
+
+        // Home scrolls the viewport to the first row.
+        history.handle_event(Event::Key(KeyEvent::from(KeyCode::Home)));
         assert_eq!(history.viewport_top, history.first_row());
     }
 }
