@@ -889,6 +889,8 @@ impl InputBox {
             // Alt + char
             (KeyCode::Char('f'), _, _, true) => self.go_to_word_end(),
             (KeyCode::Char('b'), _, _, true) => self.go_to_prev_word_start(),
+            (KeyCode::Char('u'), _, _, true) => self.move_up(self.max_height()),
+            (KeyCode::Char('d'), _, _, true) => self.move_down(self.max_height()),
             // Other combinations
             | (KeyCode::Char('j'), true, _, _)
             | (KeyCode::Char('j'), _, _, true)

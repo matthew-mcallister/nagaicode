@@ -4,7 +4,7 @@
 use std::fmt;
 
 use crossterm::Command;
-use crossterm::event::{Event, KeyCode, KeyEvent};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::style::SetStyle;
 
 use crate::arena::{Arena, Id};
@@ -445,17 +445,18 @@ impl Component for History {
     }
 
     fn handle_event(&mut self, event: Event) -> Self::EventReponse {
-        let KeyEvent { code, .. } = match event {
+        let KeyEvent { code, modifiers, .. } = match event {
             Event::Key(key) => key,
             _ => return,
         };
-        match code {
-            KeyCode::Up => self.scroll_up(1),
-            KeyCode::Down => self.scroll_down(1),
-            KeyCode::PageUp => self.scroll_up(self.height() / 2),
-            KeyCode::PageDown => self.scroll_down(self.height() / 2),
-            KeyCode::Home => self.set_viewport_top(self.first_row()),
-            KeyCode::End => self.set_viewport_bottom(self.last_row()),
+        let alt = modifiers.contains(KeyModifiers::ALT);
+        match (code, alt) {
+            (KeyCode::Up, _) => self.scroll_up(1),
+            (KeyCode::Down, _) => self.scroll_down(1),
+            (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => self.scroll_up(self.height() / 2),
+            (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => self.scroll_down(self.height() / 2),
+            (KeyCode::Home, _) => self.set_viewport_top(self.first_row()),
+            (KeyCode::End, _) => self.set_viewport_bottom(self.last_row()),
             _ => {}
         }
     }
