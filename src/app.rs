@@ -68,7 +68,7 @@ impl App {
         Ok(())
     }
 
-    fn process_slash_command(&mut self, command: &str) -> Result<String, Box<dyn Error>> {
+    fn process_slash_command(&mut self, command: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
         let command = match crate::command::parse_command(command) {
             Ok(x) => x,
             Err(e) => return Ok(e.to_string()),

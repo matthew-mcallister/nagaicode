@@ -6,10 +6,12 @@ use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::MigrationHarness;
 
+use crate::error::AnyResult;
+
 const APP_DIR_NAME: &str = "nagaicode";
 const DB_FILE_NAME: &str = "db.sqlite";
 
-fn db_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn db_dir() -> AnyResult<PathBuf> {
     let base = dirs::data_dir().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -21,7 +23,7 @@ fn db_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(dir)
 }
 
-pub fn open() -> Result<SqliteConnection, Box<dyn std::error::Error>> {
+pub fn open() -> AnyResult<SqliteConnection> {
     let mut path = db_dir()?;
     path.push(DB_FILE_NAME);
 
@@ -42,7 +44,7 @@ pub fn open() -> Result<SqliteConnection, Box<dyn std::error::Error>> {
 }
 
 #[cfg(test)]
-pub fn open_in_memory() -> Result<SqliteConnection, Box<dyn std::error::Error>> {
+pub fn open_in_memory() -> AnyResult<SqliteConnection> {
     let mut conn = SqliteConnection::establish(":memory:")?;
     conn.batch_execute("PRAGMA foreign_keys = ON;")?;
 

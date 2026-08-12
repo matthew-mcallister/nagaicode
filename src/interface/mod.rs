@@ -13,7 +13,7 @@ pub enum InterfaceId {
 }
 
 impl FromStr for InterfaceId {
-    type Err = Box<dyn Error>;
+    type Err = Box<dyn Error + Send + Sync>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {

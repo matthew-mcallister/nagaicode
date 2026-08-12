@@ -53,7 +53,8 @@ impl Chat {
         self.stacked.set_height(h as usize);
     }
 
-    // TODO: cap redraw frequency
+    // TODO: cap redraw frequency, or maybe pump all events and only redraw
+    // when queue is empty (slightly harder)
     pub fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
         let text_style = self.theme.text_base;
         let bg = self.theme.bg_base;

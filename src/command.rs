@@ -54,28 +54,28 @@ impl std::fmt::Display for CliParseError {
 
 impl std::error::Error for CliParseError {}
 
-fn unknown_command(usage: &'static str, command: &str) -> Box<dyn Error> {
+fn unknown_command(usage: &'static str, command: &str) -> Box<dyn Error + Send + Sync> {
     From::from(CliParseError {
         error: Some(format!("Unknown command: '{}'", command)),
         usage,
     })
 }
 
-fn unexpected_argument(usage: &'static str, argument: &str) -> Box<dyn Error> {
+fn unexpected_argument(usage: &'static str, argument: &str) -> Box<dyn Error + Send + Sync> {
     From::from(CliParseError {
         error: Some(format!("Unexpected argument: '{}'", argument)),
         usage,
     })
 }
 
-fn missing_argument(usage: &'static str, argument: &str) -> Box<dyn Error> {
+fn missing_argument(usage: &'static str, argument: &str) -> Box<dyn Error + Send + Sync> {
     From::from(CliParseError {
         error: Some(format!("Missing argument: '{}'", argument)),
         usage,
     })
 }
 
-fn show_usage(usage: &'static str) -> Box<dyn Error> {
+fn show_usage(usage: &'static str) -> Box<dyn Error + Send + Sync> {
     From::from(CliParseError {
         error: None,
         usage,
@@ -87,7 +87,7 @@ fn set_arg<T>(
     var: &mut Option<T>,
     key: &str,
     value: impl Into<T>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     if var.is_some() {
         Err(From::from(CliParseError {
             error: Some(format!("Repeated argument: '{}'", key)),
@@ -115,7 +115,7 @@ impl<'a> Parser<'a> {
         self.args.is_empty()
     }
 
-    fn expect(&mut self) -> Result<&'a str, Box<dyn Error>> {
+    fn expect(&mut self) -> Result<&'a str, Box<dyn Error + Send + Sync>> {
         if let Some((arg, rest)) = self.args.split_first() {
             self.args = rest;
             Ok(arg)
@@ -124,7 +124,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_empty(&mut self) -> Result<(), Box<dyn Error>> {
+    fn expect_empty(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
         if let Some(first) = self.args.first() {
             Err(From::from(unexpected_argument(self.usage, first)))
         } else {
@@ -132,7 +132,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_key_value(&mut self) -> Result<(&'a str, &'a str), Box<dyn Error>> {
+    fn expect_key_value(&mut self) -> Result<(&'a str, &'a str), Box<dyn Error + Send + Sync>> {
         let first = self.expect()?;
         let second = self.expect()?;
         if !first.starts_with('-') {
@@ -145,7 +145,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn parse_args<'a>(args: Vec<String>) -> Result<Command, Box<dyn Error>> {
+fn parse_args<'a>(args: Vec<String>) -> Result<Command, Box<dyn Error + Send + Sync>> {
     let args_: Vec<&str> = args.iter().map(|s| &s[..]).collect();
 
     const USAGE: &str = dedent!("
@@ -166,7 +166,7 @@ fn parse_args<'a>(args: Vec<String>) -> Result<Command, Box<dyn Error>> {
     }
 }
 
-fn parse_quit(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+fn parse_quit(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -177,7 +177,7 @@ fn parse_quit(args: &[&str]) -> Result<Command, Box<dyn Error>> {
     Ok(Command::Quit)
 }
 
-fn parse_provider(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+fn parse_provider(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
     const USAGE: &str = dedent!("
         List of commands:
 
@@ -194,7 +194,7 @@ fn parse_provider(args: &[&str]) -> Result<Command, Box<dyn Error>> {
     }
 }
 
-fn parse_provider_ls(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+fn parse_provider_ls(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -205,7 +205,7 @@ fn parse_provider_ls(args: &[&str]) -> Result<Command, Box<dyn Error>> {
     Ok(Command::Provider(ProviderCommand::Ls))
 }
 
-fn parse_provider_rm(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+fn parse_provider_rm(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -217,7 +217,7 @@ fn parse_provider_rm(args: &[&str]) -> Result<Command, Box<dyn Error>> {
     Ok(Command::Provider(ProviderCommand::Rm(arg.into())))
 }
 
-fn parse_provider_new(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+fn parse_provider_new(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -257,7 +257,7 @@ fn parse_provider_new(args: &[&str]) -> Result<Command, Box<dyn Error>> {
     }))
 }
 
-fn parse_model(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+fn parse_model(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
     const USAGE: &str = dedent!("
         List of commands:
 
@@ -272,7 +272,7 @@ fn parse_model(args: &[&str]) -> Result<Command, Box<dyn Error>> {
     }
 }
 
-fn parse_model_ls(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+fn parse_model_ls(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -283,7 +283,7 @@ fn parse_model_ls(args: &[&str]) -> Result<Command, Box<dyn Error>> {
     Ok(Command::Model(ModelCommand::Ls))
 }
 
-fn parse_model_switch(args: &[&str]) -> Result<Command, Box<dyn Error>> {
+fn parse_model_switch(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -299,12 +299,12 @@ fn parse_model_switch(args: &[&str]) -> Result<Command, Box<dyn Error>> {
     }))
 }
 
-pub fn parse_command(text: &str) -> Result<Command, Box<dyn Error>> {
+pub fn parse_command(text: &str) -> Result<Command, Box<dyn Error + Send + Sync>> {
     let args = shellwords::split(text)?;
     parse_args(args)
 }
 
-pub fn run_provider_command(command: ProviderCommand) -> Result<String, Box<dyn Error>> {
+pub fn run_provider_command(command: ProviderCommand) -> Result<String, Box<dyn Error + Send + Sync>> {
     let mut conn = db::open()?;
     match command {
         ProviderCommand::Ls => {
@@ -347,7 +347,7 @@ pub fn run_provider_command(command: ProviderCommand) -> Result<String, Box<dyn 
 pub fn run_model_command(
     app: &mut App,
     command: ModelCommand,
-) -> Result<String, Box<dyn Error>> {
+) -> Result<String, Box<dyn Error + Send + Sync>> {
     let mut conn = db::open()?;
     match command {
         ModelCommand::Ls => {
