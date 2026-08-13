@@ -1,5 +1,11 @@
 //! Input text box. Data structures are similar to @src/ui/history.rs but more
 //! complex.
+// FIXME: This component has the dubious distinction of having variable height.
+// Maybe it's overkill but I kind of would prefer to stick to a a strict
+// parent-controls-height model and had make StackedView explicitly resize the
+// InputBox to make it grow/shrink when rows are added. This is how variable-
+// size textboxes are handled using HTML + JavaScript; CSS alone can't do it
+// correctly.
 
 use std::fmt;
 
@@ -1073,6 +1079,8 @@ impl Component for InputBox {
     fn set_height(&mut self, height: usize) {
         self.set_max_height(height);
     }
+
+    fn set_focus(&mut self, _focused: bool) {}
 
     fn width(&self) -> usize {
         self.width

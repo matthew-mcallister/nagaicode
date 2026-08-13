@@ -100,6 +100,11 @@ impl Component for CommandEditor {
         self.sync_scroll_bar();
     }
 
+    fn set_focus(&mut self, focused: bool) {
+        self.input.set_focus(focused);
+        self.scroll_bar.set_focus(focused);
+    }
+
     fn width(&self) -> usize {
         self.input.width() + 1
     }

@@ -43,6 +43,7 @@ impl StackedView {
             focus_state: FocusState::default(),
         };
         this.resize();  // Compute history height
+        this.focus_child();
         this
     }
 
@@ -73,6 +74,20 @@ impl StackedView {
             FocusState::History => FocusState::CommandEditor,
             FocusState::CommandEditor => FocusState::History,
         };
+    }
+
+    /// Sets the focus state on both children to match `self.focus_state`.
+    fn focus_child(&mut self) {
+        match self.focus_state {
+            FocusState::History => {
+                self.history.set_focus(true);
+                self.input.set_focus(false);
+            }
+            FocusState::CommandEditor => {
+                self.input.set_focus(true);
+                self.history.set_focus(false);
+            }
+        }
     }
 }
 
@@ -122,6 +137,15 @@ impl Component for StackedView {
         self.resize();
     }
 
+    fn set_focus(&mut self, focused: bool) {
+        if focused {
+            self.focus_child();
+        } else {
+            self.history.set_focus(false);
+            self.input.set_focus(false);
+        }
+    }
+
     fn width(&self) -> usize {
         self.width
     }
@@ -148,6 +172,7 @@ impl Component for StackedView {
         // rather than forwarded.
         if let Event::Key(KeyEvent { code: KeyCode::Tab, modifiers: KeyModifiers::NONE, .. }) = event {
             self.toggle_focus();
+            self.focus_child();
             return None;
         }
         match self.focus_state {

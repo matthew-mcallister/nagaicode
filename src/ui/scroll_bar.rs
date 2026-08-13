@@ -26,7 +26,6 @@ pub struct ScrollBar {
     /// Row index of the last visible row
     bottom: usize,
     /// Whether the scrolled component is focused
-    // TODO: Actually set this
     focused: bool,
 }
 
@@ -120,6 +119,10 @@ impl Component for ScrollBar {
 
     fn set_height(&mut self, height: usize) {
         self.height = height;
+    }
+
+    fn set_focus(&mut self, focused: bool) {
+        self.focused = focused;
     }
 
     fn width(&self) -> usize {

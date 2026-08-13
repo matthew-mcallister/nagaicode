@@ -437,6 +437,8 @@ impl Component for History {
         self.set_max_height(height);
     }
 
+    fn set_focus(&mut self, _focused: bool) {}
+
     fn width(&self) -> usize {
         self.width
     }

@@ -11,6 +11,9 @@ use crossterm::event::Event;
 /// is responsible for determining its childrens' sizes, but some components
 /// report an intrinsic size which the parent may read back to compute its
 /// layout.
+// XXX: Maybe get rid of set_width/set_height/set_focus and pass those as
+// parameters to draw()? Then draw() will lazily recompute style and layout
+// when it notices the params change. Basically replacing state with caching.
 pub trait Component {
     type Row<'a>: Command where Self: 'a;
     type RowIter<'a>: Iterator<Item = Self::Row<'a>> where Self: 'a;
@@ -40,6 +43,9 @@ pub trait Component {
     /// should recompute their layout or scroll windows in response to height
     /// updates.
     fn set_height(&mut self, height: usize);
+
+    /// Tells a component when it is focused, mainly for styling.
+    fn set_focus(&mut self, focused: bool);
 
     /// Handles an input event directed at this component (or a child) and
     /// returns any event(s) raised in response.

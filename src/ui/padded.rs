@@ -126,6 +126,10 @@ impl<C: Component> Component for Padded<C> {
         self.inner.set_height(height.saturating_sub(2 * self.v_padding));
     }
 
+    fn set_focus(&mut self, focused: bool) {
+        self.inner.set_focus(focused);
+    }
+
     fn width(&self) -> usize {
         self.inner.width() + 2 * self.h_padding
     }
