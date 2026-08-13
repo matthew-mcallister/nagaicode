@@ -178,7 +178,11 @@ pub struct InputBox {
     /// Head of circularly linked list. Contains no real data.
     head: Id<InputRow>,
     viewport_top: Id<InputRow>,
+    /// Absolute row index of `viewport_top`
+    viewport_top_pos: usize,
     viewport_bottom: Id<InputRow>,
+    /// Absolute row index of `viewport_bottom`
+    viewport_bottom_pos: usize,
     cursor_row: Id<InputRow>,
     cursor_col: usize,
     buffer: String,
@@ -219,6 +223,8 @@ impl InputBox {
             head,
             viewport_top: first,
             viewport_bottom: first,
+            viewport_top_pos: 0,
+            viewport_bottom_pos: 0,
             cursor_row: first,
             cursor_col: 0,
             buffer: String::new(),
@@ -317,63 +323,93 @@ impl InputBox {
         self.rows[self.rows[self.lines[line].last_row].next].line
     }
 
-    /// Attempts to set the viewport region based on first row.
-    fn set_viewport_top(&mut self, viewport_top: Id<InputRow>) {
+    /// Attempts to set the viewport region based on first row. `pos` is the
+    /// absolute row index of `viewport_top` (0-based from `first_row()`).
+    fn set_viewport_top_at(&mut self, viewport_top: Id<InputRow>, pos: usize) {
         let prev = self.rows[viewport_top].prev;
         self.viewport_top = viewport_top;
+        self.viewport_top_pos = pos;
         if let Some(row) = self
             .iter_range(prev, self.last_row())
             .nth(self.max_height - 1)
             .map(|(id, _)| id)
         {
+            // Scan walked exactly `max_height - 1` rows below the top.
             self.viewport_bottom = row;
+            self.viewport_bottom_pos = pos + self.max_height - 1;
         } else if self.viewport_top == self.first_row() {
             // Viewport covers entire text
-            self.viewport_bottom = self.last_row()
+            self.viewport_bottom = self.last_row();
+            self.viewport_bottom_pos = self.num_rows() - 1;
         } else {
-            self.set_viewport_bottom(self.last_row());
+            let last = self.last_row();
+            let last_pos = self.num_rows() - 1;
+            self.set_viewport_bottom_at(last, last_pos);
         }
     }
 
-    /// Attempts to set the viewport region based on last row.
-    fn set_viewport_bottom(&mut self, viewport_bottom: Id<InputRow>) {
+    /// Attempts to set the viewport region based on last row. `pos` is the
+    /// absolute row index of `viewport_bottom` (0-based from `first_row()`).
+    fn set_viewport_bottom_at(&mut self, viewport_bottom: Id<InputRow>, pos: usize) {
         self.viewport_bottom = viewport_bottom;
+        self.viewport_bottom_pos = pos;
         if let Some(row) = self
             .iter_range(self.head, self.viewport_bottom)
             .rev()
             .nth(self.max_height - 1)
             .map(|(id, _)| id)
         {
-            self.viewport_top = row
+            // Scan walked exactly `max_height - 1` rows above the bottom.
+            self.viewport_top = row;
+            self.viewport_top_pos = pos - (self.max_height - 1);
         } else if self.viewport_bottom == self.last_row() {
             // Viewport covers entire text
             self.viewport_top = self.first_row();
+            self.viewport_top_pos = 0;
         } else {
-            self.set_viewport_top(self.first_row());
+            let first = self.first_row();
+            self.set_viewport_top_at(first, 0);
         }
     }
 
-    /// Recomputes the viewport after moving the cursor. Previous viewport
-    /// bounds must be computed in advance. Tries to keep `MARGIN_ROWS` rows
-    /// between the cursor and the viewport edges.
+    /// Slightly inefficient helper for tests
+    #[cfg(test)]
+    fn set_viewport_top(&mut self, viewport_top: Id<InputRow>) {
+        let pos = self.row_diff(self.first_row(), viewport_top) as usize;
+        self.set_viewport_top_at(viewport_top, pos);
+    }
+
+    /// Recomputes the viewport after moving the cursor. Tries to keep
+    /// `MARGIN_ROWS` rows between the cursor and the viewport edges. Cursor
+    /// position and previous viewport bounds must be known.
     fn recompute_viewport(
         &mut self,
         base: Id<InputRow>,
+        base_pos: isize,
+        cursor: isize,
         prev_top: isize,
         prev_bottom: isize,
     ) {
         let margin = Self::MARGIN_ROWS;
-        let cursor = self.row_diff(base, self.cursor_row);
+        let cursor_abs = base_pos + cursor;
         if cursor > prev_top + margin {
-            let bottom = self.row_offset(self.cursor_row, margin).unwrap_or(self.last_row());
-            self.set_viewport_bottom(bottom);
+            let (bottom, pos) = match self.row_offset(self.cursor_row, margin) {
+                Some(row) => (row, (cursor_abs + margin) as usize),
+                None => (self.last_row(), self.num_rows() - 1),
+            };
+            self.set_viewport_bottom_at(bottom, pos);
         } else if cursor < prev_bottom - margin {
-            let top = self.row_offset(self.cursor_row, -margin).unwrap_or(self.first_row());
-            self.set_viewport_top(top);
+            let (top, pos) = match self.row_offset(self.cursor_row, -margin) {
+                Some(row) => (row, (cursor_abs - margin) as usize),
+                None => (self.first_row(), 0),
+            };
+            self.set_viewport_top_at(top, pos);
         } else {
-            let bottom = self.row_offset(base, prev_bottom)
-                .unwrap_or(self.last_row());
-            self.set_viewport_bottom(bottom);
+            let (bottom, pos) = match self.row_offset(base, prev_bottom) {
+                Some(row) => (row, (base_pos + prev_bottom) as usize),
+                None => (self.last_row(), self.num_rows() - 1),
+            };
+            self.set_viewport_bottom_at(bottom, pos);
         }
     }
 
@@ -444,7 +480,7 @@ impl InputBox {
             text = &text[..text.len() - 1];
         }
         self.insert_text(self.head, text);
-        self.set_viewport_top(self.first_row());
+        self.set_viewport_top_at(self.first_row(), 0);
         self.cursor_row = self.first_row();
         self.cursor_col = 0;
         self.buffer.clear();
@@ -489,6 +525,16 @@ impl InputBox {
         self.max_height
     }
 
+    /// Absolute row index of the first visible row (0-based from `first_row()`).
+    pub fn viewport_top_pos(&self) -> usize {
+        self.viewport_top_pos
+    }
+
+    /// Absolute row index of the last visible row (0-based from `first_row()`).
+    pub fn viewport_bottom_pos(&self) -> usize {
+        self.viewport_bottom_pos
+    }
+
     #[allow(dead_code)]
     /// Updates the maximum viewport size
     pub fn set_max_height(&mut self, max_height: usize) {
@@ -498,15 +544,23 @@ impl InputBox {
     }
 
     /// Repositions the viewport to keep the cursor in the desired row, as long
-    /// as it is possible to do so.
+    /// as it is possible to do so. `cursor_row` is the desired offset of the
+    /// cursor within the viewport.
     fn fit_viewport_on_resize(&mut self, cursor_row: usize) {
         let k = cursor_row.min(self.max_height - 1);
+
+        // Absolute position of the cursor: a relative scan from the tracked
+        // viewport top. In the `set_width` path the top is `first_row`, so
+        // this degenerates to a from-start scan — acceptable since horizontal
+        // resize already recomputes every row.
+        let cursor_pos =
+            self.viewport_top_pos + self.row_diff(self.viewport_top, self.cursor_row) as usize;
 
         // Scan up k rows and check for the top
         let first = match self.row_offset(self.cursor_row, -(k as isize)) {
             Some(first) => first,
             None => {
-                self.set_viewport_top(self.first_row());
+                self.set_viewport_top_at(self.first_row(), 0);
                 return;
             }
         };
@@ -514,11 +568,13 @@ impl InputBox {
         // Scan down max_height - k rows and check for the bottom
         let down = self.max_height - 1 - k;
         if self.row_offset(self.cursor_row, down as isize).is_none() {
-            self.set_viewport_bottom(self.last_row());
+            let last = self.last_row();
+            let last_pos = self.num_rows() - 1;
+            self.set_viewport_bottom_at(last, last_pos);
             return;
         }
 
-        self.set_viewport_top(first);
+        self.set_viewport_top_at(first, cursor_pos - k);
     }
 
     /// Deletes a range of graphemes and replaces them with new text. If
@@ -536,10 +592,14 @@ impl InputBox {
         let prev = self.rows[self.lines[start_line].first_row].prev;
         let next = self.rows[self.lines[end_line].last_row].next;
 
-        // Assume splice start point comes before viewport bottom
         let viewport_bottom_offset = self.row_diff(prev, self.viewport_bottom);
+        let base_pos = self.viewport_bottom_pos as isize - viewport_bottom_offset;
+        // FIXME: We assume viewport at least partially intersects splice range
+        // but it shouldn't be necessary
+        debug_assert!(base_pos >= -1, "splice outside viewport bounds");
 
         // Cursor byte offset relative to end of last line.
+        //
         // Why byte offset? In some cases, pasted codepoints will alter the
         // grapheme segmentation of the rest of the line. This ensures the
         // cursor still points to the same codepoint it did previously.
@@ -586,9 +646,11 @@ impl InputBox {
         self.cursor_col = g.column as _;
         self.cursor_row = pos.row();
 
-        // Recompute view viewport
+        let cursor_pos = self.row_diff(prev, self.cursor_row);
         self.recompute_viewport(
             prev,
+            base_pos,
+            cursor_pos,
             viewport_bottom_offset - self.max_height as isize,
             viewport_bottom_offset,
         );
@@ -641,10 +703,10 @@ impl InputBox {
     // FIXME: Make this configurable, and handle 0 specifically
     const MARGIN_ROWS: isize = 3;
 
-    /// Moves the cursor up one row. Preserves the column of the cursor. If
-    /// already at the very first row, moves to the start of the line. Scrolls
-    /// the viewport if at the top. Tries to keep some rows between the cursor
-    /// and viewport edge.
+    /// Moves the cursor up one or more rows. Preserves the column of the
+    /// cursor. If already at the very first row, moves to the start of the
+    /// line. Scrolls the viewport if at the top. Tries to keep some rows
+    /// between the cursor and viewport edge.
     pub fn move_up(&mut self, rows: usize) {
         self.overwrite_buffer = true;
         let margin = self.row_diff(self.viewport_top, self.cursor_row);
@@ -660,16 +722,19 @@ impl InputBox {
 
         let margin = margin - moved as isize;
         if margin < Self::MARGIN_ROWS {
-            let new_top = self.row_offset(self.viewport_top, margin - Self::MARGIN_ROWS)
-                .unwrap_or(self.first_row());
-            self.set_viewport_top(new_top);
+            let offset = margin - Self::MARGIN_ROWS;
+            let (new_top, pos) = match self.row_offset(self.viewport_top, offset) {
+                Some(row) => (row, (self.viewport_top_pos as isize + offset) as usize),
+                None => (self.first_row(), 0),
+            };
+            self.set_viewport_top_at(new_top, pos);
         }
     }
 
-    /// Moves the cursor down one row. Preserves the column of the cursor. If
-    /// already at the very last row, moves to the end of the line. Scrolls the
-    /// viewport if at the bottom. Tries to keep some rows between the cursor
-    /// and viewport edge.
+    /// Moves the cursor down one or more rows. Preserves the column of the
+    /// cursor. If already at the very last row, moves to the end of the line.
+    /// Scrolls the viewport if at the bottom. Tries to keep some rows between
+    /// the cursor and viewport edge.
     pub fn move_down(&mut self, rows: usize) {
         self.overwrite_buffer = true;
         let margin = self.row_diff(self.cursor_row, self.viewport_bottom);
@@ -685,9 +750,12 @@ impl InputBox {
 
         let margin = margin - moved as isize;
         if margin < Self::MARGIN_ROWS {
-            let new_bottom = self.row_offset(self.viewport_bottom, Self::MARGIN_ROWS - margin)
-                .unwrap_or(self.last_row());
-            self.set_viewport_bottom(new_bottom);
+            let offset = Self::MARGIN_ROWS - margin;
+            let (new_bottom, pos) = match self.row_offset(self.viewport_bottom, offset) {
+                Some(row) => (row, (self.viewport_bottom_pos as isize + offset) as usize),
+                None => (self.last_row(), self.num_rows() - 1),
+            };
+            self.set_viewport_bottom_at(new_bottom, pos);
         }
     }
 
@@ -766,7 +834,7 @@ impl InputBox {
         let first = self.first_row();
         self.cursor_row = first;
         self.cursor_col = 0;
-        self.set_viewport_top(first);
+        self.set_viewport_top_at(first, 0);
     }
 
     /// Moves the cursor to the very end of all input text and scrolls the
@@ -776,7 +844,7 @@ impl InputBox {
         let last = self.last_row();
         self.cursor_row = last;
         self.cursor_col = self.rows[last].width;
-        self.set_viewport_bottom(last);
+        self.set_viewport_bottom_at(last, self.num_rows() - 1);
     }
 
     /// Deletes all graphemes from the beginning of the current logical line up
@@ -805,18 +873,40 @@ impl InputBox {
         }
     }
 
-    /// Moves the cursor to an exact grapheme position and updates the
-    /// viewport.
-    fn move_cursor_to(&mut self, pos: GraphemePos) {
+    /// Moves the cursor forward to an exact grapheme position and updates the
+    /// viewport. The position given must be *after* the current cursor pos.
+    fn move_cursor_forward(&mut self, pos: GraphemePos) {
         self.overwrite_buffer = true;
-        let base = self.first_row();
-        let prev_top = self.row_diff(base, self.viewport_top);
-        let prev_bottom = self.row_diff(base, self.viewport_bottom);
+
+        let base = self.cursor_row;
+        let base_to_top = self.row_diff(self.viewport_top, base);
+        let base_pos = self.viewport_top_pos as isize + base_to_top;
+        let cursor = self.row_diff(base, pos.row());
 
         self.cursor_row = pos.row();
         self.cursor_col = self.rows[pos.row()].graphemes[pos.grapheme()].column as usize;
 
-        self.recompute_viewport(base, prev_top, prev_bottom);
+        let prev_top = self.viewport_top_pos as isize - base_pos;
+        let prev_bottom = self.viewport_bottom_pos as isize - base_pos;
+        self.recompute_viewport(base, base_pos, cursor, prev_top, prev_bottom);
+    }
+
+    /// Moves the cursor forward to an exact grapheme position and updates the
+    /// viewport. The position given must be *before* the current cursor pos.
+    fn move_cursor_backward(&mut self, pos: GraphemePos) {
+        self.overwrite_buffer = true;
+
+        let base = self.cursor_row;
+        let base_to_top = self.row_diff(self.viewport_top, base);
+        let base_pos = self.viewport_top_pos as isize + base_to_top;
+        let cursor = -self.row_diff(pos.row(), base);
+
+        self.cursor_row = pos.row();
+        self.cursor_col = self.rows[pos.row()].graphemes[pos.grapheme()].column as usize;
+
+        let prev_top = self.viewport_top_pos as isize - base_pos;
+        let prev_bottom = self.viewport_bottom_pos as isize - base_pos;
+        self.recompute_viewport(base, base_pos, cursor, prev_top, prev_bottom);
     }
 
     fn grapheme_start(&self) -> GraphemePos {
@@ -853,12 +943,12 @@ impl InputBox {
 
     /// Goes to the nearest word end after the cursor.
     pub fn go_to_word_end(&mut self) {
-        self.move_cursor_to(self.word_end());
+        self.move_cursor_forward(self.word_end());
     }
 
     /// Goes to the nearest word start before the cursor.
     pub fn go_to_prev_word_start(&mut self) {
-        self.move_cursor_to(self.prev_word_start());
+        self.move_cursor_backward(self.prev_word_start());
     }
 
     /// Kills text between the previous word start and the cursor. Appends to
@@ -1375,6 +1465,9 @@ That on himself such murd'rous shame commits.
         assert_eq!((input.cursor_row, input.cursor_col), (rows[14], 0));
         assert_eq!(input.viewport_top, rows[14]);
         assert_eq!(input.viewport_bottom, rows[17]);
+        assert_eq!(input.viewport_top_pos(), 14);
+        assert_eq!(input.viewport_bottom_pos(), 17);
+        check_positions(&input);
 
         // Deletion scrolls viewport up
         let mut input = InputBox::new(80, 4);
@@ -1394,6 +1487,9 @@ That on himself such murd'rous shame commits.
         assert_eq!(rows.len(), 7);
         assert_eq!(input.viewport_top, rows[3]);
         assert_eq!(input.viewport_bottom, rows[6]);
+        assert_eq!(input.viewport_top_pos(), 3);
+        assert_eq!(input.viewport_bottom_pos(), 6);
+        check_positions(&input);
 
         // No scrolling
         let mut input = InputBox::new(80, 10);
@@ -1421,10 +1517,29 @@ That on himself such murd'rous shame commits.
         let rows = row_ids(&input);
         assert_eq!(input.viewport_top, rows[0]);
         assert_eq!(input.viewport_bottom, rows[3]);
+        assert_eq!(input.viewport_top_pos(), 0);
+        assert_eq!(input.viewport_bottom_pos(), 3);
+        check_positions(&input);
     }
 
     fn row_ids(input: &InputBox) -> Vec<Id<InputRow>> {
         input.iter_rows().map(|(id, _)| id).collect()
+    }
+
+    /// Verifies the tracked viewport position fields against `row_diff` from
+    /// the first row. Catches drift between the cached positions and the
+    /// linked-list reality.
+    fn check_positions(input: &InputBox) {
+        assert_eq!(
+            input.viewport_top_pos(),
+            input.row_diff(input.first_row(), input.viewport_top) as usize,
+            "viewport_top_pos mismatch",
+        );
+        assert_eq!(
+            input.viewport_bottom_pos(),
+            input.row_diff(input.first_row(), input.viewport_bottom) as usize,
+            "viewport_bottom_pos mismatch",
+        );
     }
 
     #[test]
@@ -1535,6 +1650,7 @@ That on himself such murd'rous shame commits.
         assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 0));
         input.move_left();
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 9));
+        check_positions(&input);
     }
 
     #[test]
@@ -1587,32 +1703,39 @@ That on himself such murd'rous shame commits.
     }
 
     #[test]
-    fn test_move_cursor_to_scrolls_viewport() {
+    fn test_move_cursor_scrolls_viewport() {
         let mut input = InputBox::new(80, 4);
         input.set_text(&SAMPLE[..SAMPLE.len() - 1]);
         let rows = row_ids(&input);
         assert_eq!(rows.len(), 14);
         assert_eq!(input.viewport_top, rows[0]);
         assert_eq!(input.viewport_bottom, rows[3]);
+        assert_eq!(input.viewport_top_pos(), 0);
+        assert_eq!(input.viewport_bottom_pos(), 3);
 
         // Moving to the very start keeps the viewport at the top.
-        input.move_cursor_to(GraphemePos(rows[0], 0));
+        input.move_cursor_forward(GraphemePos(rows[0], 0));
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
         assert_eq!(input.viewport_top, rows[0]);
+        assert_eq!(input.viewport_top_pos(), 0);
 
         // Moving to the end of the last row scrolls the viewport down to keep
         // the cursor visible with a margin.
         let last = rows[13];
-        input.move_cursor_to(GraphemePos(last, input.rows[last].graphemes.len() - 1));
+        input.move_cursor_forward(GraphemePos(last, input.rows[last].graphemes.len() - 1));
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
         assert_eq!(input.viewport_top, rows[10]);
         assert_eq!(input.viewport_bottom, rows[13]);
+        assert_eq!(input.viewport_top_pos(), 10);
+        assert_eq!(input.viewport_bottom_pos(), 13);
 
         // Moving back to the start scrolls the viewport to the top.
-        input.move_cursor_to(GraphemePos(rows[0], 0));
+        input.move_cursor_backward(GraphemePos(rows[0], 0));
         assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
         assert_eq!(input.viewport_top, rows[0]);
         assert_eq!(input.viewport_bottom, rows[3]);
+        assert_eq!(input.viewport_top_pos(), 0);
+        assert_eq!(input.viewport_bottom_pos(), 3);
     }
 
     #[test]
@@ -1649,6 +1772,7 @@ That on himself such murd'rous shame commits.
             input.row_diff(input.viewport_top, input.cursor_row),
             input.row_diff(input.viewport_top, input.viewport_bottom)
         );
+        check_positions(&input);
     }
 
     #[test]
@@ -1674,6 +1798,7 @@ That on himself such murd'rous shame commits.
         input.cursor_col = 1;
         input.go_to_word_end();
         assert_eq!(input.cursor_col, 3);
+        check_positions(&input);
     }
 
     #[test]
@@ -1696,6 +1821,7 @@ That on himself such murd'rous shame commits.
         input.cursor_col = 4;
         input.go_to_prev_word_start();
         assert_eq!(input.cursor_col, 2);
+        check_positions(&input);
     }
 
     #[test]
@@ -1712,7 +1838,7 @@ That on himself such murd'rous shame commits.
         input.delete_prev_word();
         assert_eq!(input.get_text(), "abc ghi\n");
         assert_eq!(input.buffer, "def ");
-        input.move_cursor_to(GraphemePos(input.first_row(), 1));
+        input.move_cursor_backward(GraphemePos(input.first_row(), 1));
         input.delete_prev_word();
         assert_eq!(input.get_text(), "bc ghi\n");
         assert_eq!(input.buffer, "a");
@@ -1766,5 +1892,8 @@ That on himself such murd'rous shame commits.
         input.handle_key(KeyEvent::from(KeyCode::End));
         assert_eq!((input.cursor_row, input.cursor_col), (rows[13], 45));
         assert_eq!(input.viewport_bottom, rows[13]);
+        assert_eq!(input.viewport_top_pos(), 10);
+        assert_eq!(input.viewport_bottom_pos(), 13);
+        check_positions(&input);
     }
 }
