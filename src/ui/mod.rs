@@ -6,6 +6,7 @@ pub mod command_editor;
 pub mod component;
 pub mod input_box;
 pub mod history;
+pub mod history_view;
 pub mod markdown;
 pub mod padded;
 pub mod scroll_bar;

@@ -4,7 +4,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use crate::app::AppEvent;
 use crate::ui::style::Theme;
 use crate::ui::command_editor::{CommandEditor, CommandEditorRow};
-use crate::ui::history::{History, HistoryRowRef};
+use crate::ui::history_view::{HistoryView, HistoryViewRow};
 use crate::ui::{write_spaces, Component};
 
 /// Which child of `StackedView` currently receives keyboard input.
@@ -23,7 +23,7 @@ pub enum FocusState {
 pub struct StackedView {
     width: usize,
     height: usize,
-    history: History,
+    history: HistoryView,
     input: CommandEditor,
     focus_state: FocusState,
 }
@@ -38,7 +38,7 @@ impl StackedView {
         let mut this = Self {
             width,
             height,
-            history: History::new(width, 0, theme),
+            history: HistoryView::new(width, 0, theme),
             input: CommandEditor::new(width, input_max_height, theme),
             focus_state: FocusState::default(),
         };
@@ -51,7 +51,7 @@ impl StackedView {
         &mut self.input
     }
 
-    pub fn history_mut(&mut self) -> &mut History {
+    pub fn history_mut(&mut self) -> &mut HistoryView {
         &mut self.history
     }
 
@@ -94,7 +94,7 @@ impl StackedView {
 #[derive(Debug)]
 pub enum StackedRow<'a> {
     Empty { width: usize },
-    History(HistoryRowRef<'a>),
+    History(HistoryViewRow<'a>),
     Input(CommandEditorRow<'a>),
 }
 

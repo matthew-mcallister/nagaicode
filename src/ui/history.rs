@@ -247,7 +247,7 @@ impl History {
         }
     }
 
-    fn num_rows(&self) -> usize {
+    pub fn num_rows(&self) -> usize {
         // Subtract header node
         self.rows.len() - 1
     }
