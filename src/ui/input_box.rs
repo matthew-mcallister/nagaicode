@@ -330,7 +330,7 @@ impl InputBox {
     }
 
     /// Attempts to set the viewport region based on first row. `pos` is the
-    /// absolute row index of `viewport_top` (0-based from `first_row()`).
+    /// row index of the new top row.
     fn set_viewport_top_at(&mut self, viewport_top: Id<InputRow>, pos: usize) {
         let prev = self.rows[viewport_top].prev;
         self.viewport_top = viewport_top;
@@ -340,7 +340,6 @@ impl InputBox {
             .nth(self.max_height - 1)
             .map(|(id, _)| id)
         {
-            // Scan walked exactly `max_height - 1` rows below the top.
             self.viewport_bottom = row;
             self.viewport_bottom_pos = pos + self.max_height - 1;
         } else if self.viewport_top == self.first_row() {
@@ -355,7 +354,7 @@ impl InputBox {
     }
 
     /// Attempts to set the viewport region based on last row. `pos` is the
-    /// absolute row index of `viewport_bottom` (0-based from `first_row()`).
+    /// row index of the new bottom row.
     fn set_viewport_bottom_at(&mut self, viewport_bottom: Id<InputRow>, pos: usize) {
         self.viewport_bottom = viewport_bottom;
         self.viewport_bottom_pos = pos;
@@ -365,7 +364,6 @@ impl InputBox {
             .nth(self.max_height - 1)
             .map(|(id, _)| id)
         {
-            // Scan walked exactly `max_height - 1` rows above the bottom.
             self.viewport_top = row;
             self.viewport_top_pos = pos - (self.max_height - 1);
         } else if self.viewport_bottom == self.last_row() {
@@ -501,13 +499,9 @@ impl InputBox {
         }
 
         let text = self.get_text();
-        // The text is unchanged (only the wrap width differs), so the grapheme
-        // index of the cursor is stable across the re-wrap.
         let cursor_index = self
             .iter_graphemes(GraphemePos(self.first_row(), 0), self.cursor_pos())
             .count();
-        // Offset of the cursor within the viewport, preserved across the
-        // re-wrap when possible.
         let cursor_offset_in_viewport = self.row_diff(self.viewport_top, self.cursor_row);
 
         self.width = width;
@@ -555,10 +549,6 @@ impl InputBox {
     fn fit_viewport_on_resize(&mut self, cursor_row: usize) {
         let k = cursor_row.min(self.max_height - 1);
 
-        // Absolute position of the cursor: a relative scan from the tracked
-        // viewport top. In the `set_width` path the top is `first_row`, so
-        // this degenerates to a from-start scan — acceptable since horizontal
-        // resize already recomputes every row.
         let cursor_pos =
             self.viewport_top_pos + self.row_diff(self.viewport_top, self.cursor_row) as usize;
 

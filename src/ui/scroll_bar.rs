@@ -67,7 +67,7 @@ impl ScrollBar {
         if self.num_rows == 0 || self.height == 0 {
             return (0, 0);
         }
-        let bar_height = (((self.bottom - self.top + 1) * self.height) + self.num_rows - 1) / self.num_rows;
+        let bar_height = ((self.bottom - self.top + 1) * self.height).div_ceil(self.num_rows);
         let start = (self.top * self.height) / self.num_rows;
         (start, start + bar_height)
     }
@@ -166,10 +166,13 @@ mod tests {
             .join("\n")
     }
 
-    // Style prefixes, computed from THEME_DARK
-    const TRACK: &str = "\x1b[38;2;41;37;36m";
-    const UNFOCUSED: &str = "\x1b[38;2;87;83;78m";
-    const FOCUSED: &str = "\x1b[38;2;56;189;248m";
+    // Renders the ANSI prefix produced by `SetStyle` for a text style, for
+    // use in expected render output.
+    fn style_prefix(style: TextStyle) -> String {
+        let mut out = String::new();
+        SetStyle(style.into()).write_ansi(&mut out).unwrap();
+        out
+    }
 
     #[test]
     fn test_scroll_bar_range() {
@@ -179,8 +182,8 @@ mod tests {
         assert_eq!(bar(10, 1, 100, 20, 39).scroll_bar_range(), (2, 4));
         // Viewport at the bottom of the content
         assert_eq!(bar(10, 1, 100, 90, 99).scroll_bar_range(), (9, 10));
-        // Single visible row
-        assert_eq!(bar(10, 1, 20, 0, 0).scroll_bar_range(), (0, 0));
+        // Single visible row; the bar is at least one row tall
+        assert_eq!(bar(10, 1, 20, 0, 0).scroll_bar_range(), (0, 1));
         // Content smaller than the viewport
         assert_eq!(bar(10, 1, 5, 0, 4).scroll_bar_range(), (0, 10));
         // Empty content
@@ -192,10 +195,11 @@ mod tests {
     #[test]
     fn test_render_full_viewport() {
         let bar = bar(5, 1, 5, 0, 4);
+        let unfocused = style_prefix(THEME_DARK.text_scroll_bar_unfocused);
         assert_eq!(
             render(&bar),
             format!(
-                "{UNFOCUSED}▊\n{UNFOCUSED}▊\n{UNFOCUSED}▊\n{UNFOCUSED}▊\n{UNFOCUSED}▊",
+                "{unfocused}▊\n{unfocused}▊\n{unfocused}▊\n{unfocused}▊\n{unfocused}▊",
             ),
         );
     }
@@ -203,26 +207,31 @@ mod tests {
     #[test]
     fn test_render_scrolled() {
         let bar = bar(5, 1, 20, 4, 8);
+        let track = style_prefix(THEME_DARK.text_scroll_bar_track);
+        let unfocused = style_prefix(THEME_DARK.text_scroll_bar_unfocused);
         assert_eq!(
             render(&bar),
-            format!("{TRACK}▊\n{UNFOCUSED}▊\n{TRACK}▊\n{TRACK}▊\n{TRACK}▊"),
+            format!("{track}▊\n{unfocused}▊\n{unfocused}▊\n{track}▊\n{track}▊"),
         );
     }
 
     #[test]
     fn test_render_focused() {
         let mut bar = bar(5, 1, 20, 4, 8);
+        let track = style_prefix(THEME_DARK.text_scroll_bar_track);
+        let focused = style_prefix(THEME_DARK.text_scroll_bar_focused);
+        let unfocused = style_prefix(THEME_DARK.text_scroll_bar_unfocused);
         bar.set_focused(true);
         assert_eq!(
             render(&bar),
-            format!("{TRACK}▊\n{FOCUSED}▊\n{TRACK}▊\n{TRACK}▊\n{TRACK}▊"),
+            format!("{track}▊\n{focused}▊\n{focused}▊\n{track}▊\n{track}▊"),
         );
         assert!(bar.focused());
 
         bar.set_focused(false);
         assert_eq!(
             render(&bar),
-            format!("{TRACK}▊\n{UNFOCUSED}▊\n{TRACK}▊\n{TRACK}▊\n{TRACK}▊"),
+            format!("{track}▊\n{unfocused}▊\n{unfocused}▊\n{track}▊\n{track}▊"),
         );
         assert!(!bar.focused());
     }
@@ -230,18 +239,20 @@ mod tests {
     #[test]
     fn test_render_width() {
         let bar = bar(3, 2, 3, 0, 2);
+        let unfocused = style_prefix(THEME_DARK.text_scroll_bar_unfocused);
         assert_eq!(
             render(&bar),
-            format!("{UNFOCUSED}▊ \n{UNFOCUSED}▊ \n{UNFOCUSED}▊ "),
+            format!("{unfocused}▊ \n{unfocused}▊ \n{unfocused}▊ "),
         );
     }
 
     #[test]
     fn test_render_empty() {
+        let track = style_prefix(THEME_DARK.text_scroll_bar_track);
         let empty_content = bar(5, 1, 0, 0, 0);
         assert_eq!(
             render(&empty_content),
-            format!("{TRACK}▊\n{TRACK}▊\n{TRACK}▊\n{TRACK}▊\n{TRACK}▊"),
+            format!("{track}▊\n{track}▊\n{track}▊\n{track}▊\n{track}▊"),
         );
 
         let empty_viewport = bar(0, 1, 100, 0, 99);

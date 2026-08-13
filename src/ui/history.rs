@@ -211,7 +211,11 @@ pub struct History {
     /// Head of circularly linked list. Contains no real data.
     head: Id<HistoryRow>,
     viewport_top: Id<HistoryRow>,
+    /// Absolute row index of `viewport_top`
+    viewport_top_pos: usize,
     viewport_bottom: Id<HistoryRow>,
+    /// Absolute row index of `viewport_bottom`
+    viewport_bottom_pos: usize,
 }
 
 impl History {
@@ -238,6 +242,8 @@ impl History {
             head,
             viewport_top: head,
             viewport_bottom: head,
+            viewport_top_pos: 0,
+            viewport_bottom_pos: 0,
         }
     }
 
@@ -282,33 +288,70 @@ impl History {
         Some(row)
     }
 
-    /// Attempts to set the viewport region based on first row.
-    fn set_viewport_top(&mut self, viewport_top: Id<HistoryRow>) {
+    /// O(n) row distance relative to base. base must come before other.
+    /// Unspecified result if base comes after other.
+    #[cfg(test)]
+    fn row_diff(&self, base: Id<HistoryRow>, other: Id<HistoryRow>) -> isize {
+        let mut row = base;
+        let mut diff = 0;
+        while row != other {
+            row = self.rows[row].next;
+            diff += 1;
+        }
+        diff
+    }
+
+    /// Attempts to set the viewport region based on first row. `pos` is the
+    /// absolute row index of `viewport_top` (0-based from `first_row()`).
+    fn set_viewport_top_at(&mut self, viewport_top: Id<HistoryRow>, pos: usize) {
         let prev = self.rows[viewport_top].prev;
         self.viewport_top = viewport_top;
+        self.viewport_top_pos = pos;
         if let Some(row) = self.row_offset(prev, self.max_height as _) {
             self.viewport_bottom = row;
+            self.viewport_bottom_pos = pos + self.max_height - 1;
         } else if viewport_top == self.first_row() {
             self.viewport_bottom = self.last_row();
+            self.viewport_bottom_pos = self.num_rows() - 1;
         } else {
-            self.set_viewport_bottom(self.last_row());
+            self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
         }
     }
 
-    /// Attempts to set the viewport region based on last row.
-    fn set_viewport_bottom(&mut self, viewport_bottom: Id<HistoryRow>) {
+    /// Attempts to set the viewport region based on last row. `pos` is the
+    /// absolute row index of `viewport_bottom` (0-based from `first_row()`).
+    fn set_viewport_bottom_at(&mut self, viewport_bottom: Id<HistoryRow>, pos: usize) {
         self.viewport_bottom = viewport_bottom;
+        self.viewport_bottom_pos = pos;
         if let Some(row) = self.row_offset(self.viewport_bottom, -(self.max_height as isize - 1)) {
             self.viewport_top = row;
-        } else if viewport_bottom == self.last_row() {
-            self.viewport_top = self.first_row();
+            self.viewport_top_pos = pos - (self.max_height - 1);
         } else {
+            // Viewport covers entire text
             self.viewport_top = self.first_row();
+            self.viewport_top_pos = 0;
         }
+    }
+
+    /// Slightly inefficient helper for tests
+    #[cfg(test)]
+    fn set_viewport_top(&mut self, viewport_top: Id<HistoryRow>) {
+        let pos = self.row_diff(self.first_row(), viewport_top) as usize;
+        self.set_viewport_top_at(viewport_top, pos);
     }
 
     pub fn max_height(&self) -> usize {
         self.max_height
+    }
+
+    /// Absolute row index of the first visible row (0-based from `first_row()`).
+    pub fn viewport_top_pos(&self) -> usize {
+        self.viewport_top_pos
+    }
+
+    /// Absolute row index of the last visible row (0-based from `first_row()`).
+    pub fn viewport_bottom_pos(&self) -> usize {
+        self.viewport_bottom_pos
     }
 
     /// Updates the maximum viewport size, preserving the viewport bottom.
@@ -317,7 +360,7 @@ impl History {
             return;
         }
         self.max_height = max_height;
-        self.set_viewport_bottom(self.viewport_bottom);
+        self.set_viewport_bottom_at(self.viewport_bottom, self.viewport_bottom_pos);
     }
 
     /// Updates the wrapping width, re-rendering all markdown items. The
@@ -348,6 +391,8 @@ impl History {
         self.head = head;
         self.viewport_top = head;
         self.viewport_bottom = head;
+        self.viewport_top_pos = 0;
+        self.viewport_bottom_pos = 0;
 
         for content in contents {
             let item = HistoryItem::from_content(
@@ -375,7 +420,7 @@ impl History {
         self.rows[last].next = self.head;
         self.rows[self.head].prev = last;
 
-        self.set_viewport_bottom(self.last_row());
+        self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
 
     /// Appends an item to the history.
@@ -384,22 +429,23 @@ impl History {
         self.append_item(item);
 
         // Follow the newest messages.
-        self.set_viewport_bottom(self.last_row());
+        self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
 
     fn scroll_up(&mut self, rows: usize) {
-        let top = self
-            .row_offset(self.viewport_top, -(rows as isize))
-            .unwrap_or(self.first_row());
-        self.set_viewport_top(top);
+        let (top, pos) = match self.row_offset(self.viewport_top, -(rows as isize)) {
+            Some(row) => (row, self.viewport_top_pos - rows),
+            None => (self.first_row(), 0),
+        };
+        self.set_viewport_top_at(top, pos);
     }
 
     fn scroll_down(&mut self, rows: usize) {
         if let Some(top) = self.row_offset(self.viewport_top, rows as isize) {
-            self.set_viewport_top(top);
+            self.set_viewport_top_at(top, self.viewport_top_pos + rows);
         } else {
             // Can't scroll any further; anchor to the bottom.
-            self.set_viewport_bottom(self.last_row());
+            self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
         }
     }
 }
@@ -463,8 +509,8 @@ impl Component for History {
             (KeyCode::Down, _) => self.scroll_down(1),
             (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => self.scroll_up(self.height() / 2),
             (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => self.scroll_down(self.height() / 2),
-            (KeyCode::Home, _) => self.set_viewport_top(self.first_row()),
-            (KeyCode::End, _) => self.set_viewport_bottom(self.last_row()),
+            (KeyCode::Home, _) => self.set_viewport_top_at(self.first_row(), 0),
+            (KeyCode::End, _) => self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1),
             _ => {}
         }
     }
@@ -524,6 +570,8 @@ mod tests {
         assert_eq!(history.item.len(), 0);
         assert_eq!(history.viewport_top, history.head);
         assert_eq!(history.viewport_bottom, history.head);
+        assert_eq!(history.viewport_top_pos(), 0);
+        assert_eq!(history.viewport_bottom_pos(), 0);
     }
 
     #[test]
@@ -587,26 +635,51 @@ mod tests {
         }
         assert_eq!(history.num_rows(), 30);
 
+        // New items are anchored to the bottom.
         let last = history.last_row();
         let top = history.viewport_top;
         assert_eq!(history.viewport_bottom, last);
+        assert_eq!(history.viewport_top_pos(), 26);
+        assert_eq!(history.viewport_bottom_pos(), 29);
         assert_ne!(top, history.first_row());
 
         history.scroll_up(1);
         assert_ne!(history.viewport_bottom, last);
         assert_ne!(history.viewport_top, top);
+        assert_eq!(history.viewport_top_pos(), 25);
+        assert_eq!(history.viewport_bottom_pos(), 28);
 
         history.scroll_down(1);
         assert_eq!(history.viewport_top, top);
         assert_eq!(history.viewport_bottom, last);
+        assert_eq!(history.viewport_top_pos(), 26);
+        assert_eq!(history.viewport_bottom_pos(), 29);
 
         // Hit bottom
         history.scroll_down(1000);
         assert_eq!(history.viewport_bottom, last);
+        assert_eq!(history.viewport_top_pos(), 26);
+        assert_eq!(history.viewport_bottom_pos(), 29);
 
         // Hit top
         history.scroll_up(1000);
         assert_eq!(history.viewport_top, history.first_row());
+        assert_eq!(history.viewport_top_pos(), 0);
+        assert_eq!(history.viewport_bottom_pos(), 3);
+    }
+
+    #[test]
+    fn test_set_viewport_top_pos() {
+        let mut history = history(80, 4);
+        for i in 0..10 {
+            history.add_item(HistoryItemContent::Markdown(format!("message {i}")));
+        }
+
+        let row = history.row_offset(history.first_row(), 5).unwrap();
+        history.set_viewport_top(row);
+        assert_eq!(history.viewport_top, row);
+        assert_eq!(history.viewport_top_pos(), 5);
+        assert_eq!(history.viewport_bottom_pos(), 8);
     }
 
     #[test]
@@ -620,13 +693,19 @@ mod tests {
         history.scroll_up(5);
         assert_ne!(history.viewport_top, history.first_row());
         assert_ne!(history.viewport_bottom, history.last_row());
+        assert_eq!(history.viewport_top_pos(), 21);
+        assert_eq!(history.viewport_bottom_pos(), 24);
 
         // End scrolls the viewport to the last row.
         history.handle_event(Event::Key(KeyEvent::from(KeyCode::End)));
         assert_eq!(history.viewport_bottom, history.last_row());
+        assert_eq!(history.viewport_top_pos(), 26);
+        assert_eq!(history.viewport_bottom_pos(), 29);
 
         // Home scrolls the viewport to the first row.
         history.handle_event(Event::Key(KeyEvent::from(KeyCode::Home)));
         assert_eq!(history.viewport_top, history.first_row());
+        assert_eq!(history.viewport_top_pos(), 0);
+        assert_eq!(history.viewport_bottom_pos(), 3);
     }
 }
