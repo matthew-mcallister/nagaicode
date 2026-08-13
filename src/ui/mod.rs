@@ -8,6 +8,7 @@ pub mod input_box;
 pub mod history;
 pub mod markdown;
 pub mod padded;
+pub mod scroll_bar;
 pub mod stacked_view;
 pub mod style;
 pub mod text;

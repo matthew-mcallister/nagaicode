@@ -7,9 +7,10 @@ use crossterm::event::Event;
 /// terminal.
 ///
 /// Each component is a rectangle with a width and height. All rows have the
-/// same width. Generally, a component is responsible for determining its
-/// childrens' sizes, but some components report an intrinsic size which the
-/// parent may read back to compute its layout.
+/// same width; content may be padded with space to fit. Generally, a component
+/// is responsible for determining its childrens' sizes, but some components
+/// report an intrinsic size which the parent may read back to compute its
+/// layout.
 pub trait Component {
     type Row<'a>: Command where Self: 'a;
     type RowIter<'a>: Iterator<Item = Self::Row<'a>> where Self: 'a;

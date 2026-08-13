@@ -139,6 +139,9 @@ pub struct Theme {
     pub text_code: TextStyle,
     pub text_math: TextStyle,
     pub text_error: TextStyle,
+    pub text_scroll_bar_track: TextStyle,
+    pub text_scroll_bar_focused: TextStyle,
+    pub text_scroll_bar_unfocused: TextStyle,
 }
 
 // Stock Tailwind CSS colors
@@ -160,6 +163,8 @@ const YELLOW_200: Color = rgb(254, 240, 138);
 
 const RED_400: Color = rgb(248, 113, 113);
 
+const SKY_400: Color = rgb(56, 189, 248);
+
 /// Only available theme for now
 pub const THEME_DARK: Theme = Theme {
     text_base: text_style! { fg_color: WHITE },
@@ -169,6 +174,9 @@ pub const THEME_DARK: Theme = Theme {
     text_code: text_style! { fg_color: YELLOW_200 },
     text_math: text_style! { fg_color: YELLOW_200, italic: true },
     text_error: text_style! { fg_color: RED_400 },
+    text_scroll_bar_track: text_style! { fg_color: GREY_800 },
+    text_scroll_bar_focused: text_style! { fg_color: SKY_400 },
+    text_scroll_bar_unfocused: text_style! { fg_color: GREY_600 },
     bg_base: GREY_950,
     bg_collapsible: GREY_950,
     bg_collapsible_hover: GREY_900,
