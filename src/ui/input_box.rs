@@ -844,30 +844,37 @@ impl InputBox {
     }
 
     /// Deletes all graphemes from the beginning of the current logical line up
-    /// to the cursor.
-    // FIXME: This should delete trailing newline if used at start of line
+    /// to the cursor. Deletes line ending if used at the start of a line
     pub fn delete_to_line_start(&mut self) {
         let line = self.rows[self.cursor_row].line;
-        let start = GraphemePos(self.lines[line].first_row, 0);
+        let first_row = self.lines[line].first_row;
+        let mut start = GraphemePos(first_row, 0);
         let pos = self.cursor_pos();
-        if start != pos {
-            self.buffer_prepend(start, pos);
-            self.splice(start, pos, "");
+        if start == pos {
+            let prev = self.rows[first_row].prev;
+            if prev == self.head { return; }
+            start = GraphemePos(prev, self.rows[prev].graphemes.len() - 1);
         }
+        self.buffer_prepend(start, pos);
+        self.splice(start, pos, "");
     }
 
     /// Deletes all graphemes from the cursor up to the end of the current
-    /// logical line, keeping the trailing newline so the line remains.
+    /// logical line, keeping the trailing newline so the line remains. Deletes
+    /// line ending if used at the end of a line.
     pub fn delete_to_line_end(&mut self) {
         let line = self.rows[self.cursor_row].line;
         let last_row = self.lines[line].last_row;
         // The final grapheme is the zero-width newline; stop before it.
-        let end = GraphemePos(last_row, self.rows[last_row].graphemes.len() - 1);
+        let mut end = GraphemePos(last_row, self.rows[last_row].graphemes.len() - 1);
         let pos = self.cursor_pos();
-        if pos != end {
-            self.buffer_append(pos, end);
-            self.splice(pos, end, "");
+        if pos == end {
+            let next = self.rows[last_row].next;
+            if next == self.head { return; }
+            end = GraphemePos(next, 0);
         }
+        self.buffer_append(pos, end);
+        self.splice(pos, end, "");
     }
 
     /// Moves the cursor forward to an exact grapheme position and updates the
@@ -1701,6 +1708,57 @@ That on himself such murd'rous shame commits.
         assert_eq!(input.get_text(), "abcd\ne\n");
         assert_eq!(input.num_lines(), 2);
         assert_eq!(input.buffer, "fgh");
+    }
+
+    #[test]
+    fn test_delete_to_line_boundaries() {
+        // delete_to_line_start at the beginning of a line deletes the
+        // previous line's ending, merging the two lines.
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abc\ndef");
+        input.set_viewport_top(input.first_row());
+        let rows = row_ids(&input);
+        input.cursor_row = rows[1];
+        input.cursor_col = 0;
+        input.delete_to_line_start();
+        assert_eq!(input.get_text(), "abcdef\n");
+        assert_eq!(input.num_lines(), 1);
+        assert_eq!(input.buffer, "\n");
+
+        // ... but does nothing at the beginning of the first line.
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abc\ndef");
+        input.set_viewport_top(input.first_row());
+        let rows = row_ids(&input);
+        input.cursor_row = rows[0];
+        input.cursor_col = 0;
+        input.delete_to_line_start();
+        assert_eq!(input.get_text(), "abc\ndef\n");
+        assert_eq!(input.buffer, "");
+
+        // delete_to_line_end at the end of a line deletes the line's ending,
+        // merging the line with the next one.
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abc\ndef");
+        input.set_viewport_top(input.first_row());
+        let rows = row_ids(&input);
+        input.cursor_row = rows[0];
+        input.cursor_col = input.rows[rows[0]].width;
+        input.delete_to_line_end();
+        assert_eq!(input.get_text(), "abcdef\n");
+        assert_eq!(input.num_lines(), 1);
+        assert_eq!(input.buffer, "\n");
+
+        // ... but does nothing at the end of the last line.
+        let mut input = InputBox::new(80, 8);
+        input.set_text("abc\ndef");
+        input.set_viewport_top(input.first_row());
+        let rows = row_ids(&input);
+        input.cursor_row = rows[1];
+        input.cursor_col = input.rows[rows[1]].width;
+        input.delete_to_line_end();
+        assert_eq!(input.get_text(), "abc\ndef\n");
+        assert_eq!(input.buffer, "");
     }
 
     #[test]
