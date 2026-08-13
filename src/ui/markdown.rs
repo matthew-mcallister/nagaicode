@@ -1,77 +1,13 @@
-// FIXME maybe: accumulate nested prefixes instead of concatenating repeatedly.
-// Probably switch to an append-only implementation.
 // FIXME: need to cap prefix size/set a lower bound on width to prevent
 // underflow and broken layout
 // FIXME: probably should escape the actual escape char if it appears in source
-use std::iter::iter;
-
 use crossterm::Command;
 use crossterm::style::SetStyle;
 use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Text};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ui::style::{TextStyle, Theme, UpdateStyle};
-use crate::ui::text::{wrap_line, wrap_line_naive, SPACES, TAB_WIDTH};
-
-/// Out-of-line style marker.
-#[derive(Debug)]
-struct Marker {
-    /// Byte offset to insert control sequence in plain_text
-    offset: usize,
-    /// Style to apply
-    style: TextStyle,
-}
-
-/// Rendering state threaded through the markdown renderer.
-#[derive(Clone, Copy)]
-struct Context {
-    theme: &'static Theme,
-    width: usize,
-    // Base text style used by the current node. Child nodes assume the parent
-    // is responsible for setting this style as part of its prefix.
-    base_style: TextStyle,
-    // FIXME: Current behavior is a slightly crude hack; ideally block quotes
-    // would flip the meaning of italic and non-italic.
-    block_quote: bool,
-    code: bool,
-}
-
-impl Context {
-    const fn with_width(mut self, width: usize) -> Self {
-        self.width = width;
-        self
-    }
-
-    const fn with_base_style(mut self, base_style: TextStyle) -> Self {
-        self.base_style = base_style;
-        self
-    }
-
-    const fn set_block_quote(mut self, block_quote: bool) -> Self {
-        self.block_quote = block_quote;
-        self
-    }
-
-    const fn set_code(mut self, code: bool) -> Self {
-        self.code = code;
-        self
-    }
-
-    fn update_style(&self, out: &mut String, prev: TextStyle, style: TextStyle) {
-        if self.block_quote || self.code {
-            return;
-        }
-        let _ = UpdateStyle(prev, style).write_ansi(out);
-    }
-}
-
-#[derive(Debug)]
-struct MarkupBuilder {
-    theme: &'static Theme,
-    plain_text: String,
-    markers: Vec<Marker>,
-    cur_style: TextStyle,
-}
+use crate::ui::text::{Row, SPACES, TAB_WIDTH, wrap_line, wrap_line_naive};
 
 /// Replaces runs of whitespace with a single space character. Preserves
 /// leading and trailing whitespace.
@@ -109,13 +45,30 @@ fn push_spaces(out: &mut String, count: usize) {
     }
 }
 
-impl MarkupBuilder {
-    fn new(ctx: Context) -> Self {
+/// Out-of-line style marker.
+#[derive(Debug)]
+struct Marker {
+    /// Byte offset to insert control sequence in plain_text
+    offset: usize,
+    /// Style to apply
+    style: TextStyle,
+}
+
+#[derive(Debug)]
+struct PhrasingBuilder {
+    theme: &'static Theme,
+    plain_text: String,
+    markers: Vec<Marker>,
+    cur_style: TextStyle,
+}
+
+impl PhrasingBuilder {
+    fn new(theme: &'static Theme, base_style: TextStyle) -> Self {
         Self {
-            theme: ctx.theme,
+            theme,
             plain_text: String::new(),
             markers: Vec::new(),
-            cur_style: ctx.base_style,
+            cur_style: base_style,
         }
     }
 
@@ -157,7 +110,7 @@ impl MarkupBuilder {
         if style != self.cur_style {
             self.markers.push(Marker {
                 offset: self.plain_text.len(),
-                style: style,
+                style,
             });
             self.cur_style = style;
         }
@@ -222,7 +175,7 @@ impl MarkupBuilder {
                 if let Some(title) = &image.title {
                     self.push_text("\"");
                     // FIXME: Should escape non-printable characters and \"
-                    self.push_text(&title);
+                    self.push_text(title);
                     self.push_text("\"");
                 }
                 self.push_text(")");
@@ -282,317 +235,360 @@ impl MarkupBuilder {
     }
 }
 
+/// String wrapper which tracks current style and lazily writes control
+/// statements when needed. Also tracks column information since we need that
+/// anyways
+#[derive(Debug)]
+struct StyledString {
+    inner: String,
+    // Tracking previous style allows us to emit redundant style updates
+    // without emitting extra control sequences
+    prev_style: Option<TextStyle>,
+    cur_style: TextStyle,
+    width: usize,
+    // Kludge for preventing child nodes from changing the style inside code
+    // and quote blocks
+    style_frozen: bool,
+}
+
+impl StyledString {
+    fn new(style: TextStyle, capacity: usize) -> Self {
+        Self {
+            inner: String::with_capacity(capacity),
+            prev_style: None,
+            cur_style: style,
+            width: 0,
+            style_frozen: false,
+        }
+    }
+
+    fn set_style(&mut self, style: TextStyle) {
+        if self.style_frozen { return; }
+        if self.prev_style.is_none() {
+            self.prev_style = Some(self.cur_style);
+        }
+        self.cur_style = style;
+    }
+
+    fn push(&mut self, s: &str, width: usize) {
+        if let Some(prev) = self.prev_style {
+            let _ = UpdateStyle(prev, self.cur_style).write_ansi(&mut self.inner);
+        }
+        self.inner.push_str(s);
+        self.width += width;
+        self.prev_style = None;
+    }
+
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+/// Saved prefix state for backtracking
+#[derive(Clone, Copy, Debug)]
+struct SavePrefix {
+    len: usize,
+    width: usize,
+    prev_style: Option<TextStyle>,
+    cur_style: TextStyle,
+    style_frozen: bool,
+}
+
+/// High-level renderer for dealing with flow layout constructs
+#[derive(Debug)]
+struct FlowBuilder {
+    theme: &'static Theme,
+    /// Total render width in columns. Every completed row is exactly this
+    /// wide. Less-than-full lines must be padded with spaces.
+    width: usize,
+    /// Per-row prefix, applied at the start of every new row.
+    prefix: StyledString,
+    /// Current row, always starts with prefix
+    row: StyledString,
+    /// Completed rows.
+    rows: Vec<String>,
+}
+
+impl FlowBuilder {
+    fn new(theme: &'static Theme, width: usize) -> Self {
+        Self {
+            theme,
+            width,
+            prefix: StyledString::new(theme.text_base, 2 * width),
+            row: StyledString::new(theme.text_base, 2 * width),
+            rows: Vec::new(),
+        }
+    }
+
+    fn apply_prefix(&mut self) {
+        let remain = self.width - self.prefix.width();
+        let mut inner = String::with_capacity(self.prefix.len() + 2 * remain);
+        inner.push_str(&self.prefix.inner);
+        self.row = StyledString {
+            inner,
+            ..self.prefix
+        }
+    }
+
+    /// Pads the current row to `width` cols and starts a new row
+    fn end_row(&mut self) {
+        let pad = self.width - self.row.width();
+        push_spaces(&mut self.row.inner, pad);
+        self.rows.push(std::mem::take(&mut self.row.inner));
+        self.apply_prefix();
+    }
+
+    fn save(&self) -> SavePrefix {
+        SavePrefix {
+            len: self.prefix.len(),
+            width: self.prefix.width(),
+            prev_style: self.prefix.prev_style,
+            cur_style: self.prefix.cur_style,
+            style_frozen: self.prefix.style_frozen,
+        }
+    }
+
+    fn restore(&mut self, saved: SavePrefix) {
+        // Only restore before text has been pushed to row
+        debug_assert_eq!(self.row.width(), self.prefix.width());
+        self.prefix.inner.truncate(saved.len);
+        self.prefix.prev_style = saved.prev_style;
+        self.prefix.cur_style = saved.cur_style;
+        self.prefix.width = saved.width;
+        self.prefix.style_frozen = saved.style_frozen;
+        self.apply_prefix();
+    }
+
+    fn finish(mut self) -> Vec<String> {
+        if self.row.len() > self.prefix.len() {
+            self.end_row();
+        }
+        self.rows
+    }
+
+    fn remaining_width(&self) -> usize {
+        self.width - self.row.width()
+    }
+}
+
+fn push_rows(fb: &mut FlowBuilder, rows: &[Row]) {
+    for row in rows {
+        for g in &row.graphemes {
+            // Newline added by the wrapping routine, not part of the source
+            if g.data == "\n" {
+                continue;
+            }
+            fb.row.push(g.formatted(), g.width as usize);
+        }
+        fb.end_row();
+    }
+}
+
 /// Renders phrasing content (the inline children of a paragraph or heading).
 /// The returned iterator is owned, so `children` need only live for the
 /// duration of this call.
-fn phrasing_to_rows(
-    ctx: Context,
-    children: &[Node],
-) -> Box<dyn Iterator<Item = String>> {
-    let mut builder = MarkupBuilder::new(ctx);
-    builder.push_all(children);
-    let MarkupBuilder {
+fn push_phrasing(flow: &mut FlowBuilder, children: &[Node]) {
+    let mut phrasing = PhrasingBuilder::new(flow.theme, flow.prefix.cur_style);
+    phrasing.push_all(children);
+    let PhrasingBuilder {
         plain_text,
         markers,
         ..
-    } = builder;
+    } = phrasing;
 
-    Box::new(iter!(move || {
-        let mut cur_style = ctx.base_style;
-        let mut marker_idx = 0usize;
-        let mut offset = 0usize;
+    let mut cur_style = flow.prefix.cur_style;
+    let mut marker_idx = 0usize;
+    let mut offset = 0usize;
 
-        for line in plain_text.split('\n') {
-            let rows = wrap_line(ctx.width, line);
+    for line in plain_text.split('\n') {
+        let rows = wrap_line(flow.remaining_width(), line);
 
-            for row in rows {
-                let mut out = String::with_capacity(2 * row.graphemes.len());
-                let mut row_width = 0usize;
+        for row in rows {
+            while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
+                cur_style = markers[marker_idx].style;
+                marker_idx += 1;
+            }
+            // Re-apply current style at start of each row
+            flow.row.set_style(cur_style);
 
-                // Re-apply current style at start of each row
+            for g in &row.graphemes {
+                // Newline added by wrap_line, not part of the source text
+                if g.data == "\n" {
+                    continue;
+                }
+
                 while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
                     cur_style = markers[marker_idx].style;
                     marker_idx += 1;
                 }
-                ctx.update_style(&mut out, ctx.base_style, cur_style);
+                flow.row.set_style(cur_style);
 
-                for g in &row.graphemes {
-                    // Newline added by wrap_line, not part of the source text
-                    if g.data == "\n" {
-                        continue;
-                    }
-
-                    let prev_style = cur_style;
-                    while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
-                        cur_style = markers[marker_idx].style;
-                        marker_idx += 1;
-                    }
-                    ctx.update_style(&mut out, prev_style, cur_style);
-
-                    out.push_str(g.formatted());
-                    offset += g.data.len();
-                    row_width += g.width as usize;
-                }
-
-                // Every row must be exactly `ctx.width` columns wide
-                push_spaces(&mut out, ctx.width - row_width);
-                yield out;
+                flow.row.push(g.formatted(), g.width as usize);
+                offset += g.data.len();
             }
 
-            // Skip the newline separating this line from the next
-            offset += 1;
+            flow.end_row();
         }
-    })())
+
+        // Skip the newline separating this line from the next
+        offset += 1;
+    }
 }
 
-/// Renders a heading: `#{depth} ` prefix followed by the heading content.
-fn heading_to_rows(
-    ctx: Context,
-    heading: &Heading,
-) -> Box<dyn Iterator<Item = String>> {
+fn heading_to_rows(flow: &mut FlowBuilder, heading: &Heading) {
     let mut children = Vec::with_capacity(heading.children.len() + 1);
     children.push(Node::Text(Text {
         value: format!("{} ", "#".repeat(heading.depth as usize)),
         position: None,
     }));
+
     children.extend(heading.children.iter().cloned());
-    let rows = phrasing_to_rows(ctx.with_base_style(ctx.theme.text_header), &children);
-    Box::new(rows.map(move |row| {
-        let mut out = String::with_capacity(row.len() + 16);
-        // Step into the header style from the terminal's base style, which is
-        // re-applied at the start of every row by render_markdown.
-        ctx.update_style(&mut out, ctx.theme.text_base, ctx.theme.text_header);
-        out.push_str(&row);
-        out
-    }))
+    let restore_point = flow.save();
+    flow.prefix.set_style(flow.prefix.cur_style.bolded());
+    flow.row.set_style(flow.row.cur_style.bolded());
+    push_phrasing(flow, &children);
+    flow.restore(restore_point);
 }
 
-/// Wraps `text` at `width` using naive wrapping and renders each row to a
-/// plain string.
-fn wrap_naive_rows(width: usize, text: &str) -> impl Iterator<Item = String> + use<> {
-    wrap_line_naive(width, text).into_iter().map(move |row| {
-        let mut out = String::with_capacity(row.graphemes.len());
-        let mut row_width = 0usize;
-        for g in &row.graphemes {
-            // Newline added by wrap_line_naive, not part of the source
-            if g.data == "\n" {
-                continue;
-            }
-            out.push_str(g.formatted());
-            row_width += g.width as usize;
-        }
-        // Every row must be exactly `width` columns wide
-        push_spaces(&mut out, width - row_width);
-        out
-    })
-}
+fn push_preformatted(flow: &mut FlowBuilder, style: TextStyle, value: &str) {
+    let restore = flow.save();
+    flow.prefix.set_style(style);
+    flow.prefix.style_frozen = true;
+    flow.row.set_style(style);
+    flow.row.style_frozen = true;
 
-fn preformatted_to_rows<'a>(
-    ctx: Context,
-    style: TextStyle,
-    value: &'a str,
-) -> Box<dyn Iterator<Item = String> + 'a> {
-    // Style updates are frozen so the preformatted content renders with one
-    // uniform style.
-    let pre_ctx = ctx
-        .with_base_style(style)
-        .set_code(true);
+    for line in value.split('\n') {
+        let rows = wrap_line_naive(flow.remaining_width(), line);
+        push_rows(flow, &rows);
+    }
 
-    Box::new(iter!(move || {
-        for line in value.split('\n') {
-            for row in wrap_naive_rows(pre_ctx.width, line) {
-                let mut out = String::with_capacity(row.len() + 32);
-                // Step into the preformatted style from the enclosing context's
-                // style
-                ctx.update_style(&mut out, ctx.base_style, pre_ctx.base_style);
-                out.push_str(&row);
-                yield out;
-            }
-        }
-    })())
+    flow.restore(restore);
 }
 
 /// Renders a thematic break as a row of `width` hyphens.
-fn thematic_break_to_rows(
-    ctx: Context,
-) -> Box<dyn Iterator<Item = String>> {
-    Box::new(iter!(move || {
-        let mut out = String::with_capacity(ctx.width + 32);
-        ctx.update_style(&mut out, ctx.base_style, ctx.theme.text_subtle);
-        out.push_str(&"┄".repeat(ctx.width));
-        yield out;
-    })())
+fn thematic_break(flow: &mut FlowBuilder) {
+    let count = flow.remaining_width();
+    let restore = flow.save();
+    flow.row.set_style(flow.theme.text_subtle);
+    flow.row.push(&"┄".repeat(count), count);
+    flow.end_row();
+    flow.restore(restore);
 }
 
-fn blockquote_to_rows<'a>(
-    ctx: Context,
-    quote: &'a Blockquote,
-) -> Box<dyn Iterator<Item = String> + 'a> {
-    // One column for the left border prefix, plus one for padding
-    let inner_width = ctx.width.saturating_sub(2);
+fn blockquote(flow: &mut FlowBuilder, quote: &Blockquote) {
+    let restore = flow.save();
+    let border_style = flow.theme.text_quote;
 
-    let content_style = ctx.theme.text_subtle.italicized();
+    flow.prefix.set_style(border_style);
+    flow.prefix.push("\u{2590} ", 2);
+    flow.prefix.style_frozen = true;
 
-    let mut children = quote
-        .children
-        .iter()
-        .map(move |child| {
-            flow_to_rows(
-                ctx.with_width(inner_width)
-                    .with_base_style(content_style)
-                    .set_block_quote(true),
-                child,
-            )
-        });
+    flow.row.set_style(border_style);
+    flow.row.push("\u{2590} ", 2);
+    flow.row.style_frozen = true;
 
-    Box::new(iter!(move || {
-        let mut first = true;
-        for rows in &mut children {
-            if !first {
-                let mut out = String::with_capacity(ctx.width);
-                ctx.update_style(&mut out, ctx.base_style, ctx.theme.text_quote);
-                out.push('\u{2590}');
-                out.push(' ');
-                push_spaces(&mut out, ctx.width - 2);
-                yield out;
-            }
-            first = false;
-            for row in rows {
-                let mut out = String::with_capacity(row.len() + 16);
-                ctx.update_style(&mut out, ctx.base_style, ctx.theme.text_quote);
-                out.push('\u{2590}');
-                out.push(' ');
-                out.push_str(&row);
-                yield out;
-            }
+    push_flow_children(flow, true, &quote.children);
+
+    flow.restore(restore);
+}
+
+fn push_flow_children(flow: &mut FlowBuilder, spread: bool, children: &[Node]) {
+    let mut first = true;
+    for child in children {
+        if !first && spread {
+            flow.end_row();
         }
-    })())
+        first = false;
+        push_flow_node(flow, child);
+    }
 }
 
-fn flow_content_to_rows<'a>(
-    ctx: Context,
-    spread: bool,
-    children: &'a [Node],
-) -> Box<dyn Iterator<Item = String> + 'a> {
-    let mut children = children
-        .iter()
-        .map(move |child| {
-            flow_to_rows(ctx.with_base_style(ctx.theme.text_base), child)
-        });
-
-    Box::new(iter!(move || {
-        let mut first = true;
-        for rows in &mut children {
-            if !first && spread {
-                let mut out = String::with_capacity(ctx.width);
-                push_spaces(&mut out, ctx.width);
-                yield out;
-            }
-            first = false;
-            for row in rows {
-                yield row;
-            }
-        }
-    })())
-}
-
-fn footnote_definition_to_rows<'a>(
-    ctx: Context,
-    footnote: &'a FootnoteDefinition,
-) -> Box<dyn Iterator<Item = String> + 'a> {
-    // Reserve two columns for the indent prefix
-    let inner_width = ctx.width.saturating_sub(2);
-    let children = flow_content_to_rows(ctx.with_width(inner_width), true, &footnote.children);
+fn footnote_definition(flow: &mut FlowBuilder, footnote: &FootnoteDefinition) {
     let header = format!("[^{}]:", footnote.identifier);
-    Box::new(
-        wrap_naive_rows(ctx.width, &header)
-            .chain(children.map(|row| format!("  {}", row))),
-    )
+    let rows = wrap_line_naive(flow.remaining_width(), &header);
+    push_rows(flow, &rows);
+
+    let restore = flow.save();
+    flow.prefix.push("  ", 2);
+    flow.row.push("  ", 2);
+    push_flow_children(flow, true, &footnote.children);
+    flow.restore(restore);
 }
 
-fn definition_to_rows<'a>(
-    ctx: Context,
-    definition: &'a Definition,
-) -> Box<dyn Iterator<Item = String> + 'a> {
+fn definition(flow: &mut FlowBuilder, definition: &Definition) {
     let line = format!("[{}]: {}", definition.identifier, definition.url);
-    Box::new(wrap_naive_rows(ctx.width, &line))
+    let rows = wrap_line_naive(flow.remaining_width(), &line);
+    push_rows(flow, &rows);
 }
 
 /// Renders a list. Unordered lists prefix the first row of each item with
 /// "- ", ordered lists with a left-aligned number. Continuation rows are
 /// indented to align with the item content. When the list is spread, a blank
 /// line separates the children.
-fn list_to_rows<'a>(
-    ctx: Context,
-    list: &'a List,
-) -> Box<dyn Iterator<Item = String> + 'a> {
+fn list(flow: &mut FlowBuilder, list: &List) {
     // The number prefix is padded so all items share a common width
     let prefix_width = if list.ordered {
-        3 + list.children.len().ilog10() as usize
+        3 + (list.children.len().max(1)).ilog10() as usize
     } else {
         2
     };
-    // Reserve the prefix width for the number/indent
-    let inner_width = ctx.width.saturating_sub(prefix_width);
     let indent = " ".repeat(prefix_width);
 
-    let children = list
-        .children
-        .iter()
-        .enumerate()
-        .map(move |(i, child)| {
-            let prefix = if list.ordered {
-                format!("{:<width$}", format!("{}.", i + 1), width = prefix_width)
-            } else {
-                "- ".to_string()
-            };
-            (flow_to_rows(ctx.with_width(inner_width), child), prefix)
-        });
+    let mut first = true;
+    for (i, child) in list.children.iter().enumerate() {
+        if !first && list.spread {
+            flow.end_row();
+        }
+        first = false;
 
-    Box::new(iter!(move || {
-        let mut first = true;
-        for (rows, prefix) in children {
-            if !first && list.spread {
-                let mut out = String::with_capacity(ctx.width);
-                push_spaces(&mut out, ctx.width);
-                yield out;
+        let prefix = if list.ordered {
+            format!("{:<width$}", format!("{}.", i + 1), width = prefix_width)
+        } else {
+            "- ".to_string()
+        };
+
+        let restore = flow.save();
+        flow.prefix.push(&indent, prefix_width);
+        flow.row.push(&prefix, prefix_width);
+
+        match child {
+            Node::ListItem(item) => {
+                push_flow_children(flow, item.spread, &item.children);
             }
-            first = false;
-            for (i, row) in rows.enumerate() {
-                let p = if i == 0 { &prefix } else { &indent };
-                let mut out = String::with_capacity(p.len() + row.len());
-                out.push_str(p);
-                out.push_str(&row);
-                yield out;
+            other => {
+                push_flow_node(flow, other);
             }
         }
-    })())
+
+        flow.restore(restore);
+    }
 }
 
-fn flow_to_rows<'a>(
-    ctx: Context,
-    node: &'a Node,
-) -> Box<dyn Iterator<Item = String> + 'a> {
+fn push_flow_node(flow: &mut FlowBuilder, node: &Node) {
     match node {
-        Node::Root(root) => flow_content_to_rows(ctx, true, &root.children),
+        Node::Root(root) => push_flow_children(flow, true, &root.children),
 
         Node::Table(_)
         | Node::TableRow(_)
         | Node::TableCell(_) => todo!(),
 
-        Node::Paragraph(paragraph) => phrasing_to_rows(ctx, &paragraph.children),
-        Node::Blockquote(quote) => blockquote_to_rows(ctx, quote),
-        Node::Code(code) => preformatted_to_rows(ctx, ctx.theme.text_code, &code.value),
-        Node::Math(math) => preformatted_to_rows(ctx, ctx.theme.text_math, &math.value),
-        Node::FootnoteDefinition(footnote) => footnote_definition_to_rows(ctx, footnote),
-        Node::Definition(definition) => definition_to_rows(ctx, definition),
-        Node::Html(html) => preformatted_to_rows(ctx, ctx.theme.text_code, &html.value),
-        Node::Heading(heading) => heading_to_rows(ctx, heading),
-        Node::ThematicBreak(_) => thematic_break_to_rows(ctx),
+        Node::Paragraph(paragraph) => push_phrasing(flow, &paragraph.children),
+        Node::Blockquote(quote) => blockquote(flow, quote),
+        Node::Code(code) => push_preformatted(flow, flow.theme.text_code, &code.value),
+        Node::Math(math) => push_preformatted(flow, flow.theme.text_math, &math.value),
+        Node::FootnoteDefinition(footnote) => footnote_definition(flow, footnote),
+        Node::Definition(def) => definition(flow, def),
+        Node::Html(html) => push_preformatted(flow, flow.theme.text_code, &html.value),
+        Node::Heading(heading) => heading_to_rows(flow, heading),
+        Node::ThematicBreak(_) => thematic_break(flow),
         Node::ListItem(list_item) => {
-            flow_content_to_rows(ctx, list_item.spread, &list_item.children)
-        },
-        Node::List(list) => list_to_rows(ctx, list),
+            push_flow_children(flow, list_item.spread, &list_item.children)
+        }
+        Node::List(l) => list(flow, l),
 
         // Phrasing nodes
         | Node::Break(_)
@@ -615,7 +611,7 @@ fn flow_to_rows<'a>(
         // Unsupported nodes, library shouldn't produce these
         | Node::Toml(_)
         | Node::Yaml(_)
-        => unreachable!("broken markdown AST")
+        => unreachable!("broken markdown AST"),
     }
 }
 
@@ -641,21 +637,22 @@ pub fn render_markdown(
     )
     .expect("invalid markdown");
 
+    render_mdast(theme, width, &node)
+}
+
+pub fn render_mdast(
+    theme: &'static Theme,
+    width: usize,
+    node: &Node,
+) -> Vec<String> {
+    let mut flow = FlowBuilder::new(theme, width);
+    push_flow_node(&mut flow, node);
     let mut style_prefix = String::new();
     let _ = SetStyle(theme.text_base.into()).write_ansi(&mut style_prefix);
-
-    flow_to_rows(
-        Context {
-            theme,
-            width,
-            base_style: theme.text_base,
-            block_quote: false,
-            code: false,
-        },
-        &node,
-    )
-    .map(|row| format!("{}{}", style_prefix, &row))
-    .collect()
+    flow.finish()
+        .into_iter()
+        .map(|row| format!("{}{}", style_prefix, &row))
+        .collect()
 }
 
 #[cfg(test)]

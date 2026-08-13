@@ -815,6 +815,7 @@ impl InputBox {
     }
 
     /// Moves the cursor to the end of the current logical line.
+    // FIXME: Should go fwd one character if already at line end
     pub fn go_to_line_end(&mut self) {
         self.overwrite_buffer = true;
         let line = self.rows[self.cursor_row].line;
@@ -825,6 +826,7 @@ impl InputBox {
 
     /// Moves the cursor to the very beginning of all input text and scrolls
     /// the viewport so that the first row is visible.
+    // FIXME: Should go back one character if already at line start
     pub fn go_to_start(&mut self) {
         self.overwrite_buffer = true;
         let first = self.first_row();
