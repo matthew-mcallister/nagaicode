@@ -172,10 +172,10 @@ impl HistoryItem {
         let mut last_row = Id::null();
         let mut num_rows = 0;
 
-        // Render the content, then two blank rows of vertical padding.
+        // Render the content, then one blank row of vertical padding.
         let rows_out = rendered
             .into_iter()
-            .chain(std::iter::repeat_with(|| " ".repeat(width)).take(2));
+            .chain(std::iter::repeat_with(|| " ".repeat(width)).take(1));
 
         for row in rows_out {
             let mut history_row = HistoryRow::from_preformatted(row);
@@ -633,33 +633,33 @@ mod tests {
         for i in 0..10 {
             history.add_item(HistoryItemContent::Markdown(format!("message {i}")));
         }
-        assert_eq!(history.num_rows(), 30);
+        assert_eq!(history.num_rows(), 20);
 
         // New items are anchored to the bottom.
         let last = history.last_row();
         let top = history.viewport_top;
         assert_eq!(history.viewport_bottom, last);
-        assert_eq!(history.viewport_top_pos(), 26);
-        assert_eq!(history.viewport_bottom_pos(), 29);
+        assert_eq!(history.viewport_top_pos(), 16);
+        assert_eq!(history.viewport_bottom_pos(), 19);
         assert_ne!(top, history.first_row());
 
         history.scroll_up(1);
         assert_ne!(history.viewport_bottom, last);
         assert_ne!(history.viewport_top, top);
-        assert_eq!(history.viewport_top_pos(), 25);
-        assert_eq!(history.viewport_bottom_pos(), 28);
+        assert_eq!(history.viewport_top_pos(), 15);
+        assert_eq!(history.viewport_bottom_pos(), 18);
 
         history.scroll_down(1);
         assert_eq!(history.viewport_top, top);
         assert_eq!(history.viewport_bottom, last);
-        assert_eq!(history.viewport_top_pos(), 26);
-        assert_eq!(history.viewport_bottom_pos(), 29);
+        assert_eq!(history.viewport_top_pos(), 16);
+        assert_eq!(history.viewport_bottom_pos(), 19);
 
         // Hit bottom
         history.scroll_down(1000);
         assert_eq!(history.viewport_bottom, last);
-        assert_eq!(history.viewport_top_pos(), 26);
-        assert_eq!(history.viewport_bottom_pos(), 29);
+        assert_eq!(history.viewport_top_pos(), 16);
+        assert_eq!(history.viewport_bottom_pos(), 19);
 
         // Hit top
         history.scroll_up(1000);
@@ -693,14 +693,14 @@ mod tests {
         history.scroll_up(5);
         assert_ne!(history.viewport_top, history.first_row());
         assert_ne!(history.viewport_bottom, history.last_row());
-        assert_eq!(history.viewport_top_pos(), 21);
-        assert_eq!(history.viewport_bottom_pos(), 24);
+        assert_eq!(history.viewport_top_pos(), 11);
+        assert_eq!(history.viewport_bottom_pos(), 14);
 
         // End scrolls the viewport to the last row.
         history.handle_event(Event::Key(KeyEvent::from(KeyCode::End)));
         assert_eq!(history.viewport_bottom, history.last_row());
-        assert_eq!(history.viewport_top_pos(), 26);
-        assert_eq!(history.viewport_bottom_pos(), 29);
+        assert_eq!(history.viewport_top_pos(), 16);
+        assert_eq!(history.viewport_bottom_pos(), 19);
 
         // Home scrolls the viewport to the first row.
         history.handle_event(Event::Key(KeyEvent::from(KeyCode::Home)));

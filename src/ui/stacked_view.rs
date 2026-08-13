@@ -62,7 +62,11 @@ impl StackedView {
 
     /// Recomputes the history region's height after the input box changes size.
     pub fn resize(&mut self) {
-        let history_height = self.height.saturating_sub(self.input.height());
+        // Reserve one row of padding between the history and the input box.
+        let history_height = self
+            .height
+            .saturating_sub(self.input.height())
+            .saturating_sub(1);
         if self.history.max_height() != history_height {
             self.history.set_height(history_height);
         }
@@ -117,12 +121,14 @@ impl Component for StackedView {
         let empty_rows = self
             .height
             .saturating_sub(self.history.height())
-            .saturating_sub(self.input.height());
+            .saturating_sub(self.input.height())
+            .saturating_sub(1);
         let width = self.width;
         let empty = (0..empty_rows).map(move |_| StackedRow::Empty { width });
+        let spacer = std::iter::once(StackedRow::Empty { width });
         let history = self.history.drawable_rows().map(StackedRow::History);
         let input = self.input.drawable_rows().map(StackedRow::Input);
-        Box::new(empty.chain(history).chain(input))
+        Box::new(empty.chain(history).chain(spacer).chain(input))
     }
 
     fn set_width(&mut self, width: usize) {
