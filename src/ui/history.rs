@@ -5,7 +5,7 @@ use std::fmt;
 
 use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::style::{Attribute, SetAttribute, SetStyle};
+use crossterm::style::SetStyle;
 
 use crate::arena::{Arena, Id};
 use crate::ui::markdown::render_markdown;
@@ -20,9 +20,7 @@ pub(crate) fn render_help(
 ) -> Vec<String> {
     let mut prefix = String::new();
     let _ = SetStyle(theme.text_quote.into()).write_ansi(&mut prefix);
-    let _ = SetAttribute(Attribute::Reverse).write_ansi(&mut prefix);
-    prefix.push('▊');
-    let _ = SetAttribute(Attribute::NoReverse).write_ansi(&mut prefix);
+    prefix.push('▐');
     prefix.push(' ');
     content.lines().flat_map(|line|
         wrap_line(width - 2, line)
@@ -38,9 +36,7 @@ pub(crate) fn render_error(
 ) -> Vec<String> {
     let mut prefix = String::new();
     let _ = SetStyle(theme.text_error.into()).write_ansi(&mut prefix);
-    let _ = SetAttribute(Attribute::Reverse).write_ansi(&mut prefix);
-    prefix.push('▊');
-    let _ = SetAttribute(Attribute::NoReverse).write_ansi(&mut prefix);
+    prefix.push('▐');
     prefix.push(' ');
     let _ = SetStyle(theme.text_subtle.into()).write_ansi(&mut prefix);
     content.lines().flat_map(|line|
@@ -593,25 +589,23 @@ mod tests {
             lines.join("\n")
         }
 
-        assert_eq!(render("hello", 10), "\x1b[7m▊\x1b[27m hello   ");
-        assert_eq!(render("foo\nbar", 8), "\x1b[7m▊\x1b[27m foo   \n\x1b[7m▊\x1b[27m bar   ");
-        assert_eq!(render("hello world", 8), "\x1b[7m▊\x1b[27m hello \n\x1b[7m▊\x1b[27m world ");
+        assert_eq!(render("hello", 10), "▐ hello   ");
+        assert_eq!(render("foo\nbar", 8), "▐ foo   \n▐ bar   ");
+        assert_eq!(render("hello world", 8), "▐ hello \n▐ world ");
         assert_eq!(render("", 6), "");
     }
 
     #[test]
     fn test_render_error() {
         use crossterm::Command;
-        use crossterm::style::{Attribute, SetAttribute, SetStyle};
+        use crossterm::style::SetStyle;
 
         fn render(content: &str, width: usize) -> String {
             let mut lines = super::render_error(&THEME_DARK, width, content);
 
             let mut prefix = String::new();
             let _ = SetStyle(THEME_DARK.text_error.into()).write_ansi(&mut prefix);
-            let _ = SetAttribute(Attribute::Reverse).write_ansi(&mut prefix);
-            prefix.push('▊');
-            let _ = SetAttribute(Attribute::NoReverse).write_ansi(&mut prefix);
+            prefix.push('▐');
             prefix.push(' ');
             let _ = SetStyle(THEME_DARK.text_subtle.into()).write_ansi(&mut prefix);
             for line in lines.iter_mut() {

@@ -87,7 +87,7 @@ impl Command for ScrollBarRow<'_> {
             return Ok(());
         }
         SetStyle((*self.style).into()).write_ansi(f)?;
-        f.write_char('▊')?;
+        f.write_char('▐')?;
         write_spaces(f, self.width - 1)
     }
 }
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(
             render(&bar),
             format!(
-                "{unfocused}▊\n{unfocused}▊\n{unfocused}▊\n{unfocused}▊\n{unfocused}▊",
+                "{unfocused}▐\n{unfocused}▐\n{unfocused}▐\n{unfocused}▐\n{unfocused}▐",
             ),
         );
     }
@@ -211,7 +211,7 @@ mod tests {
         let unfocused = style_prefix(THEME_DARK.text_scroll_bar_unfocused);
         assert_eq!(
             render(&bar),
-            format!("{track}▊\n{unfocused}▊\n{unfocused}▊\n{track}▊\n{track}▊"),
+            format!("{track}▐\n{unfocused}▐\n{unfocused}▐\n{track}▐\n{track}▐"),
         );
     }
 
@@ -224,14 +224,14 @@ mod tests {
         bar.set_focused(true);
         assert_eq!(
             render(&bar),
-            format!("{track}▊\n{focused}▊\n{focused}▊\n{track}▊\n{track}▊"),
+            format!("{track}▐\n{focused}▐\n{focused}▐\n{track}▐\n{track}▐"),
         );
         assert!(bar.focused());
 
         bar.set_focused(false);
         assert_eq!(
             render(&bar),
-            format!("{track}▊\n{unfocused}▊\n{unfocused}▊\n{track}▊\n{track}▊"),
+            format!("{track}▐\n{unfocused}▐\n{unfocused}▐\n{track}▐\n{track}▐"),
         );
         assert!(!bar.focused());
     }
@@ -242,7 +242,7 @@ mod tests {
         let unfocused = style_prefix(THEME_DARK.text_scroll_bar_unfocused);
         assert_eq!(
             render(&bar),
-            format!("{unfocused}▊ \n{unfocused}▊ \n{unfocused}▊ "),
+            format!("{unfocused}▐ \n{unfocused}▐ \n{unfocused}▐ "),
         );
     }
 
@@ -252,7 +252,7 @@ mod tests {
         let empty_content = bar(5, 1, 0, 0, 0);
         assert_eq!(
             render(&empty_content),
-            format!("{track}▊\n{track}▊\n{track}▊\n{track}▊\n{track}▊"),
+            format!("{track}▐\n{track}▐\n{track}▐\n{track}▐\n{track}▐"),
         );
 
         let empty_viewport = bar(0, 1, 100, 0, 99);
