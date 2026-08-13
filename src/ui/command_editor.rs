@@ -1,22 +1,35 @@
+use std::fmt;
+
+use crossterm::Command;
 use crossterm::event::Event;
 
 use crate::app::AppEvent;
 use crate::ui::input_box::{InputBox, InputBoxRow};
 use crate::ui::padded::{Padded, PaddedRow};
+use crate::ui::scroll_bar::{ScrollBar, ScrollBarRow};
 use crate::ui::style::Theme;
 use crate::ui::Component;
 
-/// A single drawable row of the command editor.
-pub type CommandEditorRow<'a> = PaddedRow<InputBoxRow<'a>>;
+/// A single drawable row of the command editor. The scroll bar is rendered to
+/// the right of the padded input box.
+#[derive(Debug)]
+pub struct CommandEditorRow<'a> {
+    input: PaddedRow<InputBoxRow<'a>>,
+    bar: ScrollBarRow<'a>,
+}
 
-/// Command input editor. A thin wrapper around `Padded<InputBox>` that also
-/// owns the command history navigation logic. The underlying `InputBox` emits
-/// `AppEvent::HistoryPrev`/`HistoryNext` when the cursor is at the boundaries
-/// of the input; this component intercepts those events and swaps in the
-/// appropriate historical command, so they never propagate to the parent.
+impl Command for CommandEditorRow<'_> {
+    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
+        self.input.write_ansi(f)?;
+        self.bar.write_ansi(f)
+    }
+}
+
+/// Command input editor, wrapper around InputBox
 #[derive(Debug)]
 pub struct CommandEditor {
     input: Padded<InputBox>,
+    scroll_bar: ScrollBar,
     /// Submitted commands, most recent last. Only records newly sent commands
     /// when different from the previously sent command.
     command_history: Vec<String>,
@@ -29,43 +42,66 @@ pub struct CommandEditor {
 
 impl CommandEditor {
     pub fn new(width: usize, max_height: usize, theme: &'static Theme) -> Self {
-        Self {
+        let mut this = Self {
             input: Padded::new(
-                InputBox::new(width.saturating_sub(4), max_height.saturating_sub(2)),
+                // Reserve one column for the scroll bar
+                InputBox::new(width.saturating_sub(5), max_height.saturating_sub(2)),
                 2,
                 1,
                 Some(theme.bg_input_box),
             ),
+            scroll_bar: ScrollBar::new(theme),
             command_history: Vec::new(),
             command_history_pos: 0,
             buffered_command: String::new(),
-        }
+        };
+        this.scroll_bar.set_width(1);
+        this.sync_scroll_bar();
+        this
     }
 
     pub fn input_mut(&mut self) -> &mut InputBox {
         self.input.inner_mut()
     }
+
+    /// Syncs the scroll bar with the current state of the input box.
+    // XXX: This is kind of a kludge to handle the way StackedView allows the
+    // input box to set its own height
+    fn sync_scroll_bar(&mut self) {
+        let input = self.input.inner();
+        self.scroll_bar.set_num_rows(input.num_rows());
+        self.scroll_bar.set_viewport(input.viewport_top_pos(), input.viewport_bottom_pos());
+        self.scroll_bar.set_height(self.input.height());
+    }
 }
 
 impl Component for CommandEditor {
-    type Row<'a> = PaddedRow<InputBoxRow<'a>> where Self: 'a;
+    type Row<'a> = CommandEditorRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
     type EventReponse = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
-        self.input.drawable_rows()
+        Box::new(
+            self.input
+                .drawable_rows()
+                .zip(self.scroll_bar.drawable_rows())
+                .map(|(input, bar)| CommandEditorRow { input, bar }),
+        )
     }
 
     fn set_width(&mut self, width: usize) {
-        self.input.set_width(width);
+        self.input.set_width(width.saturating_sub(1));
+        self.scroll_bar.set_width(1);
+        self.sync_scroll_bar();
     }
 
     fn set_height(&mut self, height: usize) {
         self.input.set_height(height);
+        self.sync_scroll_bar();
     }
 
     fn width(&self) -> usize {
-        self.input.width()
+        self.input.width() + 1
     }
 
     fn height(&self) -> usize {
@@ -78,14 +114,14 @@ impl Component for CommandEditor {
 
     fn handle_event(&mut self, event: Event) -> Self::EventReponse {
         let response = self.input.handle_event(event);
-        match &response {
+        let response = match response {
             Some(AppEvent::Command(text)) => {
-                if self.command_history.last() != Some(text) {
+                if self.command_history.last() != Some(&text) {
                     self.command_history.push(text.clone());
                 }
                 self.command_history_pos = self.command_history.len();
                 self.buffered_command.clear();
-                response
+                Some(AppEvent::Command(text))
             }
             Some(AppEvent::HistoryPrev) => {
                 if self.command_history_pos > 0 {
@@ -116,6 +152,8 @@ impl Component for CommandEditor {
                 None
             }
             None => None,
-        }
+        };
+        self.sync_scroll_bar();
+        response
     }
 }

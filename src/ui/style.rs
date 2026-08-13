@@ -174,7 +174,7 @@ pub const THEME_DARK: Theme = Theme {
     text_code: text_style! { fg_color: YELLOW_200 },
     text_math: text_style! { fg_color: YELLOW_200, italic: true },
     text_error: text_style! { fg_color: RED_400 },
-    text_scroll_bar_track: text_style! { fg_color: GREY_800 },
+    text_scroll_bar_track: text_style! { fg_color: GREY_900 },
     text_scroll_bar_focused: text_style! { fg_color: SKY_400 },
     text_scroll_bar_unfocused: text_style! { fg_color: GREY_600 },
     bg_base: GREY_950,

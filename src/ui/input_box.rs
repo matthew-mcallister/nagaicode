@@ -849,6 +849,7 @@ impl InputBox {
 
     /// Deletes all graphemes from the beginning of the current logical line up
     /// to the cursor.
+    // FIXME: This should delete trailing newline if used at start of line
     pub fn delete_to_line_start(&mut self) {
         let line = self.rows[self.cursor_row].line;
         let start = GraphemePos(self.lines[line].first_row, 0);
@@ -1084,7 +1085,9 @@ impl Component for InputBox {
 
     fn cursor(&self) -> Option<(usize, usize)> {
         let row = self.row_diff(self.viewport_top, self.cursor_row) as usize;
-        Some((row, self.cursor_col))
+        let cursor_pos = self.cursor_pos();
+        let col = self.rows[cursor_pos.row()].graphemes[cursor_pos.grapheme()].column;
+        Some((row, col as usize))
     }
 
     fn handle_event(&mut self, event: Event) -> Self::EventReponse {

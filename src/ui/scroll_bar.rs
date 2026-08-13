@@ -26,6 +26,7 @@ pub struct ScrollBar {
     /// Row index of the last visible row
     bottom: usize,
     /// Whether the scrolled component is focused
+    // TODO: Actually set this
     focused: bool,
 }
 
@@ -67,7 +68,7 @@ impl ScrollBar {
         if self.num_rows == 0 || self.height == 0 {
             return (0, 0);
         }
-        let bar_height = ((self.bottom - self.top + 1) * self.height) / self.num_rows;
+        let bar_height = (((self.bottom - self.top + 1) * self.height) + self.num_rows - 1) / self.num_rows;
         let start = (self.top * self.height) / self.num_rows;
         (start, start + bar_height)
     }
