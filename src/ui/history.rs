@@ -94,7 +94,7 @@ impl HistoryItem {
             rows,
             width,
             HistoryItemContent::Markdown(md.to_string()),
-            render_markdown(theme, width, md),
+            render_markdown(theme, width, md).rows,
         )
     }
 

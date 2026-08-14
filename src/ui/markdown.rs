@@ -311,6 +311,11 @@ struct FlowBuilder {
     row: StyledString,
     /// Completed rows.
     rows: Vec<String>,
+    /// Recursion depth
+    depth: usize,
+    /// Place to begin at next rerender. This is the start of the last flow
+    /// item at top level.
+    resume_point: ResumePoint,
 }
 
 impl FlowBuilder {
@@ -321,6 +326,11 @@ impl FlowBuilder {
             prefix: StyledString::new(theme.text_base, 2 * width),
             row: StyledString::new(theme.text_base, 2 * width),
             rows: Vec::new(),
+            depth: 0,
+            resume_point: ResumePoint {
+                offset: 0,
+                row: 0,
+            },
         }
     }
 
@@ -363,11 +373,14 @@ impl FlowBuilder {
         self.apply_prefix();
     }
 
-    fn finish(mut self) -> Vec<String> {
+    fn finish(mut self) -> MarkdownResult {
         if self.row.len() > self.prefix.len() {
             self.end_row();
         }
-        self.rows
+        MarkdownResult {
+            rows: self.rows,
+            resume_point: self.resume_point,
+        }
     }
 
     fn remaining_width(&self) -> usize {
@@ -497,14 +510,27 @@ fn blockquote(flow: &mut FlowBuilder, quote: &Blockquote) {
 }
 
 fn push_flow_children(flow: &mut FlowBuilder, spread: bool, children: &[Node]) {
-    let mut first = true;
-    for child in children {
-        if !first && spread {
+    flow.depth += 1;
+    for (i, child) in children.iter().enumerate() {
+        if i > 0 && spread {
+            // Empty line
             flow.end_row();
         }
-        first = false;
+
+        if flow.depth <= 1
+            && i == children.len() - 1
+            && let Some(point) = child.position()
+        {
+            // Set resume point if at top level
+            flow.resume_point = ResumePoint {
+                offset: point.start.offset,
+                row: flow.rows.len(),
+            }
+        }
+
         push_flow_node(flow, child);
     }
+    flow.depth -= 1;
 }
 
 fn footnote_definition(flow: &mut FlowBuilder, footnote: &FootnoteDefinition) {
@@ -615,13 +641,31 @@ fn push_flow_node(flow: &mut FlowBuilder, node: &Node) {
     }
 }
 
+/// Place to begin at next Markdown rerender
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResumePoint {
+    /// Byte offset in source
+    pub offset: usize,
+    /// Row in rendered output
+    pub row: usize,
+}
+
+/// Output of Markdown rendering runction
+#[derive(Debug)]
+pub struct MarkdownResult {
+    /// Rendered rows
+    pub rows: Vec<String>,
+    /// Place to begin next rerender
+    pub resume_point: ResumePoint,
+}
+
 /// Converts a markdown document into preformatted lines ready to be printed
 /// to stdout. Every row is exactly `width` columns wide.
 pub fn render_markdown(
     theme: &'static Theme,
     width: usize,
     text: &str,
-) -> Vec<String> {
+) -> MarkdownResult {
     let node = markdown::to_mdast(
         text,
         &markdown::ParseOptions {
@@ -644,15 +688,15 @@ pub fn render_mdast(
     theme: &'static Theme,
     width: usize,
     node: &Node,
-) -> Vec<String> {
+) -> MarkdownResult {
     let mut flow = FlowBuilder::new(theme, width);
+
+    // Do full style update
+    let _ = SetStyle(theme.text_base.into()).write_ansi(&mut flow.prefix.inner);
+    flow.prefix.set_style(theme.text_base);
     push_flow_node(&mut flow, node);
-    let mut style_prefix = String::new();
-    let _ = SetStyle(theme.text_base.into()).write_ansi(&mut style_prefix);
+
     flow.finish()
-        .into_iter()
-        .map(|row| format!("{}{}", style_prefix, &row))
-        .collect()
 }
 
 #[cfg(test)]
@@ -663,16 +707,17 @@ mod test_paragraph {
     use crate::ui::style::THEME_DARK;
 
     fn render(text: &str, width: usize) -> String {
-        let mut lines = super::render_markdown(&THEME_DARK, width, text);
+        let result = super::render_markdown(&THEME_DARK, width, text);
 
         // In tests, strip the style initialization commands for readability
         let mut prefix = String::new();
         let _ = SetStyle(THEME_DARK.text_base.into()).write_ansi(&mut prefix);
-        for line in lines.iter_mut() {
-            *line = line.trim_start_matches(&prefix).to_owned();
+        let mut rows = result.rows;
+        for row in rows.iter_mut() {
+            *row = row.trim_start_matches(&prefix).to_owned();
         }
 
-        lines.join("\n")
+        rows.join("\n")
     }
 
     #[test]
@@ -878,6 +923,67 @@ mod test_paragraph {
         assert_eq!(
             render("1. one\n    1. two\n    2. three", 12),
             "1. one      \n   1. two   \n   2. three ",
+        );
+    }
+
+    #[test]
+    fn resume_point() {
+        let res = super::render_markdown(&THEME_DARK, 20, "");
+        assert_eq!(res.resume_point, super::ResumePoint { offset: 0, row: 0 });
+
+        let res = super::render_markdown(&THEME_DARK, 20, "hello world");
+        assert_eq!(res.resume_point, super::ResumePoint { offset: 0, row: 0 });
+
+        let text = "first paragraph\n\nsecond paragraph";
+        let res = super::render_markdown(&THEME_DARK, 20, text);
+        assert_eq!(
+            res.resume_point,
+            super::ResumePoint {
+                offset: 17,
+                row: 2,
+            }
+        );
+
+        let text = "hello world foo\n\nbar";
+        let res = super::render_markdown(&THEME_DARK, 8, text);
+        assert_eq!(
+            res.resume_point,
+            super::ResumePoint {
+                offset: 17,
+                row: 4,
+            }
+        );
+
+        // Children inside a blockquote should not overwrite the top-level resume point
+        let text = "> first\n>\n> second";
+        let res = super::render_markdown(&THEME_DARK, 16, text);
+        assert_eq!(
+            res.resume_point,
+            super::ResumePoint {
+                offset: 0,
+                row: 0,
+            }
+        );
+
+        let text2 = "> quote\n\nparagraph";
+        let res2 = super::render_markdown(&THEME_DARK, 20, text2);
+        assert_eq!(
+            res2.resume_point,
+            super::ResumePoint {
+                offset: 9,
+                row: 2,
+            }
+        );
+
+        let text = "# Title\n\n```\nlet x = 1;\n```\n\n- item 1\n- item 2";
+        let res = super::render_markdown(&THEME_DARK, 20, text);
+        let list_offset = text.find("- item 1").unwrap();
+        assert_eq!(
+            res.resume_point,
+            super::ResumePoint {
+                offset: list_offset,
+                row: 4,
+            }
         );
     }
 }
