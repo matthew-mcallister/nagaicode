@@ -14,7 +14,7 @@ use crate::ui::chat::Chat;
 use crate::ui::history::HistoryItemContent;
 use crate::ui::style::THEME_DARK;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
     Command(String),
     /// Navigate to the previous entry in the command history.

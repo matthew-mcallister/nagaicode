@@ -1,3 +1,5 @@
+// TODO: Should execute the correct command as long as you type any prefix that
+// uniquely determines that command
 use std::error::Error;
 
 use dedent::dedent;
