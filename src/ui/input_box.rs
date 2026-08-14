@@ -806,27 +806,37 @@ impl InputBox {
         }
     }
 
-    /// Moves the cursor to the beginning of the current logical line.
+    /// Moves the cursor to the beginning of the current logical line. If
+    /// already at the beginning of the line, moves back one character.
     pub fn go_to_line_start(&mut self) {
         self.overwrite_buffer = true;
         let line = self.rows[self.cursor_row].line;
-        self.cursor_row = self.lines[line].first_row;
-        self.cursor_col = 0;
+        let first_row = self.lines[line].first_row;
+        if self.cursor_row == first_row && self.cursor_col == 0 {
+            self.move_left();
+        } else {
+            self.cursor_row = first_row;
+            self.cursor_col = 0;
+        }
     }
 
-    /// Moves the cursor to the end of the current logical line.
-    // FIXME: Should go fwd one character if already at line end
+    /// Moves the cursor to the end of the current logical line. If already at
+    /// the end of the line, moves forward one character.
     pub fn go_to_line_end(&mut self) {
         self.overwrite_buffer = true;
         let line = self.rows[self.cursor_row].line;
         let last_row = self.lines[line].last_row;
-        self.cursor_row = last_row;
-        self.cursor_col = self.rows[last_row].width;
+        let last_width = self.rows[last_row].width;
+        if self.cursor_row == last_row && self.cursor_col == last_width {
+            self.move_right();
+        } else {
+            self.cursor_row = last_row;
+            self.cursor_col = last_width;
+        }
     }
 
     /// Moves the cursor to the very beginning of all input text and scrolls
     /// the viewport so that the first row is visible.
-    // FIXME: Should go back one character if already at line start
     pub fn go_to_start(&mut self) {
         self.overwrite_buffer = true;
         let first = self.first_row();
@@ -1710,6 +1720,84 @@ That on himself such murd'rous shame commits.
         assert_eq!(input.get_text(), "abcd\ne\n");
         assert_eq!(input.num_lines(), 2);
         assert_eq!(input.buffer, "fgh");
+    }
+
+    #[test]
+    fn test_go_to_line_start_and_end() {
+        let mut input = InputBox::new(80, 8);
+        input.set_text("first\nsecond\nthird");
+        let rows = row_ids(&input);
+        assert_eq!(rows.len(), 3);
+
+        // Start in the middle of line 2.
+        input.cursor_row = rows[1];
+        input.cursor_col = 3;
+
+        // First call to go_to_line_start goes to the start of the current line.
+        input.go_to_line_start();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 0));
+
+        // Repeated call when already at start goes back one character (end of previous line).
+        input.go_to_line_start();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 5));
+
+        // Moving to start of first line.
+        input.go_to_line_start();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
+
+        // Repeated call at the very beginning of the buffer stays at (rows[0], 0).
+        input.go_to_line_start();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
+
+        // go_to_line_end from start goes to end of current line.
+        input.go_to_line_end();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 5));
+
+        // Repeated call when already at line end goes forward one character (start of next line).
+        input.go_to_line_end();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 0));
+
+        // Go to end of line 2.
+        input.go_to_line_end();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 6));
+
+        // Forward to start of line 3.
+        input.go_to_line_end();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[2], 0));
+
+        // Go to end of line 3.
+        input.go_to_line_end();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[2], 5));
+
+        // Repeated call at the very end of the buffer stays at (rows[2], 5).
+        input.go_to_line_end();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[2], 5));
+
+        // Wrapped line test
+        let mut input = InputBox::new(10, 8);
+        input.paste("123456789 123456789\nabc");
+        let rows = row_ids(&input);
+        assert_eq!(rows.len(), 3);
+
+        // Cursor at row 1 (the wrapped second row of line 1), col 5.
+        input.cursor_row = rows[1];
+        input.cursor_col = 5;
+
+        // Line start goes to the start of the entire logical line (row 0, col 0).
+        input.go_to_line_start();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[0], 0));
+
+        // Line end goes to the end of the entire logical line (row 1, col 9).
+        input.go_to_line_end();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 9));
+
+        // Line end when already at line end advances to the next line (row 2, col 0).
+        input.go_to_line_end();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[2], 0));
+
+        // Line start when at line start moves back to the end of previous line (row 1, col 9).
+        input.go_to_line_start();
+        assert_eq!((input.cursor_row, input.cursor_col), (rows[1], 9));
     }
 
     #[test]
