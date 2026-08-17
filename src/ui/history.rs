@@ -8,7 +8,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::style::SetStyle;
 
 use crate::arena::{Arena, Id};
-use crate::ui::markdown::render_markdown;
+use crate::ui::markdown::{ResumePoint, render_markdown};
 use crate::ui::style::Theme;
 use crate::ui::Component;
 use crate::ui::text::wrap_line;
@@ -71,6 +71,10 @@ pub enum HistoryItemContent {
     Help(String),
     Error(String),
     Markdown(String),
+    Content {
+        id: i32,
+        resume_point: ResumePoint,
+    },
 }
 
 #[derive(Debug)]
@@ -138,6 +142,9 @@ impl HistoryItem {
         content: HistoryItemContent,
     ) -> Id<Self> {
         match content {
+            HistoryItemContent::Content { id, resume_point } => {
+                todo!()
+            }
             HistoryItemContent::Markdown(md) => {
                 Self::from_markdown(theme, items, rows, width, &md)
             }
@@ -461,7 +468,8 @@ impl Command for HistoryRowRef<'_> {
 impl Component for History {
     type Row<'a> = HistoryRowRef<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type EventReponse = ();
+    type InEvent = Event;
+    type OutEvent = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let prev = self.rows[self.viewport_top].prev;
@@ -494,7 +502,7 @@ impl Component for History {
         None
     }
 
-    fn handle_event(&mut self, event: Event) -> Self::EventReponse {
+    fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
         let KeyEvent { code, modifiers, .. } = match event {
             Event::Key(key) => key,
             _ => return,

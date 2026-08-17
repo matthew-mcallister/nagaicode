@@ -67,7 +67,8 @@ impl HistoryView {
 impl Component for HistoryView {
     type Row<'a> = HistoryViewRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type EventReponse = ();
+    type InEvent = Event;
+    type OutEvent = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         Box::new(
@@ -106,7 +107,7 @@ impl Component for HistoryView {
         self.history.cursor()
     }
 
-    fn handle_event(&mut self, event: Event) -> Self::EventReponse {
+    fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
         self.history.handle_event(event);
         self.sync_scroll_bar();
     }

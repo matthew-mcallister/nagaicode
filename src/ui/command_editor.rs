@@ -81,7 +81,8 @@ impl CommandEditor {
 impl Component for CommandEditor {
     type Row<'a> = CommandEditorRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type EventReponse = Option<AppEvent>;
+    type InEvent = Event;
+    type OutEvent = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         Box::new(
@@ -120,7 +121,7 @@ impl Component for CommandEditor {
         self.input.cursor()
     }
 
-    fn handle_event(&mut self, event: Event) -> Self::EventReponse {
+    fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
         if let Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers, .. }) = event
             && modifiers.contains(KeyModifiers::CONTROL)
         {

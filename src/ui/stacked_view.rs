@@ -115,7 +115,8 @@ impl Command for StackedRow<'_> {
 impl Component for StackedView {
     type Row<'a> = StackedRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type EventReponse = Option<AppEvent>;
+    type InEvent = Event;
+    type OutEvent = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let empty_rows = self
@@ -173,7 +174,7 @@ impl Component for StackedView {
         }
     }
 
-    fn handle_event(&mut self, event: Event) -> Self::EventReponse {
+    fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
         // Tab (with no modifiers) toggles focus between children and is consumed
         // rather than forwarded.
         if let Event::Key(KeyEvent { code: KeyCode::Tab, modifiers: KeyModifiers::NONE, .. }) = event {

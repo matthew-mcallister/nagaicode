@@ -95,7 +95,8 @@ impl Command for ScrollBarRow<'_> {
 impl Component for ScrollBar {
     type Row<'a> = ScrollBarRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type EventReponse = ();
+    type InEvent = Event;
+    type OutEvent = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let (start, end) = self.scroll_bar_range();
@@ -137,7 +138,7 @@ impl Component for ScrollBar {
         None
     }
 
-    fn handle_event(&mut self, _event: Event) -> Self::EventReponse {
+    fn handle_event(&mut self, _event: Self::InEvent) -> Self::OutEvent {
     }
 }
 
