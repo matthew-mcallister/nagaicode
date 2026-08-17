@@ -2,11 +2,12 @@ use std::fmt;
 
 use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use derive_more::From;
 
 use crate::app::AppEvent;
-use crate::ui::input_box::{InputBox, InputBoxRow};
+use crate::ui::input_box::{self, InputBox, InputBoxRow};
 use crate::ui::padded::{Padded, PaddedRow};
-use crate::ui::scroll_bar::{ScrollBar, ScrollBarRow};
+use crate::ui::scroll_bar::{self, ScrollBar, ScrollBarRow};
 use crate::ui::style::Theme;
 use crate::ui::Component;
 
@@ -78,10 +79,33 @@ impl CommandEditor {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, From)]
+pub enum InEvent {
+    Input(Event),
+}
+
+impl TryFrom<InEvent> for input_box::InEvent {
+    type Error = ();
+
+    fn try_from(event: InEvent) -> Result<Self, Self::Error> {
+        match event {
+            InEvent::Input(event) => Ok(event.into()),
+        }
+    }
+}
+
+impl TryFrom<InEvent> for scroll_bar::InEvent {
+    type Error = ();
+
+    fn try_from(_event: InEvent) -> Result<Self, Self::Error> {
+        Err(())
+    }
+}
+
 impl Component for CommandEditor {
     type Row<'a> = CommandEditorRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type InEvent = Event;
+    type InEvent = InEvent;
     type OutEvent = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -122,7 +146,8 @@ impl Component for CommandEditor {
     }
 
     fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
-        if let Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers, .. }) = event
+        let InEvent::Input(raw_event) = &event;
+        if let Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers, .. }) = raw_event
             && modifiers.contains(KeyModifiers::CONTROL)
         {
             let mut text = self.input.inner().get_text();
@@ -141,7 +166,15 @@ impl Component for CommandEditor {
             return None;
         }
 
-        let response = self.input.handle_event(event);
+        if let Ok(child_event) = scroll_bar::InEvent::try_from(event.clone()) {
+            self.scroll_bar.handle_event(child_event);
+        }
+
+        let response = if let Ok(child_event) = input_box::InEvent::try_from(event) {
+            self.input.handle_event(child_event)
+        } else {
+            None
+        };
         let response = match response {
             Some(AppEvent::Command(text)) => {
                 if self.has_temp_cmd {
@@ -202,84 +235,84 @@ mod tests {
         editor.input_mut().set_text("draft command");
 
         let event = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
-        let response = editor.handle_event(event);
+        let response = editor.handle_event(event.into());
         assert_eq!(response, None);
         assert_eq!(editor.input.inner().get_text(), "\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)).into());
         assert_eq!(editor.input.inner().get_text(), "draft command\n");
 
         let mut editor = CommandEditor::new(80, 8, &THEME_DARK);
         editor.input_mut().set_text("temporary");
-        editor.handle_event(Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+        editor.handle_event(Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)).into());
         assert_eq!(editor.input.inner().get_text(), "\n");
 
         editor.input_mut().set_text("submitted");
-        let response = editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Enter)));
+        let response = editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Enter)).into());
         assert_eq!(response, Some(AppEvent::Command("submitted".to_string())));
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)).into());
         assert_eq!(editor.input.inner().get_text(), "submitted\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)).into());
         assert_eq!(editor.input.inner().get_text(), "submitted\n");
 
         let mut editor = CommandEditor::new(80, 8, &THEME_DARK);
         editor.input_mut().set_text("temp1");
-        editor.handle_event(Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+        editor.handle_event(Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)).into());
 
         editor.input_mut().set_text("temp2");
-        editor.handle_event(Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+        editor.handle_event(Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)).into());
         assert_eq!(editor.input.inner().get_text(), "\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)).into());
         assert_eq!(editor.input.inner().get_text(), "temp2\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)).into());
         assert_eq!(editor.input.inner().get_text(), "temp2\n");
 
         let mut editor = CommandEditor::new(80, 8, &THEME_DARK);
         editor.input_mut().set_text("cmd1");
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Enter)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Enter)).into());
 
         editor.input_mut().set_text("cmd2");
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Enter)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Enter)).into());
 
         editor.input_mut().set_text("cmd3_draft");
-        editor.handle_event(Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+        editor.handle_event(Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)).into());
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)).into());
         assert_eq!(editor.input.inner().get_text(), "cmd3_draft\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)).into());
         assert_eq!(editor.input.inner().get_text(), "cmd2\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)).into());
         assert_eq!(editor.input.inner().get_text(), "cmd1\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Down)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Down)).into());
         assert_eq!(editor.input.inner().get_text(), "cmd1\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Down)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Down)).into());
         assert_eq!(editor.input.inner().get_text(), "cmd2\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Down)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Down)).into());
         assert_eq!(editor.input.inner().get_text(), "cmd3_draft\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Down)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Down)).into());
         assert_eq!(editor.input.inner().get_text(), "\n");
 
         editor.input_mut().set_text("cmd3_final");
-        let response = editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Enter)));
+        let response = editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Enter)).into());
         assert_eq!(response, Some(AppEvent::Command("cmd3_final".to_string())));
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)).into());
         assert_eq!(editor.input.inner().get_text(), "cmd3_final\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)).into());
         assert_eq!(editor.input.inner().get_text(), "cmd2\n");
 
-        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)));
+        editor.handle_event(Event::Key(KeyEvent::from(KeyCode::Up)).into());
         assert_eq!(editor.input.inner().get_text(), "cmd1\n");
     }
 }

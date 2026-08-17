@@ -1,10 +1,11 @@
 use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use derive_more::From;
 
 use crate::app::AppEvent;
 use crate::ui::style::Theme;
-use crate::ui::command_editor::{CommandEditor, CommandEditorRow};
-use crate::ui::history_view::{HistoryView, HistoryViewRow};
+use crate::ui::command_editor::{self, CommandEditor, CommandEditorRow};
+use crate::ui::history_view::{self, HistoryView, HistoryViewRow};
 use crate::ui::{write_spaces, Component};
 
 /// Which child of `StackedView` currently receives keyboard input.
@@ -112,10 +113,35 @@ impl Command for StackedRow<'_> {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, From)]
+pub enum InEvent {
+    Input(Event),
+}
+
+impl TryFrom<InEvent> for history_view::InEvent {
+    type Error = ();
+
+    fn try_from(event: InEvent) -> Result<Self, Self::Error> {
+        match event {
+            InEvent::Input(event) => Ok(event.into()),
+        }
+    }
+}
+
+impl TryFrom<InEvent> for command_editor::InEvent {
+    type Error = ();
+
+    fn try_from(event: InEvent) -> Result<Self, Self::Error> {
+        match event {
+            InEvent::Input(event) => Ok(event.into()),
+        }
+    }
+}
+
 impl Component for StackedView {
     type Row<'a> = StackedRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type InEvent = Event;
+    type InEvent = InEvent;
     type OutEvent = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -177,17 +203,26 @@ impl Component for StackedView {
     fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
         // Tab (with no modifiers) toggles focus between children and is consumed
         // rather than forwarded.
-        if let Event::Key(KeyEvent { code: KeyCode::Tab, modifiers: KeyModifiers::NONE, .. }) = event {
+        let InEvent::Input(raw_event) = &event;
+        if let Event::Key(KeyEvent { code: KeyCode::Tab, modifiers: KeyModifiers::NONE, .. }) = raw_event {
             self.toggle_focus();
             self.focus_child();
             return None;
         }
         match self.focus_state {
             FocusState::History => {
-                self.history.handle_event(event);
+                if let Ok(child_event) = history_view::InEvent::try_from(event) {
+                    self.history.handle_event(child_event);
+                }
                 None
             }
-            FocusState::CommandEditor => self.input.handle_event(event),
+            FocusState::CommandEditor => {
+                if let Ok(child_event) = command_editor::InEvent::try_from(event) {
+                    self.input.handle_event(child_event)
+                } else {
+                    None
+                }
+            }
         }
     }
 }

@@ -2,9 +2,10 @@ use std::fmt;
 
 use crossterm::Command;
 use crossterm::event::Event;
+use derive_more::From;
 
-use crate::ui::history::{History, HistoryItemContent, HistoryRowRef};
-use crate::ui::scroll_bar::{ScrollBar, ScrollBarRow};
+use crate::ui::history::{self, History, HistoryItemContent, HistoryRowRef};
+use crate::ui::scroll_bar::{self, ScrollBar, ScrollBarRow};
 use crate::ui::style::Theme;
 use crate::ui::Component;
 
@@ -64,10 +65,33 @@ impl HistoryView {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, From)]
+pub enum InEvent {
+    Input(Event),
+}
+
+impl TryFrom<InEvent> for history::InEvent {
+    type Error = ();
+
+    fn try_from(event: InEvent) -> Result<Self, Self::Error> {
+        match event {
+            InEvent::Input(event) => Ok(event.into()),
+        }
+    }
+}
+
+impl TryFrom<InEvent> for scroll_bar::InEvent {
+    type Error = ();
+
+    fn try_from(_event: InEvent) -> Result<Self, Self::Error> {
+        Err(())
+    }
+}
+
 impl Component for HistoryView {
     type Row<'a> = HistoryViewRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type InEvent = Event;
+    type InEvent = InEvent;
     type OutEvent = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -108,7 +132,12 @@ impl Component for HistoryView {
     }
 
     fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
-        self.history.handle_event(event);
+        if let Ok(child_event) = history::InEvent::try_from(event.clone()) {
+            self.history.handle_event(child_event);
+        }
+        if let Ok(child_event) = scroll_bar::InEvent::try_from(event) {
+            self.scroll_bar.handle_event(child_event);
+        }
         self.sync_scroll_bar();
     }
 }

@@ -12,6 +12,7 @@ use std::fmt;
 use compact_str::CompactString;
 use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use derive_more::From;
 
 use crate::app::AppEvent;
 use crate::arena::{Arena, Id};
@@ -1067,10 +1068,15 @@ impl Command for InputBoxRow<'_> {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, From)]
+pub enum InEvent {
+    Input(Event),
+}
+
 impl Component for InputBox {
     type Row<'a> = InputBoxRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type InEvent = Event;
+    type InEvent = InEvent;
     type OutEvent = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -1109,6 +1115,7 @@ impl Component for InputBox {
     }
 
     fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
+        let InEvent::Input(event) = event;
         match event {
             Event::Key(key) => self.handle_key(key),
             _ => None,

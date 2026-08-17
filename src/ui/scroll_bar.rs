@@ -7,6 +7,7 @@ use std::fmt;
 use crossterm::Command;
 use crossterm::event::Event;
 use crossterm::style::SetStyle;
+use derive_more::From;
 
 use crate::ui::style::{TextStyle, Theme};
 use crate::ui::{write_spaces, Component};
@@ -92,10 +93,15 @@ impl Command for ScrollBarRow<'_> {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, From)]
+pub enum InEvent {
+    Input(Event),
+}
+
 impl Component for ScrollBar {
     type Row<'a> = ScrollBarRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type InEvent = Event;
+    type InEvent = InEvent;
     type OutEvent = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {

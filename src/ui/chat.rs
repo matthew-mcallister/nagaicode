@@ -80,7 +80,7 @@ impl Chat {
                 None
             }
             _ => {
-                let response = self.stacked.handle_event(event);
+                let response = self.stacked.handle_event(event.into());
                 // The input box may have grown or shrunk, so recompute the
                 // history region's height.
                 self.stacked.inner_mut().resize();

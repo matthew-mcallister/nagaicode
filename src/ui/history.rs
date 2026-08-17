@@ -6,6 +6,7 @@ use std::fmt;
 use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::style::SetStyle;
+use derive_more::From;
 
 use crate::arena::{Arena, Id};
 use crate::ui::markdown::{ResumePoint, render_markdown};
@@ -465,10 +466,15 @@ impl Command for HistoryRowRef<'_> {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, From)]
+pub enum InEvent {
+    Input(Event),
+}
+
 impl Component for History {
     type Row<'a> = HistoryRowRef<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type InEvent = Event;
+    type InEvent = InEvent;
     type OutEvent = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -503,6 +509,7 @@ impl Component for History {
     }
 
     fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
+        let InEvent::Input(event) = event;
         let KeyEvent { code, modifiers, .. } = match event {
             Event::Key(key) => key,
             _ => return,
@@ -699,13 +706,13 @@ mod tests {
         assert_eq!(history.viewport_bottom_pos(), 14);
 
         // End scrolls the viewport to the last row.
-        history.handle_event(Event::Key(KeyEvent::from(KeyCode::End)));
+        history.handle_event(Event::Key(KeyEvent::from(KeyCode::End)).into());
         assert_eq!(history.viewport_bottom, history.last_row());
         assert_eq!(history.viewport_top_pos(), 16);
         assert_eq!(history.viewport_bottom_pos(), 19);
 
         // Home scrolls the viewport to the first row.
-        history.handle_event(Event::Key(KeyEvent::from(KeyCode::Home)));
+        history.handle_event(Event::Key(KeyEvent::from(KeyCode::Home)).into());
         assert_eq!(history.viewport_top, history.first_row());
         assert_eq!(history.viewport_top_pos(), 0);
         assert_eq!(history.viewport_bottom_pos(), 3);
