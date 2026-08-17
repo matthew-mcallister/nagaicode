@@ -1,9 +1,39 @@
 // @generated automatically by Diesel CLI.
-//
-// NOTE: provider.id is manually corrected from Nullable<Integer> to Integer.
-// SQLite's PRAGMA table_info reports INTEGER PRIMARY KEY as nullable, so Diesel
-// CLI infers it as Nullable<Integer>. This is incorrect — the column is always
-// non-null — so we patch it here to match the Provider struct's `id: i32`.
+
+diesel::table! {
+    chain (id) {
+        id -> Integer,
+        session_id -> Integer,
+        provider_id -> Integer,
+        provider_name -> Text,
+        model_id -> Text,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    content (id) {
+        id -> Integer,
+        item_id -> Integer,
+        r#type -> Text,
+        value -> Text,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    item (id) {
+        id -> Integer,
+        session_id -> Integer,
+        chain_id -> Nullable<Integer>,
+        r#type -> Text,
+        response_id -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
 
 diesel::table! {
     model (provider_id, id) {
@@ -26,9 +56,26 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    session (id) {
+        id -> Integer,
+        name -> Text,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::joinable!(chain -> session (session_id));
+diesel::joinable!(content -> item (item_id));
+diesel::joinable!(item -> chain (chain_id));
+diesel::joinable!(item -> session (session_id));
 diesel::joinable!(model -> provider (provider_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    chain,
+    content,
+    item,
     model,
     provider,
+    session,
 );

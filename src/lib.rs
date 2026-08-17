@@ -10,3 +10,4 @@ pub mod ui;
 pub mod model;
 pub mod provider;
 pub mod schema;
+pub mod session;
