@@ -1,7 +1,11 @@
 use std::error::Error;
+use std::io::Write;
 
+use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event;
 use crossterm::execute;
+use crossterm::queue;
+use crossterm::style::{ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{
     DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
     enable_raw_mode, size,
@@ -12,7 +16,8 @@ use crate::error::AnyResult;
 use crate::model::Model;
 use crate::ui::chat::Chat;
 use crate::ui::history::HistoryItemContent;
-use crate::ui::style::THEME_DARK;
+use crate::ui::style::{Theme, THEME_DARK};
+use crate::ui::Component;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
@@ -28,16 +33,19 @@ pub struct App {
     chat: Chat,
     selected_model: Option<Model>,
     quit: bool,
+    theme: &'static Theme,
 }
 
 impl App {
     pub fn new() -> AnyResult<Self> {
         let (w, h) = size()?;
-        let chat = Chat::new(w, h, &THEME_DARK);
+        let theme = &THEME_DARK;
+        let chat = Chat::new(w, h, theme);
         Ok(Self {
             chat,
             selected_model: None,
             quit: false,
+            theme,
         })
     }
 
@@ -49,14 +57,32 @@ impl App {
         self.selected_model = Some(model);
     }
 
+    pub fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
+        let text_style = self.theme.text_base;
+        let bg = self.theme.bg_base;
+        queue!(stdout,
+            Hide,
+            SetForegroundColor(text_style.fg_color),
+            SetBackgroundColor(bg),
+        )?;
+        for (y, row) in self.chat.drawable_rows().enumerate() {
+            queue!(stdout, MoveTo(0, y as u16), row)?;
+        }
+        if let Some((row, col)) = self.chat.cursor() {
+            queue!(stdout, ResetColor, MoveTo(col as u16, row as u16), Show)?;
+        }
+        stdout.flush()?;
+        Ok(())
+    }
+
     pub fn run(&mut self) -> AnyResult<()> {
         enable_raw_mode()?;
         let mut stdout = std::io::stdout();
         execute!(stdout, EnterAlternateScreen, DisableLineWrap)?;
 
         while !self.quit {
-            self.chat.draw(&mut stdout)?;
-            let event = self.chat.handle_event(event::read()?);
+            self.draw(&mut stdout)?;
+            let event = self.chat.handle_event(event::read()?.into());
             if let Some(event) = event {
                 self.process_event(event);
             }

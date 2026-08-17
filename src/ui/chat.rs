@@ -1,24 +1,18 @@
-use std::io::Write;
-
-use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::Event;
-use crossterm::queue;
-use crossterm::style::{ResetColor, SetBackgroundColor, SetForegroundColor};
 use dedent::dedent;
+use derive_more::From;
 
 use crate::app::AppEvent;
-use crate::error::AnyResult;
 use crate::ui::history::HistoryItemContent;
+use crate::ui::padded::{Padded, PaddedRow};
+use crate::ui::stacked_view::{self, StackedRow, StackedView};
 use crate::ui::style::Theme;
-use crate::ui::padded::Padded;
-use crate::ui::stacked_view::StackedView;
 use crate::ui::Component;
 
 const TEXT_INPUT_MAX_HEIGHT: u16 = 24;
 
 #[derive(Debug)]
 pub struct Chat {
-    theme: &'static Theme,
     stacked: Padded<StackedView>,
 }
 
@@ -43,7 +37,6 @@ impl Chat {
         ).into()));
 
         Self {
-            theme,
             stacked: Padded::new(stacked, 2, 1, Some(theme.bg_base)),
         }
     }
@@ -53,43 +46,75 @@ impl Chat {
         self.stacked.set_height(h as usize);
     }
 
-    // TODO: cap redraw frequency, or maybe pump all events and only redraw
-    // when queue is empty (slightly harder)
-    pub fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
-        let text_style = self.theme.text_base;
-        let bg = self.theme.bg_base;
-        queue!(stdout,
-            Hide,
-            SetForegroundColor(text_style.fg_color),
-            SetBackgroundColor(bg),
-        )?;
-        for (y, row) in self.stacked.drawable_rows().enumerate() {
-            queue!(stdout, MoveTo(0, y as u16), row)?;
-        }
-        if let Some((row, col)) = self.stacked.cursor() {
-            queue!(stdout, ResetColor, MoveTo(col as u16, row as u16), Show)?;
-        }
-        stdout.flush()?;
-        Ok(())
-    }
-
-    pub fn handle_event(&mut self, event: Event) -> Option<AppEvent> {
-        match event {
-            Event::Resize(w, h) => {
-                self.resize(w, h);
-                None
-            }
-            _ => {
-                let response = self.stacked.handle_event(event.into());
-                // The input box may have grown or shrunk, so recompute the
-                // history region's height.
-                self.stacked.inner_mut().resize();
-                response
-            }
-        }
-    }
-
     pub fn add_item(&mut self, content: HistoryItemContent) {
         self.stacked.inner_mut().history_mut().add_item(content);
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, From)]
+pub enum InEvent {
+    Input(Event),
+}
+
+impl TryFrom<InEvent> for stacked_view::InEvent {
+    type Error = ();
+
+    fn try_from(event: InEvent) -> Result<Self, Self::Error> {
+        match event {
+            InEvent::Input(event) => Ok(event.into()),
+        }
+    }
+}
+
+impl Component for Chat {
+    type Row<'a> = PaddedRow<StackedRow<'a>> where Self: 'a;
+    type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
+    type InEvent = InEvent;
+    type OutEvent = Option<AppEvent>;
+
+    fn drawable_rows(&self) -> Self::RowIter<'_> {
+        self.stacked.drawable_rows()
+    }
+
+    fn width(&self) -> usize {
+        self.stacked.width()
+    }
+
+    fn height(&self) -> usize {
+        self.stacked.height()
+    }
+
+    fn cursor(&self) -> Option<(usize, usize)> {
+        self.stacked.cursor()
+    }
+
+    fn set_width(&mut self, width: usize) {
+        self.stacked.set_width(width);
+    }
+
+    fn set_height(&mut self, height: usize) {
+        self.stacked.set_height(height);
+    }
+
+    fn set_focus(&mut self, focused: bool) {
+        self.stacked.set_focus(focused);
+    }
+
+    fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
+        let InEvent::Input(raw_event) = &event;
+        if let Event::Resize(w, h) = *raw_event {
+            self.resize(w, h);
+            return None;
+        }
+
+        let response = if let Ok(child_event) = stacked_view::InEvent::try_from(event) {
+            self.stacked.handle_event(child_event)
+        } else {
+            None
+        };
+        // The input box may have grown or shrunk, so recompute the
+        // history region's height.
+        self.stacked.inner_mut().resize();
+        response
     }
 }
