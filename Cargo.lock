@@ -941,6 +941,7 @@ dependencies = [
  "diesel_migrations",
  "dirs",
  "eventsource-stream",
+ "fnv",
  "futures",
  "libsqlite3-sys",
  "markdown",

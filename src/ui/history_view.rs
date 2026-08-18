@@ -2,8 +2,8 @@ use std::fmt;
 
 use crossterm::Command;
 use crossterm::event::Event;
-use derive_more::From;
 
+use crate::session::Content;
 use crate::ui::history::{self, History, HistoryItemContent, HistoryRowRef};
 use crate::ui::scroll_bar::{self, ScrollBar, ScrollBarRow};
 use crate::ui::style::Theme;
@@ -65,9 +65,17 @@ impl HistoryView {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, From)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InEvent {
     Input(Event),
+    ContentCreated(Content),
+    ContentUpdated(Content),
+}
+
+impl From<Event> for InEvent {
+    fn from(event: Event) -> Self {
+        InEvent::Input(event)
+    }
 }
 
 impl TryFrom<InEvent> for history::InEvent {
@@ -76,6 +84,8 @@ impl TryFrom<InEvent> for history::InEvent {
     fn try_from(event: InEvent) -> Result<Self, Self::Error> {
         match event {
             InEvent::Input(event) => Ok(event.into()),
+            InEvent::ContentCreated(content) => Ok(history::InEvent::ContentCreated(content)),
+            InEvent::ContentUpdated(content) => Ok(history::InEvent::ContentUpdated(content)),
         }
     }
 }

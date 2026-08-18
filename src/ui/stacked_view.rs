@@ -1,8 +1,8 @@
 use crossterm::Command;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use derive_more::From;
+use crossterm::event::{Event, KeyCode, KeyEvent};
 
 use crate::app::AppEvent;
+use crate::session::Content;
 use crate::ui::style::Theme;
 use crate::ui::command_editor::{self, CommandEditor, CommandEditorRow};
 use crate::ui::history_view::{self, HistoryView, HistoryViewRow};
@@ -19,7 +19,7 @@ pub enum FocusState {
 /// Stacks components vertically. The command editor is anchored to the bottom
 /// and grows upward; the history fills the remaining space. Input events are
 /// routed to whichever child is currently focused; Tab toggles focus between
-/// the two. All command history navigation logic lives in `CommandEditor`.
+/// the two.
 #[derive(Debug)]
 pub struct StackedView {
     width: usize,
@@ -113,9 +113,17 @@ impl Command for StackedRow<'_> {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, From)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InEvent {
     Input(Event),
+    ContentCreated(Content),
+    ContentUpdated(Content),
+}
+
+impl From<Event> for InEvent {
+    fn from(event: Event) -> Self {
+        InEvent::Input(event)
+    }
 }
 
 impl TryFrom<InEvent> for history_view::InEvent {
@@ -124,6 +132,8 @@ impl TryFrom<InEvent> for history_view::InEvent {
     fn try_from(event: InEvent) -> Result<Self, Self::Error> {
         match event {
             InEvent::Input(event) => Ok(event.into()),
+            InEvent::ContentCreated(content) => Ok(history_view::InEvent::ContentCreated(content)),
+            InEvent::ContentUpdated(content) => Ok(history_view::InEvent::ContentUpdated(content)),
         }
     }
 }
@@ -134,6 +144,7 @@ impl TryFrom<InEvent> for command_editor::InEvent {
     fn try_from(event: InEvent) -> Result<Self, Self::Error> {
         match event {
             InEvent::Input(event) => Ok(event.into()),
+            InEvent::ContentCreated(_) | InEvent::ContentUpdated(_) => Err(()),
         }
     }
 }
@@ -201,27 +212,31 @@ impl Component for StackedView {
     }
 
     fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
-        // Tab (with no modifiers) toggles focus between children and is consumed
-        // rather than forwarded.
-        let InEvent::Input(raw_event) = &event;
-        if let Event::Key(KeyEvent { code: KeyCode::Tab, modifiers: KeyModifiers::NONE, .. }) = raw_event {
-            self.toggle_focus();
-            self.focus_child();
-            return None;
-        }
-        match self.focus_state {
-            FocusState::History => {
-                if let Ok(child_event) = history_view::InEvent::try_from(event) {
-                    self.history.handle_event(child_event);
-                }
+        match event {
+            // Tab switches focus
+            InEvent::Input(Event::Key(KeyEvent { code: KeyCode::Tab, .. })) => {
+                self.toggle_focus();
+                self.focus_child();
                 None
             }
-            FocusState::CommandEditor => {
-                if let Ok(child_event) = command_editor::InEvent::try_from(event) {
-                    self.input.handle_event(child_event)
-                } else {
-                    None
+            // Input goes to focused element
+            InEvent::Input(e) => {
+                match self.focus_state {
+                    FocusState::History => {
+                        self.history.handle_event(e.into());
+                        None
+                    },
+                    FocusState::CommandEditor => self.input.handle_event(e.into()).into(),
                 }
+            }
+            e => {
+                if let Some(e) = history_view::InEvent::try_from(e.clone()).ok() {
+                    self.history.handle_event(e.into());
+                }
+                if let Some(e) = command_editor::InEvent::try_from(e).ok() {
+                    self.input.handle_event(e.into());
+                }
+                None
             }
         }
     }

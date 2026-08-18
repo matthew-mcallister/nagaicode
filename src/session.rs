@@ -190,7 +190,7 @@ impl Item {
     }
 }
 
-#[derive(Debug, Clone, Queryable, Selectable)]
+#[derive(Debug, Clone, Eq, PartialEq, Queryable, Selectable)]
 #[diesel(table_name = content)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct Content {

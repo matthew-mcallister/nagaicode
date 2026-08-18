@@ -1,8 +1,8 @@
 use crossterm::event::Event;
 use dedent::dedent;
-use derive_more::From;
 
 use crate::app::AppEvent;
+use crate::session::Content;
 use crate::ui::history::HistoryItemContent;
 use crate::ui::padded::{Padded, PaddedRow};
 use crate::ui::stacked_view::{self, StackedRow, StackedView};
@@ -51,9 +51,17 @@ impl Chat {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, From)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InEvent {
     Input(Event),
+    ContentCreated(Content),
+    ContentUpdated(Content),
+}
+
+impl From<Event> for InEvent {
+    fn from(event: Event) -> Self {
+        InEvent::Input(event)
+    }
 }
 
 impl TryFrom<InEvent> for stacked_view::InEvent {
@@ -62,6 +70,8 @@ impl TryFrom<InEvent> for stacked_view::InEvent {
     fn try_from(event: InEvent) -> Result<Self, Self::Error> {
         match event {
             InEvent::Input(event) => Ok(event.into()),
+            InEvent::ContentCreated(content) => Ok(stacked_view::InEvent::ContentCreated(content)),
+            InEvent::ContentUpdated(content) => Ok(stacked_view::InEvent::ContentUpdated(content)),
         }
     }
 }
@@ -101,8 +111,11 @@ impl Component for Chat {
     }
 
     fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
-        let InEvent::Input(raw_event) = &event;
-        if let Event::Resize(w, h) = *raw_event {
+        // Intercept terminal resizes to relayout the chat. Other input
+        // events, as well as content events, are forwarded to the stacked view.
+        if let InEvent::Input(raw_event) = &event
+            && let Event::Resize(w, h) = *raw_event
+        {
             self.resize(w, h);
             return None;
         }
