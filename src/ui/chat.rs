@@ -21,8 +21,8 @@ impl Chat {
         // Minimum dimensions are 80x24. If the terminal is smaller the UI will
         // just overflow the screen. This helps avoid crashes or bizarre bugs
         // caused by pathologically tiny terminals.
-        let w = w.max(20);
-        let h = h.max(16);
+        let w = w.max(80);
+        let h = h.max(24);
 
         let mut stacked = StackedView::new(
             w as usize - 4,

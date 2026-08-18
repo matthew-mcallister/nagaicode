@@ -18,5 +18,5 @@ async fn main() -> AnyResult<()> {
         }
     });
 
-    app::run()
+    app::run().await
 }

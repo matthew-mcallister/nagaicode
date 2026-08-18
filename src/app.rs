@@ -2,18 +2,18 @@ use std::error::Error;
 use std::io::Write;
 
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event;
 use crossterm::execute;
 use crossterm::queue;
 use crossterm::style::{ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{
-    DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-    enable_raw_mode, size,
+    DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use futures::StreamExt;
 
 use crate::command::Command;
 use crate::error::AnyResult;
 use crate::model::Model;
+use crate::terminal::{DefaultTerminal, Terminal};
 use crate::ui::chat::Chat;
 use crate::ui::history::HistoryItemContent;
 use crate::ui::style::{Theme, THEME_DARK};
@@ -30,6 +30,7 @@ pub enum AppEvent {
 
 #[derive(Debug)]
 pub struct App {
+    terminal: DefaultTerminal,
     chat: Chat,
     selected_model: Option<Model>,
     quit: bool,
@@ -37,11 +38,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> AnyResult<Self> {
-        let (w, h) = size()?;
+    pub fn new(terminal: DefaultTerminal) -> AnyResult<Self> {
+        let (w, h) = terminal.size()?;
         let theme = &THEME_DARK;
         let chat = Chat::new(w, h, theme);
         Ok(Self {
+            terminal,
             chat,
             selected_model: None,
             quit: false,
@@ -57,10 +59,13 @@ impl App {
         self.selected_model = Some(model);
     }
 
-    pub fn draw(&self, stdout: &mut impl Write) -> AnyResult<()> {
+    pub fn draw(&mut self) -> AnyResult<()> {
+        let stdout = self.terminal.stdout();
+
         let text_style = self.theme.text_base;
         let bg = self.theme.bg_base;
-        queue!(stdout,
+        queue!(
+            stdout,
             Hide,
             SetForegroundColor(text_style.fg_color),
             SetBackgroundColor(bg),
@@ -75,21 +80,25 @@ impl App {
         Ok(())
     }
 
-    pub fn run(&mut self) -> AnyResult<()> {
-        enable_raw_mode()?;
-        let mut stdout = std::io::stdout();
-        execute!(stdout, EnterAlternateScreen, DisableLineWrap)?;
+    pub async fn run(&mut self) -> AnyResult<()> {
+        self.terminal.enable_raw_mode()?;
+        execute!(self.terminal.stdout(), EnterAlternateScreen, DisableLineWrap)?;
 
         while !self.quit {
-            self.draw(&mut stdout)?;
-            let event = self.chat.handle_input(event::read()?);
+            self.draw()?;
+            let event = self.terminal
+                .events()
+                .next()
+                .await
+                .ok_or_else(|| std::io::Error::other("terminal stream closed"))??;
+            let event = self.chat.handle_input(event);
             if let Some(event) = event {
                 self.process_event(event);
             }
         }
 
-        execute!(stdout, EnableLineWrap, LeaveAlternateScreen)?;
-        disable_raw_mode()?;
+        execute!(self.terminal.stdout(), EnableLineWrap, LeaveAlternateScreen)?;
+        self.terminal.disable_raw_mode()?;
 
         Ok(())
     }
@@ -147,6 +156,6 @@ impl App {
     }
 }
 
-pub fn run() -> AnyResult<()> {
-    App::new()?.run()
+pub async fn run() -> AnyResult<()> {
+    App::new(DefaultTerminal::default())?.run().await
 }
