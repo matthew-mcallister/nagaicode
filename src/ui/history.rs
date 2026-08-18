@@ -9,7 +9,7 @@ use crossterm::style::SetStyle;
 use derive_more::From;
 
 use crate::arena::{Arena, Id};
-use crate::ui::markdown::{ResumePoint, render_markdown};
+use crate::ui::markdown::{render_markdown, ResumePoint};
 use crate::ui::style::Theme;
 use crate::ui::Component;
 use crate::ui::text::wrap_line;
@@ -56,15 +56,63 @@ pub struct HistoryRow {
     next: Id<HistoryRow>,
 }
 
-impl HistoryRow {
-    fn from_preformatted(preformatted: String) -> Self {
-        Self {
-            item: Id::null(),
-            preformatted,
-            next: Id::null(),
-            prev: Id::null(),
+/// Walks `offset` rows from `base` in the circularly linked row list
+/// terminated by the `head` sentinel. Returns `None` if the walk crosses
+/// `head`. `base` itself is returned for `offset == 0`.
+fn row_offset(
+    rows: &Arena<HistoryRow>,
+    head: Id<HistoryRow>,
+    base: Id<HistoryRow>,
+    offset: isize,
+) -> Option<Id<HistoryRow>> {
+    let mut row = base;
+    if offset >= 0 {
+        for _ in 0..offset {
+            row = rows[row].next;
+            if row == head {
+                return None;
+            }
+        }
+    } else {
+        for _ in 0..-offset {
+            row = rows[row].prev;
+            if row == head {
+                return None;
+            }
         }
     }
+    Some(row)
+}
+
+/// Deletes and unlinks rows from the arena
+fn remove_rows(rows: &mut Arena<HistoryRow>, prev: Id<HistoryRow>, count: usize) {
+    for _ in 0..count {
+        let next = rows[prev].next;
+        rows[prev].next = rows[next].next;
+        rows.remove(next);
+    }
+}
+
+// Inserts and links rows
+fn insert_rows(
+    rows: &mut Arena<HistoryRow>,
+    item: Id<HistoryItem>,
+    rendered: Vec<String>,
+    prev: Id<HistoryRow>,
+) {
+    let next = rows[prev].next;
+    let mut last = prev;
+    for preformatted in rendered {
+        let id = rows.insert(HistoryRow {
+            item,
+            preformatted,
+            prev: last,
+            next,
+        });
+        rows[last].next = id;
+        last = id;
+    }
+    rows[next].prev = last;
 }
 
 #[derive(Clone, Debug)]
@@ -72,15 +120,31 @@ pub enum HistoryItemContent {
     Help(String),
     Error(String),
     Markdown(String),
-    Content {
-        id: i32,
+}
+
+#[derive(Clone, Debug)]
+pub enum HistoryItemState {
+    Help(String),
+    Error(String),
+    Markdown {
+        content: String,
         resume_point: ResumePoint,
     },
 }
 
+impl From<HistoryItemState> for HistoryItemContent {
+    fn from(value: HistoryItemState) -> Self {
+        match value {
+            HistoryItemState::Help(content) => HistoryItemContent::Help(content),
+            HistoryItemState::Error(content) => HistoryItemContent::Error(content),
+            HistoryItemState::Markdown { content, .. } => HistoryItemContent::Markdown(content),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct HistoryItem {
-    content: HistoryItemContent,
+    state: HistoryItemState,
     first_row: Id<HistoryRow>,
     last_row: Id<HistoryRow>,
     num_rows: usize,
@@ -91,15 +155,21 @@ impl HistoryItem {
         theme: &'static Theme,
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
+        prev: Id<HistoryRow>,
         width: usize,
         md: &str,
     ) -> Id<Self> {
+        let result = render_markdown(theme, width, md);
         Self::from_rows(
             items,
             rows,
+            prev,
             width,
-            HistoryItemContent::Markdown(md.to_string()),
-            render_markdown(theme, width, md).rows,
+            HistoryItemState::Markdown {
+                content: md.to_string(),
+                resume_point: result.resume_point,
+            },
+            result.rows,
         )
     }
 
@@ -107,14 +177,16 @@ impl HistoryItem {
         theme: &'static Theme,
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
+        prev: Id<HistoryRow>,
         width: usize,
         content: &str,
     ) -> Id<Self> {
         Self::from_rows(
             items,
             rows,
+            prev,
             width,
-            HistoryItemContent::Help(content.to_string()),
+            HistoryItemState::Help(content.to_string()),
             render_help(theme, width, content),
         )
     }
@@ -123,14 +195,16 @@ impl HistoryItem {
         theme: &'static Theme,
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
+        prev: Id<HistoryRow>,
         width: usize,
         content: &str,
     ) -> Id<Self> {
         Self::from_rows(
             items,
             rows,
+            prev,
             width,
-            HistoryItemContent::Error(content.to_string()),
+            HistoryItemState::Error(content.to_string()),
             render_error(theme, width, content),
         )
     }
@@ -139,65 +213,95 @@ impl HistoryItem {
         theme: &'static Theme,
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
+        prev: Id<HistoryRow>,
         width: usize,
         content: HistoryItemContent,
     ) -> Id<Self> {
         match content {
-            HistoryItemContent::Content { id, resume_point } => {
-                todo!()
-            }
             HistoryItemContent::Markdown(md) => {
-                Self::from_markdown(theme, items, rows, width, &md)
+                Self::from_markdown(theme, items, rows, prev, width, &md)
             }
             HistoryItemContent::Help(content) => {
-                Self::from_help(theme, items, rows, width, &content)
+                Self::from_help(theme, items, rows, prev, width, &content)
             }
             HistoryItemContent::Error(content) => {
-                Self::from_error(theme, items, rows, width, &content)
+                Self::from_error(theme, items, rows, prev, width, &content)
             }
         }
+    }
+
+    // Appends text and rerenders
+    pub fn append(
+        &mut self,
+        theme: &'static Theme,
+        rows: &mut Arena<HistoryRow>,
+        head: Id<HistoryRow>,
+        width: usize,
+        delta: &str,
+    ) {
+        let HistoryItemState::Markdown { content, resume_point } = &mut self.state else {
+            panic!("can only append to markdown");
+        };
+        let old_offset = resume_point.offset;
+        let old_row = resume_point.row;
+
+        content.push_str(delta);
+
+        let result = render_markdown(theme, width, &content[old_offset..]);
+
+        // Find insertion position
+        let steps_back = self.num_rows - 1 - old_row;
+        let first = row_offset(rows, head, self.last_row, -(steps_back as isize))
+            .expect("resume point out of bounds");
+        let prev = rows[first].prev;
+        let next = rows[self.last_row].next;
+        let item_id = rows[self.first_row].item;
+
+        // Replace rows
+        remove_rows(rows, prev, self.num_rows - old_row);
+
+        let mut rendered: Vec<String> = result.rows;
+        rendered.push(" ".repeat(width));
+        let len = rendered.len();
+
+        insert_rows(rows, item_id, rendered, prev);
+
+        // Update item
+        if old_row == 0 {
+            self.first_row = rows[prev].next;
+        }
+        self.last_row = rows[next].prev;
+        self.num_rows = old_row + len;
+
+        *resume_point = ResumePoint {
+            offset: old_offset + result.resume_point.offset,
+            row: old_row + result.resume_point.row,
+        };
     }
 
     fn from_rows(
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
+        prev: Id<HistoryRow>,
         width: usize,
-        content: HistoryItemContent,
-        rendered: Vec<String>,
+        state: HistoryItemState,
+        mut rendered: Vec<String>,
     ) -> Id<Self> {
+        let next = rows[prev].next;
+
         let item = items.insert(Self {
-            content,
+            state,
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 0,
         });
 
-        let mut first_row = Id::null();
-        let mut last_row = Id::null();
-        let mut num_rows = 0;
+        rendered.push(" ".repeat(width));   // Add vertical padding row
+        let num_rows = rendered.len();
+        insert_rows(rows, item, rendered, prev);
 
-        // Render the content, then one blank row of vertical padding.
-        let rows_out = rendered
-            .into_iter()
-            .chain(std::iter::repeat_with(|| " ".repeat(width)).take(1));
-
-        for row in rows_out {
-            let mut history_row = HistoryRow::from_preformatted(row);
-            history_row.item = item;
-            history_row.prev = last_row;
-
-            let id = rows.insert(history_row);
-            if last_row != Id::null() {
-                rows[last_row].next = id;
-            } else {
-                first_row = id;
-            }
-            last_row = id;
-            num_rows += 1;
-        }
-
-        items[item].first_row = first_row;
-        items[item].last_row = last_row;
+        items[item].first_row = rows[prev].next;
+        items[item].last_row = rows[next].prev;
         items[item].num_rows = num_rows;
 
         item
@@ -277,19 +381,7 @@ impl History {
     /// O(n) row lookup relative to base row. Returns None if the offset is
     /// out of bounds.
     fn row_offset(&self, base: Id<HistoryRow>, offset: isize) -> Option<Id<HistoryRow>> {
-        let mut row = base;
-        if offset >= 0 {
-            for _ in 0..offset {
-                row = self.rows[row].next;
-                if row == self.head { return None; }
-            }
-        } else {
-            for _ in 0..-offset {
-                row = self.rows[row].prev;
-                if row == self.head { return None; }
-            }
-        }
-        Some(row)
+        row_offset(&self.rows, self.head, base, offset)
     }
 
     /// O(n) row distance relative to base. base must come before other.
@@ -375,10 +467,10 @@ impl History {
         }
         self.width = width;
 
-        let contents: Vec<HistoryItemContent> = self
+        let states: Vec<HistoryItemState> = self
             .item
             .iter()
-            .map(|(_, item)| item.content.clone())
+            .map(|(_, item)| item.state.clone())
             .collect();
 
         self.item.clear();
@@ -398,41 +490,31 @@ impl History {
         self.viewport_top_pos = 0;
         self.viewport_bottom_pos = 0;
 
-        for content in contents {
-            let item = HistoryItem::from_content(
+        for state in states {
+            let prev = self.last_row();
+            HistoryItem::from_content(
                 self.theme,
                 &mut self.item,
                 &mut self.rows,
+                prev,
                 width,
-                content,
+                state.into(),
             );
-            self.append_item(item);
+            self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
         }
-    }
-
-    /// Links a newly created (unlinked) item's rows into the circular list,
-    /// immediately before the head.
-    fn append_item(&mut self, item: Id<HistoryItem>) {
-        let first = self.item[item].first_row;
-        let last = self.item[item].last_row;
-        debug_assert_ne!(first, Id::null());
-        debug_assert_ne!(last, Id::null());
-
-        let old_last = self.rows[self.head].prev;
-        self.rows[old_last].next = first;
-        self.rows[first].prev = old_last;
-        self.rows[last].next = self.head;
-        self.rows[self.head].prev = last;
-
-        self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
 
     /// Appends an item to the history.
     pub fn add_item(&mut self, content: HistoryItemContent) {
-        let item = HistoryItem::from_content(self.theme, &mut self.item, &mut self.rows, self.width, content);
-        self.append_item(item);
-
-        // Follow the newest messages.
+        let prev = self.last_row();
+        HistoryItem::from_content(
+            self.theme,
+            &mut self.item,
+            &mut self.rows,
+            prev,
+            self.width,
+            content,
+        );
         self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
 
@@ -572,6 +654,22 @@ mod tests {
 
     fn history(width: usize, max_height: usize) -> History {
         History::new(width, max_height, &THEME_DARK)
+    }
+
+    fn update_item(history: &mut History, index: usize, delta: &str) {
+        let id = history.item.id_at(index);
+        let theme = history.theme;
+        let width = history.width;
+        history.item[id].append(theme, &mut history.rows, history.head, width, delta);
+        history.set_viewport_bottom_at(history.last_row(), history.num_rows() - 1);
+    }
+
+    fn render_history(history: &History) -> String {
+        history
+            .iter_range(history.head, history.last_row())
+            .map(|(_, row)| row.preformatted.clone())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -716,5 +814,22 @@ mod tests {
         assert_eq!(history.viewport_top, history.first_row());
         assert_eq!(history.viewport_top_pos(), 0);
         assert_eq!(history.viewport_bottom_pos(), 3);
+    }
+
+    #[test]
+    fn test_append() {
+        let full = "# Title\n\nfirst\n\nsecond\n\nthird";
+
+        let mut incremental = history(20, 20);
+        incremental.add_item(HistoryItemContent::Markdown("# Title".into()));
+        update_item(&mut incremental, 0, "\n\nfirst");
+        update_item(&mut incremental, 0, "\n\nsecond");
+        update_item(&mut incremental, 0, "\n\nthird");
+        assert_eq!(incremental.num_rows(), 8);
+
+        let mut whole = history(20, 20);
+        whole.add_item(HistoryItemContent::Markdown(full.into()));
+
+        assert_eq!(render_history(&incremental), render_history(&whole));
     }
 }

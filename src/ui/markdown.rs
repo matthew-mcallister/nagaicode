@@ -694,6 +694,7 @@ pub fn render_mdast(
     // Do full style update
     let _ = SetStyle(theme.text_base.into()).write_ansi(&mut flow.prefix.inner);
     flow.prefix.set_style(theme.text_base);
+    flow.apply_prefix();
     push_flow_node(&mut flow, node);
 
     flow.finish()
