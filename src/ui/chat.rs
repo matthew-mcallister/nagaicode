@@ -52,26 +52,18 @@ impl Chat {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum InEvent {
-    Input(Event),
+pub enum Update {
     ContentCreated(Content),
     ContentUpdated(Content),
 }
 
-impl From<Event> for InEvent {
-    fn from(event: Event) -> Self {
-        InEvent::Input(event)
-    }
-}
-
-impl TryFrom<InEvent> for stacked_view::InEvent {
+impl TryFrom<Update> for stacked_view::Update {
     type Error = ();
 
-    fn try_from(event: InEvent) -> Result<Self, Self::Error> {
-        match event {
-            InEvent::Input(event) => Ok(event.into()),
-            InEvent::ContentCreated(content) => Ok(stacked_view::InEvent::ContentCreated(content)),
-            InEvent::ContentUpdated(content) => Ok(stacked_view::InEvent::ContentUpdated(content)),
+    fn try_from(update: Update) -> Result<Self, Self::Error> {
+        match update {
+            Update::ContentCreated(content) => Ok(stacked_view::Update::ContentCreated(content)),
+            Update::ContentUpdated(content) => Ok(stacked_view::Update::ContentUpdated(content)),
         }
     }
 }
@@ -79,8 +71,8 @@ impl TryFrom<InEvent> for stacked_view::InEvent {
 impl Component for Chat {
     type Row<'a> = PaddedRow<StackedRow<'a>> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type InEvent = InEvent;
-    type OutEvent = Option<AppEvent>;
+    type Update = Update;
+    type Event = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         self.stacked.drawable_rows()
@@ -110,24 +102,24 @@ impl Component for Chat {
         self.stacked.set_focus(focused);
     }
 
-    fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
-        // Intercept terminal resizes to relayout the chat. Other input
-        // events, as well as content events, are forwarded to the stacked view.
-        if let InEvent::Input(raw_event) = &event
-            && let Event::Resize(w, h) = *raw_event
-        {
+    fn handle_input(&mut self, event: Event) -> Self::Event {
+        // Intercept terminal resizes to relayout the chat. Other input events
+        // are forwarded to the stacked view.
+        if let Event::Resize(w, h) = event {
             self.resize(w, h);
             return None;
         }
 
-        let response = if let Ok(child_event) = stacked_view::InEvent::try_from(event) {
-            self.stacked.handle_event(child_event)
-        } else {
-            None
-        };
+        let response = self.stacked.handle_input(event);
         // The input box may have grown or shrunk, so recompute the
         // history region's height.
         self.stacked.inner_mut().resize();
         response
+    }
+
+    fn handle_update(&mut self, update: Self::Update) {
+        if let Ok(child_update) = stacked_view::Update::try_from(update) {
+            self.stacked.handle_update(child_update);
+        }
     }
 }

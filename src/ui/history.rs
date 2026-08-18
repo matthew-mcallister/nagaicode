@@ -604,23 +604,16 @@ impl Command for HistoryRowRef<'_> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum InEvent {
-    Input(Event),
+pub enum Update {
     ContentCreated(Content),
     ContentUpdated(Content),
-}
-
-impl From<Event> for InEvent {
-    fn from(event: Event) -> Self {
-        InEvent::Input(event)
-    }
 }
 
 impl Component for History {
     type Row<'a> = HistoryRowRef<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type InEvent = InEvent;
-    type OutEvent = ();
+    type Update = Update;
+    type Event = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let prev = self.rows[self.viewport_top].prev;
@@ -653,26 +646,27 @@ impl Component for History {
         None
     }
 
-    fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
-        match event {
-            InEvent::Input(event) => {
-                let KeyEvent { code, modifiers, .. } = match event {
-                    Event::Key(key) => key,
-                    _ => return,
-                };
-                let alt = modifiers.contains(KeyModifiers::ALT);
-                match (code, alt) {
-                    (KeyCode::Up, _) => self.scroll_up(1),
-                    (KeyCode::Down, _) => self.scroll_down(1),
-                    (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => self.scroll_up(self.height() / 2),
-                    (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => self.scroll_down(self.height() / 2),
-                    (KeyCode::Home, _) => self.set_viewport_top_at(self.first_row(), 0),
-                    (KeyCode::End, _) => self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1),
-                    _ => {}
-                }
-            }
-            InEvent::ContentCreated(content) => self.on_content_created(&content),
-            InEvent::ContentUpdated(content) => self.on_content_updated(&content),
+    fn handle_input(&mut self, event: Event) -> Self::Event {
+        let KeyEvent { code, modifiers, .. } = match event {
+            Event::Key(key) => key,
+            _ => return,
+        };
+        let alt = modifiers.contains(KeyModifiers::ALT);
+        match (code, alt) {
+            (KeyCode::Up, _) => self.scroll_up(1),
+            (KeyCode::Down, _) => self.scroll_down(1),
+            (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => self.scroll_up(self.height() / 2),
+            (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => self.scroll_down(self.height() / 2),
+            (KeyCode::Home, _) => self.set_viewport_top_at(self.first_row(), 0),
+            (KeyCode::End, _) => self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1),
+            _ => {}
+        }
+    }
+
+    fn handle_update(&mut self, update: Self::Update) {
+        match update {
+            Update::ContentCreated(content) => self.on_content_created(&content),
+            Update::ContentUpdated(content) => self.on_content_updated(&content),
         }
     }
 }
@@ -872,13 +866,13 @@ mod tests {
         assert_eq!(history.viewport_bottom_pos(), 14);
 
         // End scrolls the viewport to the last row.
-        history.handle_event(Event::Key(KeyEvent::from(KeyCode::End)).into());
+        history.handle_input(Event::Key(KeyEvent::from(KeyCode::End)));
         assert_eq!(history.viewport_bottom, history.last_row());
         assert_eq!(history.viewport_top_pos(), 16);
         assert_eq!(history.viewport_bottom_pos(), 19);
 
         // Home scrolls the viewport to the first row.
-        history.handle_event(Event::Key(KeyEvent::from(KeyCode::Home)).into());
+        history.handle_input(Event::Key(KeyEvent::from(KeyCode::Home)));
         assert_eq!(history.viewport_top, history.first_row());
         assert_eq!(history.viewport_top_pos(), 0);
         assert_eq!(history.viewport_bottom_pos(), 3);

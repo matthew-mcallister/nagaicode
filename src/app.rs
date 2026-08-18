@@ -82,7 +82,7 @@ impl App {
 
         while !self.quit {
             self.draw(&mut stdout)?;
-            let event = self.chat.handle_event(event::read()?.into());
+            let event = self.chat.handle_input(event::read()?);
             if let Some(event) = event {
                 self.process_event(event);
             }

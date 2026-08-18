@@ -1,4 +1,5 @@
 use crossterm::Command;
+use crossterm::event::Event;
 
 /// Trait which all drawable UI components implement. This UI is *row-based*:
 /// every drawable must be able to decompose itself into rows, which the parent
@@ -16,8 +17,10 @@ use crossterm::Command;
 pub trait Component {
     type Row<'a>: Command where Self: 'a;
     type RowIter<'a>: Iterator<Item = Self::Row<'a>> where Self: 'a;
-    type InEvent;
-    type OutEvent;
+    /// The type(s) of update which the component responds to
+    type Update;
+    /// Event(s) fired in response to input.
+    type Event;
 
     /// Returns an iterator over the component's printable rows.
     fn drawable_rows(&self) -> Self::RowIter<'_>;
@@ -47,7 +50,13 @@ pub trait Component {
     /// Tells a component when it is focused, mainly for styling.
     fn set_focus(&mut self, focused: bool);
 
-    /// Handles an input event directed at this component (or descendant) and
-    /// returns any event(s) raised in response.
-    fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent;
+    /// Handles a raw terminal input event directed at this component (or
+    /// descendant) and returns any event raised in response. For components
+    /// with multiple children, inputs are routed to the focused child.
+    fn handle_input(&mut self, event: Event) -> Self::Event;
+
+    /// Updates the component in response to a change in an ancestor. Updates
+    /// should be forwarded to all children. This method is meant to facilitate
+    /// long-range side-effects; not every mutation has to be handled this way.
+    fn handle_update(&mut self, update: Self::Update);
 }

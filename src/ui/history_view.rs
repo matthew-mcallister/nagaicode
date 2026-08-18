@@ -5,7 +5,7 @@ use crossterm::event::Event;
 
 use crate::session::Content;
 use crate::ui::history::{self, History, HistoryItemContent, HistoryRowRef};
-use crate::ui::scroll_bar::{self, ScrollBar, ScrollBarRow};
+use crate::ui::scroll_bar::{ScrollBar, ScrollBarRow};
 use crate::ui::style::Theme;
 use crate::ui::Component;
 
@@ -66,43 +66,27 @@ impl HistoryView {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum InEvent {
-    Input(Event),
+pub enum Update {
     ContentCreated(Content),
     ContentUpdated(Content),
 }
 
-impl From<Event> for InEvent {
-    fn from(event: Event) -> Self {
-        InEvent::Input(event)
-    }
-}
-
-impl TryFrom<InEvent> for history::InEvent {
+impl TryFrom<Update> for history::Update {
     type Error = ();
 
-    fn try_from(event: InEvent) -> Result<Self, Self::Error> {
-        match event {
-            InEvent::Input(event) => Ok(event.into()),
-            InEvent::ContentCreated(content) => Ok(history::InEvent::ContentCreated(content)),
-            InEvent::ContentUpdated(content) => Ok(history::InEvent::ContentUpdated(content)),
+    fn try_from(update: Update) -> Result<Self, Self::Error> {
+        match update {
+            Update::ContentCreated(content) => Ok(history::Update::ContentCreated(content)),
+            Update::ContentUpdated(content) => Ok(history::Update::ContentUpdated(content)),
         }
-    }
-}
-
-impl TryFrom<InEvent> for scroll_bar::InEvent {
-    type Error = ();
-
-    fn try_from(_event: InEvent) -> Result<Self, Self::Error> {
-        Err(())
     }
 }
 
 impl Component for HistoryView {
     type Row<'a> = HistoryViewRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type InEvent = InEvent;
-    type OutEvent = ();
+    type Update = Update;
+    type Event = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         Box::new(
@@ -141,13 +125,16 @@ impl Component for HistoryView {
         self.history.cursor()
     }
 
-    fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
-        if let Ok(child_event) = history::InEvent::try_from(event.clone()) {
-            self.history.handle_event(child_event);
+    fn handle_input(&mut self, event: Event) -> Self::Event {
+        self.history.handle_input(event);
+        self.sync_scroll_bar();
+    }
+
+    fn handle_update(&mut self, update: Self::Update) {
+        if let Ok(child_update) = history::Update::try_from(update) {
+            self.history.handle_update(child_update);
         }
-        if let Ok(child_event) = scroll_bar::InEvent::try_from(event) {
-            self.scroll_bar.handle_event(child_event);
-        }
+        self.scroll_bar.handle_update(());
         self.sync_scroll_bar();
     }
 }

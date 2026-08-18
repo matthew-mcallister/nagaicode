@@ -4,7 +4,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent};
 use crate::app::AppEvent;
 use crate::session::Content;
 use crate::ui::style::Theme;
-use crate::ui::command_editor::{self, CommandEditor, CommandEditorRow};
+use crate::ui::command_editor::{CommandEditor, CommandEditorRow};
 use crate::ui::history_view::{self, HistoryView, HistoryViewRow};
 use crate::ui::{write_spaces, Component};
 
@@ -114,37 +114,18 @@ impl Command for StackedRow<'_> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum InEvent {
-    Input(Event),
+pub enum Update {
     ContentCreated(Content),
     ContentUpdated(Content),
 }
 
-impl From<Event> for InEvent {
-    fn from(event: Event) -> Self {
-        InEvent::Input(event)
-    }
-}
-
-impl TryFrom<InEvent> for history_view::InEvent {
+impl TryFrom<Update> for history_view::Update {
     type Error = ();
 
-    fn try_from(event: InEvent) -> Result<Self, Self::Error> {
-        match event {
-            InEvent::Input(event) => Ok(event.into()),
-            InEvent::ContentCreated(content) => Ok(history_view::InEvent::ContentCreated(content)),
-            InEvent::ContentUpdated(content) => Ok(history_view::InEvent::ContentUpdated(content)),
-        }
-    }
-}
-
-impl TryFrom<InEvent> for command_editor::InEvent {
-    type Error = ();
-
-    fn try_from(event: InEvent) -> Result<Self, Self::Error> {
-        match event {
-            InEvent::Input(event) => Ok(event.into()),
-            InEvent::ContentCreated(_) | InEvent::ContentUpdated(_) => Err(()),
+    fn try_from(update: Update) -> Result<Self, Self::Error> {
+        match update {
+            Update::ContentCreated(content) => Ok(history_view::Update::ContentCreated(content)),
+            Update::ContentUpdated(content) => Ok(history_view::Update::ContentUpdated(content)),
         }
     }
 }
@@ -152,8 +133,8 @@ impl TryFrom<InEvent> for command_editor::InEvent {
 impl Component for StackedView {
     type Row<'a> = StackedRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type InEvent = InEvent;
-    type OutEvent = Option<AppEvent>;
+    type Update = Update;
+    type Event = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
         let empty_rows = self
@@ -211,33 +192,29 @@ impl Component for StackedView {
         }
     }
 
-    fn handle_event(&mut self, event: Self::InEvent) -> Self::OutEvent {
+    fn handle_input(&mut self, event: Event) -> Self::Event {
         match event {
             // Tab switches focus
-            InEvent::Input(Event::Key(KeyEvent { code: KeyCode::Tab, .. })) => {
+            Event::Key(KeyEvent { code: KeyCode::Tab, .. }) => {
                 self.toggle_focus();
                 self.focus_child();
                 None
             }
             // Input goes to focused element
-            InEvent::Input(e) => {
-                match self.focus_state {
-                    FocusState::History => {
-                        self.history.handle_event(e.into());
-                        None
-                    },
-                    FocusState::CommandEditor => self.input.handle_event(e.into()).into(),
-                }
-            }
-            e => {
-                if let Some(e) = history_view::InEvent::try_from(e.clone()).ok() {
-                    self.history.handle_event(e.into());
-                }
-                if let Some(e) = command_editor::InEvent::try_from(e).ok() {
-                    self.input.handle_event(e.into());
-                }
-                None
-            }
+            e => match self.focus_state {
+                FocusState::History => {
+                    self.history.handle_input(e);
+                    None
+                },
+                FocusState::CommandEditor => self.input.handle_input(e),
+            },
         }
+    }
+
+    fn handle_update(&mut self, update: Self::Update) {
+        if let Ok(child_update) = history_view::Update::try_from(update.clone()) {
+            self.history.handle_update(child_update);
+        }
+        self.input.handle_update(());
     }
 }
