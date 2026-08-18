@@ -9,6 +9,9 @@ pub mod interface;
 pub mod ui;
 pub mod model;
 pub mod provider;
+pub mod request;
 pub mod schema;
 pub mod session;
 pub mod terminal;
+#[cfg(test)]
+pub mod testing;

@@ -85,52 +85,27 @@ mod detail {
 #[cfg(test)]
 mod detail {
     use std::io::Write;
-    use std::task::Poll;
 
     use crossterm::event::Event;
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode, size};
-    use futures::{Stream, pin_mut};
+    use futures::Stream;
 
     use super::Terminal;
     use crate::error::AnyResult;
-
-    /// Simulates an async stream by yielding from a vector.
-    #[derive(Clone, Debug)]
-    pub struct VecStream<E>(pub Vec<E>);
-
-    impl<E> Default for VecStream<E> {
-        fn default() -> Self {
-            Self(Default::default())
-        }
-    }
-
-    impl<E> Unpin for VecStream<E> {}
-
-    impl<E> Stream for VecStream<E> {
-        type Item = E;
-
-        fn poll_next(
-            self: std::pin::Pin<&mut Self>,
-            _cx: &mut std::task::Context<'_>,
-        ) -> Poll<Option<Self::Item>> {
-            let this = self;
-            pin_mut!(this);
-            Poll::Ready(this.0.pop())
-        }
-    }
+    use crate::testing::QueueStream;
 
     /// Dummy terminal implementation
     #[derive(Debug)]
     pub struct DefaultTerminal {
         pub stdout: Vec<u8>,
-        pub events: VecStream<std::io::Result<Event>>,
+        pub events: QueueStream<std::io::Result<Event>>,
     }
 
     impl Default for DefaultTerminal {
         fn default() -> Self {
             Self {
                 stdout: Vec::new(),
-                events: VecStream::default(),
+                events: QueueStream::default(),
             }
         }
     }
