@@ -10,7 +10,7 @@ use fnv::FnvHashMap;
 
 use crate::arena::{Arena, Id};
 use crate::session::Content;
-use crate::ui::markdown::{render_markdown, ResumePoint};
+use crate::ui::markdown::{MarkdownResult, ResumePoint};
 use crate::ui::style::Theme;
 use crate::ui::Component;
 use crate::ui::text::wrap_line;
@@ -20,14 +20,12 @@ pub(crate) fn render_help(
     width: usize,
     content: &str,
 ) -> Vec<String> {
-    let mut prefix = String::new();
-    let _ = SetStyle(theme.text_quote.into()).write_ansi(&mut prefix);
-    prefix.push('▐');
-    prefix.push(' ');
+    let mut quote = String::new();
+    let _ = SetStyle(theme.text_quote.into()).write_ansi(&mut quote);
     content.lines().flat_map(|line|
-        wrap_line(width - 2, line)
+        wrap_line(width - 6, line)
             .into_iter()
-            .map(|row| format!("{}{}", prefix, row.to_padded_string(width - 2)))
+            .map(|row| format!("{quote}  ▐ {}  ", row.to_padded_string(width - 6)))
     ).collect()
 }
 
@@ -36,16 +34,28 @@ pub(crate) fn render_error(
     width: usize,
     content: &str,
 ) -> Vec<String> {
-    let mut prefix = String::new();
-    let _ = SetStyle(theme.text_error.into()).write_ansi(&mut prefix);
-    prefix.push('▐');
-    prefix.push(' ');
-    let _ = SetStyle(theme.text_subtle.into()).write_ansi(&mut prefix);
+    let mut error = String::new();
+    let _ = SetStyle(theme.text_error.into()).write_ansi(&mut error);
+    let mut subtle = String::new();
+    let _ = SetStyle(theme.text_subtle.into()).write_ansi(&mut subtle);
     content.lines().flat_map(|line|
-        wrap_line(width - 2, line)
+        wrap_line(width - 6, line)
             .into_iter()
-            .map(|row| format!("{}{}", prefix, row.to_padded_string(width - 2)))
+            .map(|row| format!("{error}  ▐ {subtle}{}  ", row.to_padded_string(width - 6)))
     ).collect()
+}
+
+pub(crate) fn render_markdown(
+    theme: &'static Theme,
+    width: usize,
+    content: &str,
+) -> MarkdownResult {
+    let mut result = crate::ui::markdown::render_markdown(theme, width - 4, content);
+    for row in result.rows.iter_mut() {
+        row.insert_str(0, "  ");
+        row.push_str("  ");
+    }
+    result
 }
 
 #[derive(Debug)]
@@ -250,8 +260,7 @@ impl HistoryItem {
         };
     }
 
-    /// Replaces the item's markdown content with `new_value` and rerenders
-    /// all of its rows in place, preserving its position in the list.
+    // Updates and re-renders the item
     pub fn update(
         &mut self,
         theme: &'static Theme,
@@ -539,8 +548,7 @@ impl History {
         self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
 
-    /// Creates a new history item backed by `content`, rendered as markdown.
-    /// If an item for this content id already exists, it is updated instead.
+    /// Creates (or updates) a content item
     fn on_content_created(&mut self, content: &Content) {
         if self.by_content_id.contains_key(&content.id) {
             self.on_content_updated(content);
@@ -559,9 +567,7 @@ impl History {
         self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
 
-    /// Rerenders the history item associated with `content` using its new
-    /// value, preserving the item's position. If no such item exists, one is
-    /// created instead.
+    /// Does an incremental rerender for an updated content item
     fn on_content_updated(&mut self, content: &Content) {
         if let Some(&item_id) = self.by_content_id.get(&content.id) {
             let theme = self.theme;
