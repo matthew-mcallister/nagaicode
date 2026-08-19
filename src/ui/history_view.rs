@@ -3,8 +3,8 @@ use std::fmt;
 use crossterm::Command;
 use crossterm::event::Event;
 
-use crate::session::Content;
-use crate::ui::history::{self, History, HistoryItemContent, HistoryRowRef};
+use crate::session::{Content, Item};
+use crate::ui::history::{self, History, HistoryRowRef};
 use crate::ui::scroll_bar::{ScrollBar, ScrollBarRow};
 use crate::ui::style::Theme;
 use crate::ui::Component;
@@ -47,11 +47,6 @@ impl HistoryView {
         &mut self.history
     }
 
-    pub fn add_item(&mut self, content: HistoryItemContent) {
-        self.history.add_item(content);
-        self.sync_scroll_bar();
-    }
-
     pub fn max_height(&self) -> usize {
         self.history.max_height()
     }
@@ -66,18 +61,22 @@ impl HistoryView {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Update {
-    ContentCreated(Content),
-    ContentUpdated(Content),
+pub enum Update<'a> {
+    ContentCreated { item: &'a Item, content: &'a Content },
+    ContentUpdated { item: &'a Item, content: &'a Content },
+    HelpMessage(&'a str),
+    ErrorMessage(&'a str),
 }
 
-impl TryFrom<Update> for history::Update {
+impl<'a> TryFrom<Update<'a>> for history::Update<'a> {
     type Error = ();
 
-    fn try_from(update: Update) -> Result<Self, Self::Error> {
+    fn try_from(update: Update<'a>) -> Result<Self, Self::Error> {
         match update {
-            Update::ContentCreated(content) => Ok(history::Update::ContentCreated(content)),
-            Update::ContentUpdated(content) => Ok(history::Update::ContentUpdated(content)),
+            Update::ContentCreated { item, content } => Ok(history::Update::ContentCreated { item, content }),
+            Update::ContentUpdated { item, content } => Ok(history::Update::ContentUpdated { item, content }),
+            Update::HelpMessage(content) => Ok(history::Update::HelpMessage(content)),
+            Update::ErrorMessage(content) => Ok(history::Update::ErrorMessage(content)),
         }
     }
 }
@@ -85,7 +84,7 @@ impl TryFrom<Update> for history::Update {
 impl Component for HistoryView {
     type Row<'a> = HistoryViewRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type Update = Update;
+    type Update<'a> = Update<'a>;
     type Event = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -130,7 +129,7 @@ impl Component for HistoryView {
         self.sync_scroll_bar();
     }
 
-    fn handle_update(&mut self, update: Self::Update) {
+    fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
         if let Ok(child_update) = history::Update::try_from(update) {
             self.history.handle_update(child_update);
         }

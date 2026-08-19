@@ -2,7 +2,7 @@ use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent};
 
 use crate::app::AppEvent;
-use crate::session::Content;
+use crate::session::{Content, Item};
 use crate::ui::style::Theme;
 use crate::ui::command_editor::{CommandEditor, CommandEditorRow};
 use crate::ui::history_view::{self, HistoryView, HistoryViewRow};
@@ -114,18 +114,22 @@ impl Command for StackedRow<'_> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Update {
-    ContentCreated(Content),
-    ContentUpdated(Content),
+pub enum Update<'a> {
+    ContentCreated { item: &'a Item, content: &'a Content },
+    ContentUpdated { item: &'a Item, content: &'a Content },
+    HelpMessage(&'a str),
+    ErrorMessage(&'a str),
 }
 
-impl TryFrom<Update> for history_view::Update {
+impl<'a> TryFrom<Update<'a>> for history_view::Update<'a> {
     type Error = ();
 
-    fn try_from(update: Update) -> Result<Self, Self::Error> {
+    fn try_from(update: Update<'a>) -> Result<Self, Self::Error> {
         match update {
-            Update::ContentCreated(content) => Ok(history_view::Update::ContentCreated(content)),
-            Update::ContentUpdated(content) => Ok(history_view::Update::ContentUpdated(content)),
+            Update::ContentCreated { item, content } => Ok(history_view::Update::ContentCreated { item, content }),
+            Update::ContentUpdated { item, content } => Ok(history_view::Update::ContentUpdated { item, content }),
+            Update::HelpMessage(content) => Ok(history_view::Update::HelpMessage(content)),
+            Update::ErrorMessage(content) => Ok(history_view::Update::ErrorMessage(content)),
         }
     }
 }
@@ -133,7 +137,7 @@ impl TryFrom<Update> for history_view::Update {
 impl Component for StackedView {
     type Row<'a> = StackedRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type Update = Update;
+    type Update<'a> = Update<'a>;
     type Event = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -211,7 +215,7 @@ impl Component for StackedView {
         }
     }
 
-    fn handle_update(&mut self, update: Self::Update) {
+    fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
         if let Ok(child_update) = history_view::Update::try_from(update.clone()) {
             self.history.handle_update(child_update);
         }

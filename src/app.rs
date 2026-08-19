@@ -8,14 +8,15 @@ use crossterm::style::{ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{
     DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use diesel::SqliteConnection;
 use futures::StreamExt;
 
 use crate::command::Command;
 use crate::error::AnyResult;
 use crate::model::Model;
+use crate::session::{Content, ContentType, Item, ItemType, Session};
 use crate::terminal::{DefaultTerminal, Terminal};
-use crate::ui::chat::Chat;
-use crate::ui::history::HistoryItemContent;
+use crate::ui::chat::{Chat, Update};
 use crate::ui::style::{Theme, THEME_DARK};
 use crate::ui::Component;
 
@@ -28,13 +29,14 @@ pub enum AppEvent {
     HistoryNext,
 }
 
-#[derive(Debug)]
 pub struct App {
     terminal: DefaultTerminal,
     chat: Chat,
     selected_model: Option<Model>,
     quit: bool,
     theme: &'static Theme,
+    conn: SqliteConnection,
+    session: Option<Session>,
 }
 
 impl App {
@@ -48,6 +50,8 @@ impl App {
             selected_model: None,
             quit: false,
             theme,
+            conn: crate::db::open()?,
+            session: None,
         })
     }
 
@@ -118,9 +122,41 @@ impl App {
         }
     }
 
-    fn process_command(&mut self, command: &str) {
+    /// Returns the ID of the current session, creating a new session if one
+    /// does not exist.
+    fn create_session(&mut self) -> AnyResult<i32> {
+        if let Some(session) = &self.session {
+            return Ok(session.id);
+        }
+        let session = Session::create(&mut self.conn, "Session")?;
+        let id = session.id;
+        self.session = Some(session);
+        Ok(id)
+    }
+
+    /// Commits a new user message to the session and spawns an agent to
+    /// respawn to it
+    fn submit_prompt(&mut self, prompt: &str) -> AnyResult<(Item, Content)> {
+        let session_id = self.create_session()?;
+        let item = Item::create(
+            &mut self.conn,
+            session_id,
+            None,
+            ItemType::User,
+            None,
+        )?;
+        let content = Content::create(
+            &mut self.conn,
+            item.id,
+            ContentType::Text,
+            prompt,
+        )?;
+        Ok((item, content))
+    }
+
+    fn process_command(&mut self, command: &str) -> AnyResult<()> {
         if command.trim().is_empty() {
-            return;
+            return Ok(());
         }
 
         let slash_command = command.starts_with('/');
@@ -128,30 +164,29 @@ impl App {
         if slash_command || bang_command {
             let command = &command[1..];
             if slash_command {
-                match self.process_slash_command(command) {
-                    Ok(output) => {
-                        if !output.trim().is_empty() {
-                            self.chat.add_item(HistoryItemContent::Help(output));
-                        }
-                    }
-                    Err(e) => {
-                        self.chat.add_item(HistoryItemContent::Error(e.to_string()));
-                    }
+                let output = self.process_slash_command(command)?;
+                if !output.trim().is_empty() {
+                    self.chat.handle_update(Update::HelpMessage(&output));
                 }
             } else {
                 todo!("call system()")
             };
-            return;
+        } else {
+            let (item, content) = self.submit_prompt(command)?;
+            self.chat.handle_update(Update::ContentCreated { item: &item, content: &content });
         }
 
-        self.chat.add_item(HistoryItemContent::Markdown(command.into()));
+        Ok(())
     }
 
     fn process_event(&mut self, event: AppEvent) {
-        match event {
+        let res = match event {
             AppEvent::Command(cmd) => self.process_command(&cmd),
             // Consumed by the StackedView; should never reach the App.
-            AppEvent::HistoryPrev | AppEvent::HistoryNext => {},
+            AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
+        };
+        if let Err(e) = res {
+            self.chat.handle_update(Update::ErrorMessage(&e.to_string()));
         }
     }
 }

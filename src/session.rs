@@ -4,6 +4,60 @@ use diesel::sqlite::SqliteConnection;
 
 use crate::error::AnyResult;
 use crate::schema::{chain, content, item, session};
+use std::fmt;
+use std::str::FromStr;
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ContentType {
+    Thought,
+    Text,
+}
+
+impl fmt::Display for ContentType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ContentType::Thought => write!(f, "thought"),
+            ContentType::Text => write!(f, "text"),
+        }
+    }
+}
+
+impl FromStr for ContentType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "thought" => Ok(ContentType::Thought),
+            "text" => Ok(ContentType::Text),
+            other => Err(format!("unknown content type: '{other}'")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ItemType {
+    User,
+    Model,
+}
+
+impl fmt::Display for ItemType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ItemType::User => write!(f, "user"),
+            ItemType::Model => write!(f, "model"),
+        }
+    }
+}
+
+impl FromStr for ItemType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "user" => Ok(ItemType::User),
+            "model" => Ok(ItemType::Model),
+            other => Err(format!("unknown item type: {other}")),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = session)]
@@ -117,7 +171,7 @@ impl Chain {
     }
 }
 
-#[derive(Debug, Clone, Queryable, Selectable)]
+#[derive(Debug, Clone, Eq, PartialEq, Queryable, Selectable)]
 #[diesel(table_name = item)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct Item {
@@ -131,14 +185,30 @@ pub struct Item {
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug, Insertable)]
-#[diesel(table_name = item)]
+#[derive(Debug)]
 pub struct NewItem<'a> {
     pub session_id: i32,
     pub chain_id: Option<i32>,
-    #[diesel(column_name = "type")]
-    pub ty: &'a str,
+    pub ty: ItemType,
     pub response_id: Option<&'a str>,
+}
+
+impl<'a> diesel::insertable::Insertable<item::table> for NewItem<'a> {
+    type Values = <(
+        Option<diesel::dsl::Eq<item::session_id, i32>>,
+        Option<diesel::dsl::Eq<item::chain_id, i32>>,
+        Option<diesel::dsl::Eq<item::r#type, String>>,
+        Option<diesel::dsl::Eq<item::response_id, &'a str>>,
+    ) as diesel::insertable::Insertable<item::table>>::Values;
+
+    fn values(self) -> Self::Values {
+        diesel::insertable::Insertable::<item::table>::values((
+            Some(item::session_id.eq(self.session_id)),
+            self.chain_id.map(|x| item::chain_id.eq(x)),
+            Some(item::r#type.eq(self.ty.to_string())),
+            self.response_id.map(|x| item::response_id.eq(x)),
+        ))
+    }
 }
 
 impl Item {
@@ -146,7 +216,7 @@ impl Item {
         conn: &mut SqliteConnection,
         session_id: i32,
         chain_id: Option<i32>,
-        ty: &str,
+        ty: ItemType,
         response_id: Option<&str>,
     ) -> AnyResult<Item> {
         let new = NewItem {
@@ -156,7 +226,7 @@ impl Item {
             response_id,
         };
         let item = diesel::insert_into(item::table)
-            .values(&new)
+            .values(new)
             .returning(item::all_columns)
             .get_result(conn)?;
         Ok(item)
@@ -190,6 +260,10 @@ impl Item {
         let count = diesel::delete(item::table.filter(item::id.eq(id))).execute(conn)?;
         Ok(count > 0)
     }
+
+    pub fn ty(&self) -> AnyResult<ItemType> {
+        Ok(ItemType::from_str(&self.ty)?)
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Queryable, Selectable)]
@@ -205,20 +279,34 @@ pub struct Content {
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug, Insertable)]
-#[diesel(table_name = content)]
+#[derive(Debug)]
 pub struct NewContent<'a> {
     pub item_id: i32,
-    #[diesel(column_name = "type")]
-    pub ty: &'a str,
+    pub ty: ContentType,
     pub value: &'a str,
+}
+
+impl<'a> diesel::insertable::Insertable<content::table> for NewContent<'a> {
+    type Values = <(
+        Option<diesel::dsl::Eq<content::item_id, i32>>,
+        Option<diesel::dsl::Eq<content::r#type, String>>,
+        Option<diesel::dsl::Eq<content::value, &'a str>>,
+    ) as diesel::insertable::Insertable<content::table>>::Values;
+
+    fn values(self) -> Self::Values {
+        diesel::insertable::Insertable::<content::table>::values((
+            Some(content::item_id.eq(self.item_id)),
+            Some(content::r#type.eq(self.ty.to_string())),
+            Some(content::value.eq(self.value)),
+        ))
+    }
 }
 
 impl Content {
     pub fn create(
         conn: &mut SqliteConnection,
         item_id: i32,
-        ty: &str,
+        ty: ContentType,
         value: &str,
     ) -> AnyResult<Content> {
         let new = NewContent {
@@ -227,7 +315,7 @@ impl Content {
             value,
         };
         let content = diesel::insert_into(content::table)
-            .values(&new)
+            .values(new)
             .returning(content::all_columns)
             .get_result(conn)?;
         Ok(content)
@@ -252,6 +340,10 @@ impl Content {
     pub fn delete_by_id(conn: &mut SqliteConnection, id: i32) -> AnyResult<bool> {
         let count = diesel::delete(content::table.filter(content::id.eq(id))).execute(conn)?;
         Ok(count > 0)
+    }
+
+    pub fn ty(&self) -> AnyResult<ContentType> {
+        Ok(ContentType::from_str(&self.ty)?)
     }
 }
 
@@ -332,15 +424,15 @@ mod tests {
         let chain = Chain::create(&mut conn, session.id, 1, "openai", "gpt-4o").expect("create chain");
 
         // Create item with chain_id and response_id
-        let item1 = Item::create(&mut conn, session.id, Some(chain.id), "user_message", None)
+        let item1 = Item::create(&mut conn, session.id, Some(chain.id), ItemType::User, None)
             .expect("create item1");
         assert_eq!(item1.session_id, session.id);
         assert_eq!(item1.chain_id, Some(chain.id));
-        assert_eq!(item1.ty, "user_message");
+        assert_eq!(item1.ty, "user");
         assert_eq!(item1.response_id, None);
 
         // Create item without chain_id but with response_id
-        let item2 = Item::create(&mut conn, session.id, None, "assistant_message", Some("resp-123"))
+        let item2 = Item::create(&mut conn, session.id, None, ItemType::Model, Some("resp-123"))
             .expect("create item2");
         assert_eq!(item2.chain_id, None);
         assert_eq!(item2.response_id, Some("resp-123".to_string()));
@@ -353,8 +445,8 @@ mod tests {
         assert_eq!(chain_items[0].id, item1.id);
 
         // Create content for item1
-        let c1 = Content::create(&mut conn, item1.id, "text", "Hello world").expect("create content 1");
-        let c2 = Content::create(&mut conn, item1.id, "text", "Another part").expect("create content 2");
+        let c1 = Content::create(&mut conn, item1.id, ContentType::Text, "Hello world").expect("create content 1");
+        let c2 = Content::create(&mut conn, item1.id, ContentType::Text, "Another part").expect("create content 2");
         assert_eq!(c1.item_id, item1.id);
         assert_eq!(c1.ty, "text");
         assert_eq!(c1.value, "Hello world");
@@ -374,7 +466,7 @@ mod tests {
 
         // Test ON DELETE SET NULL on chain_id when chain is deleted
         let chain_for_item3 = Chain::create(&mut conn, session.id, 1, "openai", "gpt-4o").expect("create chain");
-        let item3 = Item::create(&mut conn, session.id, Some(chain_for_item3.id), "msg", None).expect("create item3");
+        let item3 = Item::create(&mut conn, session.id, Some(chain_for_item3.id), ItemType::User, None).expect("create item3");
         Chain::delete_by_id(&mut conn, chain_for_item3.id).expect("delete chain");
         let item3_refetched = Item::get_by_id(&mut conn, item3.id).unwrap().expect("item3 exists");
         assert_eq!(item3_refetched.chain_id, None, "chain_id should be SET NULL when chain is deleted");

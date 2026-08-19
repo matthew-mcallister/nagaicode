@@ -9,7 +9,7 @@ use crossterm::style::SetStyle;
 use fnv::FnvHashMap;
 
 use crate::arena::{Arena, Id};
-use crate::session::Content;
+use crate::session::{Content, ContentType, Item, ItemType};
 use crate::ui::markdown::{MarkdownResult, ResumePoint};
 use crate::ui::style::Theme;
 use crate::ui::Component;
@@ -56,6 +56,30 @@ pub(crate) fn render_markdown(
         row.push_str("  ");
     }
     result
+}
+
+fn render(
+    theme: &'static Theme,
+    width: usize,
+    ty: HistoryItemType,
+    content: &str,
+) -> (Vec<String>, ResumePoint) {
+    match ty {
+        HistoryItemType::Help => (render_help(theme, width, content), ResumePoint { offset: 0, row: 0 }),
+        HistoryItemType::Error => (render_error(theme, width, content), ResumePoint { offset: 0, row: 0 }),
+        _ => {
+            let result = render_markdown(theme, width, content);
+            (result.rows, result.resume_point)
+        }
+    }
+}
+
+fn get_content_type(item: &Item, content: &Content) -> HistoryItemType {
+    match (item.ty().unwrap(), content.ty().unwrap()) {
+        (ItemType::User, _) => HistoryItemType::User,
+        (ItemType::Model, ContentType::Thought) => HistoryItemType::Thought,
+        (ItemType::Model, ContentType::Text) => HistoryItemType::Response,
+    }
 }
 
 #[derive(Debug)]
@@ -126,89 +150,75 @@ fn insert_rows(
     rows[next].prev = last;
 }
 
-#[derive(Clone, Debug)]
-pub enum HistoryItemContent {
-    Help(String),
-    Error(String),
-    Markdown(String),
-    Content(Content),
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum HistoryItemType {
+    Help,
+    Error,
+    User,
+    Thought,
+    Response,
 }
 
 #[derive(Clone, Debug)]
-pub enum HistoryItemState {
-    Help(String),
-    Error(String),
-    Markdown {
-        content: String,
-        resume_point: ResumePoint,
-        content_id: Option<i32>,
-    },
-}
-
-impl From<HistoryItemState> for HistoryItemContent {
-    fn from(value: HistoryItemState) -> Self {
-        match value {
-            HistoryItemState::Help(content) => HistoryItemContent::Help(content),
-            HistoryItemState::Error(content) => HistoryItemContent::Error(content),
-            HistoryItemState::Markdown { content, .. } => HistoryItemContent::Markdown(content),
-        }
-    }
-}
-
-#[derive(Debug)]
 pub struct HistoryItem {
-    state: HistoryItemState,
+    content: String,
+    ty: HistoryItemType,
+    resume_point: ResumePoint,
+    content_id: Option<i32>,
     first_row: Id<HistoryRow>,
     last_row: Id<HistoryRow>,
     num_rows: usize,
 }
 
 impl HistoryItem {
-    /// Renders `state` from scratch at `width`, producing a new item linked
-    /// after `prev`. The stored resume point is refreshed from the render.
-    fn from_state(
+    fn new(
         theme: &'static Theme,
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
         prev: Id<HistoryRow>,
         width: usize,
-        mut state: HistoryItemState,
+        ty: HistoryItemType,
+        content: String,
+        content_id: Option<i32>,
     ) -> Id<Self> {
-        let rendered = match &mut state {
-            HistoryItemState::Help(content) => render_help(theme, width, content),
-            HistoryItemState::Error(content) => render_error(theme, width, content),
-            HistoryItemState::Markdown { content, resume_point, .. } => {
-                let result = render_markdown(theme, width, content);
-                *resume_point = result.resume_point;
-                result.rows
-            }
-        };
-        Self::from_rows(items, rows, prev, width, state, rendered)
+        let (rendered, resume_point) = render(theme, width, ty, &content);
+        Self::from_rendered(
+            items, rows, prev, width, ty, content, content_id, resume_point, rendered,
+        )
     }
 
-    fn from_content(
-        theme: &'static Theme,
+    fn from_rendered(
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
         prev: Id<HistoryRow>,
         width: usize,
-        content: HistoryItemContent,
+        ty: HistoryItemType,
+        content: String,
+        content_id: Option<i32>,
+        resume_point: ResumePoint,
+        mut rendered: Vec<String>,
     ) -> Id<Self> {
-        let state = match content {
-            HistoryItemContent::Markdown(md) => HistoryItemState::Markdown {
-                content: md,
-                resume_point: ResumePoint { offset: 0, row: 0 },
-                content_id: None,
-            },
-            HistoryItemContent::Help(content) => HistoryItemState::Help(content),
-            HistoryItemContent::Error(content) => HistoryItemState::Error(content),
-            HistoryItemContent::Content(content) => HistoryItemState::Markdown {
-                content: content.value,
-                resume_point: ResumePoint { offset: 0, row: 0 },
-                content_id: Some(content.id),
-            },
-        };
-        Self::from_state(theme, items, rows, prev, width, state)
+        let next = rows[prev].next;
+
+        let item = items.insert(Self {
+            content,
+            ty,
+            resume_point,
+            content_id,
+            first_row: Id::null(),
+            last_row: Id::null(),
+            num_rows: 0,
+        });
+
+        rendered.push(" ".repeat(width)); // Add vertical padding row
+        let num_rows = rendered.len();
+        insert_rows(rows, item, rendered, prev);
+
+        items[item].first_row = rows[prev].next;
+        items[item].last_row = rows[next].prev;
+        items[item].num_rows = num_rows;
+
+        item
     }
 
     // Appends text and rerenders
@@ -220,15 +230,12 @@ impl HistoryItem {
         width: usize,
         delta: &str,
     ) {
-        let HistoryItemState::Markdown { content, resume_point, .. } = &mut self.state else {
-            panic!("can only append to markdown");
-        };
-        let old_offset = resume_point.offset;
-        let old_row = resume_point.row;
+        let old_offset = self.resume_point.offset;
+        let old_row = self.resume_point.row;
 
-        content.push_str(delta);
+        self.content.push_str(delta);
 
-        let result = render_markdown(theme, width, &content[old_offset..]);
+        let result = render_markdown(theme, width, &self.content[old_offset..]);
 
         // Find insertion position
         let steps_back = self.num_rows - 1 - old_row;
@@ -254,7 +261,7 @@ impl HistoryItem {
         self.last_row = rows[next].prev;
         self.num_rows = old_row + len;
 
-        *resume_point = ResumePoint {
+        self.resume_point = ResumePoint {
             offset: old_offset + result.resume_point.offset,
             row: old_row + result.resume_point.row,
         };
@@ -268,10 +275,7 @@ impl HistoryItem {
         width: usize,
         new_value: &str,
     ) {
-        let HistoryItemState::Markdown { content, resume_point, .. } = &mut self.state else {
-            panic!("can only update markdown content");
-        };
-        *content = new_value.to_string();
+        self.content = new_value.to_string();
         let result = render_markdown(theme, width, new_value);
 
         let prev = rows[self.first_row].prev;
@@ -287,35 +291,7 @@ impl HistoryItem {
         self.first_row = rows[prev].next;
         self.last_row = rows[next].prev;
         self.num_rows = len;
-        *resume_point = result.resume_point;
-    }
-
-    fn from_rows(
-        items: &mut Arena<HistoryItem>,
-        rows: &mut Arena<HistoryRow>,
-        prev: Id<HistoryRow>,
-        width: usize,
-        state: HistoryItemState,
-        mut rendered: Vec<String>,
-    ) -> Id<Self> {
-        let next = rows[prev].next;
-
-        let item = items.insert(Self {
-            state,
-            first_row: Id::null(),
-            last_row: Id::null(),
-            num_rows: 0,
-        });
-
-        rendered.push(" ".repeat(width));   // Add vertical padding row
-        let num_rows = rendered.len();
-        insert_rows(rows, item, rendered, prev);
-
-        items[item].first_row = rows[prev].next;
-        items[item].last_row = rows[next].prev;
-        items[item].num_rows = num_rows;
-
-        item
+        self.resume_point = result.resume_point;
     }
 }
 
@@ -482,10 +458,10 @@ impl History {
         }
         self.width = width;
 
-        let states: Vec<HistoryItemState> = self
+        let saved: Vec<(HistoryItemType, String, Option<i32>)> = self
             .item
             .iter()
-            .map(|(_, item)| item.state.clone())
+            .map(|(_, item)| (item.ty, item.content.clone(), item.content_id))
             .collect();
 
         self.item.clear();
@@ -506,19 +482,17 @@ impl History {
         self.viewport_top_pos = 0;
         self.viewport_bottom_pos = 0;
 
-        for state in states {
-            let content_id = match &state {
-                HistoryItemState::Markdown { content_id: Some(id), .. } => Some(*id),
-                _ => None,
-            };
+        for (ty, content, content_id) in saved {
             let prev = self.last_row();
-            let id = HistoryItem::from_state(
+            let id = HistoryItem::new(
                 self.theme,
                 &mut self.item,
                 &mut self.rows,
                 prev,
                 width,
-                state,
+                ty,
+                content,
+                content_id,
             );
             if let Some(cid) = content_id {
                 self.by_content_id.insert(cid, id);
@@ -528,54 +502,53 @@ impl History {
     }
 
     /// Appends an item to the history.
-    pub fn add_item(&mut self, content: HistoryItemContent) {
-        let content_id = match &content {
-            HistoryItemContent::Content(c) => Some(c.id),
-            _ => None,
-        };
+    fn add_item(&mut self, ty: HistoryItemType, content: String) {
         let prev = self.last_row();
-        let id = HistoryItem::from_content(
+        HistoryItem::new(
             self.theme,
             &mut self.item,
             &mut self.rows,
             prev,
             self.width,
+            ty,
             content,
+            None,
         );
-        if let Some(cid) = content_id {
-            self.by_content_id.insert(cid, id);
-        }
         self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
 
     /// Creates (or updates) a content item
-    fn on_content_created(&mut self, content: &Content) {
+    fn on_content_created(&mut self, item: &Item, content: &Content) {
         if self.by_content_id.contains_key(&content.id) {
-            self.on_content_updated(content);
+            self.on_content_updated(item, content);
             return;
         }
+
+        let ty = get_content_type(item, content);
         let prev = self.last_row();
-        let id = HistoryItem::from_content(
+        let id = HistoryItem::new(
             self.theme,
             &mut self.item,
             &mut self.rows,
             prev,
             self.width,
-            HistoryItemContent::Content(content.clone()),
+            ty,
+            content.value.clone(),
+            Some(content.id),
         );
         self.by_content_id.insert(content.id, id);
         self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
 
     /// Does an incremental rerender for an updated content item
-    fn on_content_updated(&mut self, content: &Content) {
+    fn on_content_updated(&mut self, item: &Item, content: &Content) {
         if let Some(&item_id) = self.by_content_id.get(&content.id) {
             let theme = self.theme;
             let width = self.width;
             self.item[item_id].update(theme, &mut self.rows, width, &content.value);
             self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
         } else {
-            self.on_content_created(content);
+            self.on_content_created(item, content);
         }
     }
 
@@ -610,15 +583,17 @@ impl Command for HistoryRowRef<'_> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Update {
-    ContentCreated(Content),
-    ContentUpdated(Content),
+pub enum Update<'a> {
+    ContentCreated { item: &'a Item, content: &'a Content },
+    ContentUpdated { item: &'a Item, content: &'a Content },
+    HelpMessage(&'a str),
+    ErrorMessage(&'a str),
 }
 
 impl Component for History {
     type Row<'a> = HistoryRowRef<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type Update = Update;
+    type Update<'a> = Update<'a>;
     type Event = ();
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -669,10 +644,12 @@ impl Component for History {
         }
     }
 
-    fn handle_update(&mut self, update: Self::Update) {
+    fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
         match update {
-            Update::ContentCreated(content) => self.on_content_created(&content),
-            Update::ContentUpdated(content) => self.on_content_updated(&content),
+            Update::ContentCreated { item, content } => self.on_content_created(&item, &content),
+            Update::ContentUpdated { item, content } => self.on_content_updated(&item, &content),
+            Update::HelpMessage(content) => self.add_item(HistoryItemType::Help, content.into()),
+            Update::ErrorMessage(content) => self.add_item(HistoryItemType::Error, content.into()),
         }
     }
 }
@@ -805,7 +782,7 @@ mod tests {
     fn test_scroll() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemContent::Markdown(format!("message {i}")));
+            history.add_item(HistoryItemType::User, format!("message {i}"));
         }
         assert_eq!(history.num_rows(), 20);
 
@@ -846,7 +823,7 @@ mod tests {
     fn test_set_viewport_top_pos() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemContent::Markdown(format!("message {i}")));
+            history.add_item(HistoryItemType::User, format!("message {i}"));
         }
 
         let row = history.row_offset(history.first_row(), 5).unwrap();
@@ -860,7 +837,7 @@ mod tests {
     fn test_home_end() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemContent::Markdown(format!("message {i}")));
+            history.add_item(HistoryItemType::User, format!("message {i}"));
         }
 
         // Start at the bottom; scroll up so we're not at either extreme.
@@ -888,14 +865,14 @@ mod tests {
         let full = "# Title\n\nfirst\n\nsecond\n\nthird";
 
         let mut incremental = history(20, 20);
-        incremental.add_item(HistoryItemContent::Markdown("# Title".into()));
+        incremental.add_item(HistoryItemType::User, "# Title".into());
         update_item(&mut incremental, 0, "\n\nfirst");
         update_item(&mut incremental, 0, "\n\nsecond");
         update_item(&mut incremental, 0, "\n\nthird");
         assert_eq!(incremental.num_rows(), 8);
 
         let mut whole = history(20, 20);
-        whole.add_item(HistoryItemContent::Markdown(full.into()));
+        whole.add_item(HistoryItemType::User, full.into());
 
         assert_eq!(render_history(&incremental), render_history(&whole));
     }

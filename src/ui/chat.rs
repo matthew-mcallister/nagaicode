@@ -2,8 +2,7 @@ use crossterm::event::Event;
 use dedent::dedent;
 
 use crate::app::AppEvent;
-use crate::session::Content;
-use crate::ui::history::HistoryItemContent;
+use crate::session::{Content, Item};
 use crate::ui::padded::{Padded, PaddedRow};
 use crate::ui::stacked_view::{self, StackedRow, StackedView};
 use crate::ui::style::Theme;
@@ -30,11 +29,12 @@ impl Chat {
             TEXT_INPUT_MAX_HEIGHT.min(h.saturating_sub(2)) as usize,
             theme,
         );
-        stacked.history_mut().add_item(HistoryItemContent::Help(dedent!("
+        let help = dedent!("
             Welcome to NagaiCode!
 
             Type /help for a list of commands."
-        ).into()));
+        );
+        stacked.handle_update(stacked_view::Update::HelpMessage(&help));
 
         Self {
             stacked: Padded::new(stacked, 2, 1, Some(theme.bg_base)),
@@ -45,25 +45,25 @@ impl Chat {
         self.stacked.set_width(w as usize);
         self.stacked.set_height(h as usize);
     }
-
-    pub fn add_item(&mut self, content: HistoryItemContent) {
-        self.stacked.inner_mut().history_mut().add_item(content);
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Update {
-    ContentCreated(Content),
-    ContentUpdated(Content),
+pub enum Update<'a> {
+    ContentCreated { item: &'a Item, content: &'a Content },
+    ContentUpdated { item: &'a Item, content: &'a Content },
+    HelpMessage(&'a str),
+    ErrorMessage(&'a str),
 }
 
-impl TryFrom<Update> for stacked_view::Update {
+impl<'a> TryFrom<Update<'a>> for stacked_view::Update<'a> {
     type Error = ();
 
-    fn try_from(update: Update) -> Result<Self, Self::Error> {
+    fn try_from(update: Update<'a>) -> Result<Self, Self::Error> {
         match update {
-            Update::ContentCreated(content) => Ok(stacked_view::Update::ContentCreated(content)),
-            Update::ContentUpdated(content) => Ok(stacked_view::Update::ContentUpdated(content)),
+            Update::ContentCreated { item, content } => Ok(stacked_view::Update::ContentCreated { item, content }),
+            Update::ContentUpdated { item, content } => Ok(stacked_view::Update::ContentUpdated { item, content }),
+            Update::HelpMessage(content) => Ok(stacked_view::Update::HelpMessage(content)),
+            Update::ErrorMessage(content) => Ok(stacked_view::Update::ErrorMessage(content)),
         }
     }
 }
@@ -71,7 +71,7 @@ impl TryFrom<Update> for stacked_view::Update {
 impl Component for Chat {
     type Row<'a> = PaddedRow<StackedRow<'a>> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type Update = Update;
+    type Update<'a> = Update<'a>;
     type Event = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -117,7 +117,7 @@ impl Component for Chat {
         response
     }
 
-    fn handle_update(&mut self, update: Self::Update) {
+    fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
         if let Ok(child_update) = stacked_view::Update::try_from(update) {
             self.stacked.handle_update(child_update);
         }

@@ -92,7 +92,7 @@ impl<R: Command> Command for PaddedRow<R> {
 impl<C: Component> Component for Padded<C> {
     type Row<'a> = PaddedRow<C::Row<'a>> where C: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where C: 'a;
-    type Update = C::Update;
+    type Update<'a> = C::Update<'a>;
     type Event = C::Event;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -149,7 +149,7 @@ impl<C: Component> Component for Padded<C> {
         self.inner.handle_input(event)
     }
 
-    fn handle_update(&mut self, update: Self::Update) {
+    fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
         self.inner.handle_update(update)
     }
 }

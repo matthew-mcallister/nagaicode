@@ -18,7 +18,7 @@ pub trait Component {
     type Row<'a>: Command where Self: 'a;
     type RowIter<'a>: Iterator<Item = Self::Row<'a>> where Self: 'a;
     /// The type(s) of update which the component responds to
-    type Update;
+    type Update<'a>;
     /// Event(s) fired in response to input.
     type Event;
 
@@ -58,5 +58,5 @@ pub trait Component {
     /// Updates the component in response to a change in an ancestor. Updates
     /// should be forwarded to all children. This method is meant to facilitate
     /// long-range side-effects; not every mutation has to be handled this way.
-    fn handle_update(&mut self, update: Self::Update);
+    fn handle_update<'a>(&mut self, update: Self::Update<'a>);
 }

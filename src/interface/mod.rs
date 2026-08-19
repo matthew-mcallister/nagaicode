@@ -21,7 +21,7 @@ impl FromStr for InterfaceId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "openai" => Ok(Self::Openai),
-            _ => Err(From::from(format!("Invalid interface: '{}'", s))),
+            _ => Err(From::from(format!("unknown interface: '{}'", s))),
         }
     }
 }

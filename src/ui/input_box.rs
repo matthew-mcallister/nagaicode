@@ -1070,7 +1070,7 @@ impl Command for InputBoxRow<'_> {
 impl Component for InputBox {
     type Row<'a> = InputBoxRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type Update = ();
+    type Update<'a> = ();
     type Event = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -1115,7 +1115,7 @@ impl Component for InputBox {
         }
     }
 
-    fn handle_update(&mut self, _update: Self::Update) {
+    fn handle_update<'a>(&mut self, _update: Self::Update<'a>) {
     }
 }
 

@@ -81,7 +81,7 @@ impl CommandEditor {
 impl Component for CommandEditor {
     type Row<'a> = CommandEditorRow<'a> where Self: 'a;
     type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
-    type Update = ();
+    type Update<'a> = ();
     type Event = Option<AppEvent>;
 
     fn drawable_rows(&self) -> Self::RowIter<'_> {
@@ -189,7 +189,7 @@ impl Component for CommandEditor {
         response
     }
 
-    fn handle_update(&mut self, _update: Self::Update) {
+    fn handle_update<'a>(&mut self, _update: Self::Update<'a>) {
         self.scroll_bar.handle_update(());
     }
 }

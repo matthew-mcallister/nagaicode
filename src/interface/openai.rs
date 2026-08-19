@@ -3,6 +3,7 @@ use reqwest_eventsource::Event;
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
 
+#[allow(unused_imports)]
 use crate::request::{Client as _, Response as _};
 use crate::error::AnyResult;
 use crate::interface::{
