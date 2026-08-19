@@ -8,6 +8,7 @@ use futures::Stream;
 use crate::error::AnyResult;
 use crate::interface::openai::OpenaiInterface;
 use crate::provider::Provider;
+use crate::request::DefaultClient;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum InterfaceId {
@@ -122,7 +123,7 @@ impl From<OpenaiInterface> for Interface {
 }
 
 impl Interface {
-    pub fn from_provider(provider: &Provider) -> AnyResult<Self> {
+    pub fn from_provider(provider: &Provider, client: &DefaultClient) -> AnyResult<Self> {
         let id: InterfaceId = provider.interface.parse()?;
         Ok(match id {
             InterfaceId::Openai => Self::from(OpenaiInterface::new(
@@ -130,6 +131,7 @@ impl Interface {
                     .unwrap_or("https://api.openai.com/v1")
                     .to_owned(),
                 provider.api_key.clone(),
+                client.clone(),
             )),
         })
     }

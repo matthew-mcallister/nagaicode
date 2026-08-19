@@ -7,6 +7,7 @@ use futures::future::join_all;
 use crate::error::{AnyError, AnyResult};
 use crate::interface::InterfaceModel;
 use crate::provider::Provider;
+use crate::request::DefaultClient;
 use crate::schema::model;
 use crate::schema::model::dsl;
 
@@ -128,8 +129,9 @@ pub async fn revalidate_models(conn: &mut SqliteConnection) -> AnyResult<()> {
     }
 
     let providers = Provider::all(conn)?;
+    let client = DefaultClient::default();
     let interfaces = providers.iter()
-        .map(|p| p.create_interface())
+        .map(|p| p.create_interface(&client))
         .collect::<AnyResult<Vec<_>>>()?;
     let fetches: Vec<_> = interfaces.iter().map(|i| i.get_models()).collect();
     let results: Vec<AnyResult<Vec<InterfaceModel>>> = join_all(fetches).await;

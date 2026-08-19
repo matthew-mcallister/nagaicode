@@ -1,167 +1,68 @@
 use futures::{Stream, StreamExt};
 use reqwest_eventsource::Event;
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 
+use crate::request::{Client as _, Response as _};
 use crate::error::AnyResult;
 use crate::interface::{
     ChatRole, InferenceEvent, InferenceParams, InterfaceModel, ReasoningEffort,
     ResponseCompleted, ResponseCreated, Usage,
 };
+use crate::request::DefaultClient;
 
-#[cfg(not(test))]
-mod client {
-    use reqwest_eventsource::{EventSource, RequestBuilderExt};
-    use serde::Serialize;
-
-    use crate::error::AnyResult;
-
-    /// Real client
-    #[derive(Debug)]
-    pub struct Client {
-        base_url: String,
-        api_key: String,
-        inner: reqwest::Client,
-    }
-
-    impl Client {
-        pub fn new(base_url: String, api_key: String) -> Self {
-            Self {
-                base_url,
-                api_key,
-                inner: reqwest::Client::new(),
-            }
-        }
-
-        pub async fn get(&self, endpoint: &str) -> AnyResult<String> {
-            let response = self
-                .inner
-                .get(format!("{}{}", self.base_url, endpoint))
-                .bearer_auth(&self.api_key)
-                .send()
-                .await?
-                .error_for_status()?;
-            Ok(response.text().await?)
-        }
-
-        pub fn post_sse<T: Serialize>(
-            &self,
-            endpoint: &str,
-            body: &T,
-        ) -> AnyResult<EventSource> {
-            let builder = self
-                .inner
-                .post(format!("{}{}", self.base_url, endpoint))
-                .bearer_auth(&self.api_key)
-                .header("Content-Type", "application/json")
-                .json(body);
-            let event_source = builder.eventsource()?;
-            Ok(event_source)
-        }
-    }
+/// HTTP client wrapping a [`DefaultClient`] with auth and a base URL.
+#[derive(Debug)]
+pub struct Client {
+    base_url: String,
+    api_key: String,
+    inner: DefaultClient,
+    builder: reqwest::Client,
 }
 
-#[cfg(test)]
-mod client {
-    use std::sync::Mutex;
-
-    use futures::stream::BoxStream;
-    use futures::StreamExt;
-    use reqwest_eventsource::Event;
-    use serde::Serialize;
-
-    use crate::error::AnyResult;
-
-    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-    pub struct MockRequest {
-        pub method: &'static str,
-        pub url: String,
-        pub body: Option<String>,
-    }
-
-    /// Mock client
-    #[derive(Debug)]
-    pub struct Client {
-        base_url: String,
-        #[allow(dead_code)]
-        api_key: String,
-        calls: Mutex<Vec<MockRequest>>,
-        events: Mutex<Option<Vec<Result<Event, reqwest_eventsource::Error>>>>,
-    }
-
-    impl Client {
-        pub fn new(base_url: String, api_key: String) -> Self {
-            Self {
-                base_url,
-                api_key,
-                calls: Default::default(),
-                events: Default::default(),
-            }
-        }
-
-        pub async fn get(&self, endpoint: &str) -> AnyResult<String> {
-            let request = MockRequest {
-                method: "GET",
-                url: format!("{}{}", self.base_url, endpoint),
-                body: None,
-            };
-            self.calls.lock().unwrap().push(request);
-            Ok(r#"{"data":[{"id":"fake-model"}]}"#.to_owned())
-        }
-
-        pub fn post_sse<T: Serialize>(
-            &self,
-            endpoint: &str,
-            body: &T,
-        ) -> AnyResult<BoxStream<'static, Result<Event, reqwest_eventsource::Error>>> {
-            let serialized_body = serde_json::to_string(body)?;
-            let request = MockRequest {
-                method: "POST",
-                url: format!("{}{}", self.base_url, endpoint),
-                body: Some(serialized_body),
-            };
-            self.calls.lock().unwrap().push(request);
-
-            let events = self
-                .events
-                .lock()
-                .unwrap()
-                .take()
-                .unwrap_or_else(default_events);
-
-            Ok(futures::stream::iter(events).boxed())
-        }
-
-        pub fn set_events(&self, events: Vec<Result<Event, reqwest_eventsource::Error>>) {
-            *self.events.lock().unwrap() = Some(events);
-        }
-
-        pub fn calls(&self) -> Vec<MockRequest> {
-            self.calls.lock().unwrap().clone()
+impl Client {
+    pub fn new(base_url: String, api_key: String, inner: DefaultClient) -> Self {
+        Self {
+            base_url,
+            api_key,
+            inner,
+            builder: reqwest::Client::new(),
         }
     }
 
-    pub fn create_message_event(data: &str) -> Event {
-        Event::Message(eventsource_stream::Event {
-            event: "message".to_string(),
-            data: data.to_string(),
-            id: "".to_string(),
-            retry: None,
-        })
+    /// Returns the underlying client.
+    pub fn inner(&self) -> &DefaultClient {
+        &self.inner
     }
 
-    fn default_events() -> Vec<Result<Event, reqwest_eventsource::Error>> {
-        vec![
-            Ok(Event::Open),
-            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-mock-1"}}"#)),
-            Ok(create_message_event(r#"{"type":"response.reasoning_text.delta","delta":"Thinking about the question..."}"#)),
-            Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"Hello! "}"#)),
-            Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"How can I help you today?"}"#)),
-            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-mock-1","usage":{"input_tokens":12,"output_tokens":18,"output_tokens_details":{"reasoning_tokens":7}}}}"#)),
-        ]
+    /// Performs an authenticated GET and deserializes the JSON body.
+    pub async fn get<T: DeserializeOwned>(&self, endpoint: &str) -> AnyResult<T> {
+        let request = self
+            .builder
+            .get(format!("{}{}", self.base_url, endpoint))
+            .bearer_auth(&self.api_key)
+            .build()?;
+        let response = self.inner.execute(request).await?;
+        let response = response.error_for_status()?;
+        Ok(response.json().await?)
+    }
+
+    /// Performs an authenticated POST and returns the SSE event stream.
+    pub fn post_sse<T: Serialize>(
+        &self,
+        endpoint: &str,
+        body: &T,
+    ) -> AnyResult<impl Stream<Item = AnyResult<Event>> + use<'_, T>> {
+        let request = self
+            .builder
+            .post(format!("{}{}", self.base_url, endpoint))
+            .bearer_auth(&self.api_key)
+            .header("Content-Type", "application/json")
+            .json(body)
+            .build()?;
+        Ok(self.inner.stream(request))
     }
 }
-
-use client::*;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -345,15 +246,18 @@ pub struct OpenaiInterface {
 }
 
 impl OpenaiInterface {
-    pub fn new(base_url: String, api_key: String) -> Self {
+    pub fn new(base_url: String, api_key: String, client: DefaultClient) -> Self {
         Self {
-            client: Client::new(base_url, api_key),
+            client: Client::new(base_url, api_key, client),
         }
     }
 
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
     pub async fn get_models(&self) -> AnyResult<Vec<InterfaceModel>> {
-        let body = self.client.get("/models").await?;
-        let parsed: ModelsResponse = serde_json::from_str(&body)?;
+        let parsed: ModelsResponse = self.client.get("/models").await?;
         Ok(parsed.data.into_iter().map(|m| InterfaceModel { id: m.id }).collect())
     }
 
@@ -408,30 +312,81 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::error::AnyResult;
     use crate::interface::ChatMessage;
+    use crate::request::DefaultClient;
+    use crate::request::test_client::{Response, ResponseData};
+    use crate::testing::QueueStream;
+    use reqwest::header::HeaderMap;
+    use reqwest::StatusCode;
+    use reqwest_eventsource::Event;
 
-    fn get(url: &str) -> MockRequest {
-        MockRequest {
-            method: "GET",
-            url: url.to_owned(),
-            body: None,
-        }
+    const BASE_URL: &str = "https://example.test/v1";
+
+    fn make_iface(client: DefaultClient) -> OpenaiInterface {
+        OpenaiInterface::new(BASE_URL.into(), "sk-test".into(), client)
+    }
+
+    fn create_message_event(data: &str) -> Event {
+        Event::Message(eventsource_stream::Event {
+            event: "message".to_string(),
+            data: data.to_string(),
+            id: "".to_string(),
+            retry: None,
+        })
+    }
+
+    fn default_events() -> Vec<AnyResult<Event>> {
+        vec![
+            Ok(Event::Open),
+            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-mock-1"}}"#)),
+            Ok(create_message_event(r#"{"type":"response.reasoning_text.delta","delta":"Thinking about the question..."}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"Hello! "}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"How can I help you today?"}"#)),
+            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-mock-1","usage":{"input_tokens":12,"output_tokens":18,"output_tokens_details":{"reasoning_tokens":7}}}}"#)),
+        ]
+    }
+
+    fn http_ok(body: &str) -> ResponseData {
+        ResponseData::Http(Ok(Response {
+            body: body.to_owned(),
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+        }))
+    }
+
+    fn sse(events: Vec<AnyResult<Event>>) -> ResponseData {
+        ResponseData::Sse(QueueStream::from(events))
+    }
+
+    fn request_body_value(req: &reqwest::Request) -> serde_json::Value {
+        let bytes = req.body().and_then(|b| b.as_bytes()).unwrap_or(&[]);
+        serde_json::from_slice(bytes).unwrap()
     }
 
     // Also tests get_models
     #[tokio::test]
     async fn test_list_models() {
-        // Normal function
-        let iface = OpenaiInterface::new("https://example.test/v1".into(), "sk-test".into());
+        let mut client = DefaultClient::default();
+        client.add_response(&format!("{BASE_URL}/models"), http_ok(r#"{"data":[{"id":"fake-model"}]}"#));
+
+        let iface = make_iface(client);
         let models = iface.get_models().await.unwrap();
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "fake-model");
-        assert_eq!(iface.client.calls(), vec![get("https://example.test/v1/models")]);
+
+        let requests = iface.client().inner().get_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method(), reqwest::Method::GET);
+        assert_eq!(requests[0].url().as_str(), &format!("{BASE_URL}/models"));
     }
 
     #[tokio::test]
     async fn test_generate() {
-        let iface = OpenaiInterface::new("https://example.test/v1".into(), "sk-test".into());
+        let mut client = DefaultClient::default();
+        client.add_response(&format!("{BASE_URL}/responses"), sse(default_events()));
+
+        let iface = make_iface(client);
         let params = InferenceParams {
             model_id: "gpt-4o",
             system_prompt: "You are a helpful assistant.",
@@ -480,13 +435,12 @@ mod tests {
             ]
         );
 
-        let calls = iface.client.calls();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].method, "POST");
-        assert_eq!(calls[0].url, "https://example.test/v1/responses");
+        let requests = iface.client().inner().get_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method(), reqwest::Method::POST);
+        assert_eq!(requests[0].url().as_str(), &format!("{BASE_URL}/responses"));
 
-        let body: serde_json::Value =
-            serde_json::from_str(calls[0].body.as_deref().unwrap()).unwrap();
+        let body = request_body_value(&requests[0]);
         assert_eq!(body["model"], "gpt-4o");
         assert_eq!(body["temperature"], 0.7);
         assert_eq!(body["reasoning"]["effort"], "low");
@@ -504,11 +458,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_usage() {
-        let iface = OpenaiInterface::new("https://example.test/v1".into(), "sk-test".into());
-        iface.client.set_events(vec![
-            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-custom-1"}}"#)),
-        ]);
+        let mut client = DefaultClient::default();
+        client.add_response(
+            &format!("{BASE_URL}/responses"),
+            sse(vec![Ok(create_message_event(
+                r#"{"type":"response.completed","response":{"id":"resp-custom-1"}}"#,
+            ))]),
+        );
 
+        let iface = make_iface(client);
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -530,15 +488,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_thinking_fields() {
-        let iface = OpenaiInterface::new("https://example.test/v1".into(), "sk-test".into());
-        iface.client.set_events(vec![
-            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-think-1"}}"#)),
-            Ok(create_message_event(r#"{"type":"response.reasoning_text.delta","delta":"step 1"}"#)),
-            Ok(create_message_event(r#"{"type":"response.reasoning_summary_text.delta","delta":"step 2"}"#)),
-            Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"done"}"#)),
-            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-think-1"}}"#)),
-        ]);
+        let mut client = DefaultClient::default();
+        client.add_response(
+            &format!("{BASE_URL}/responses"),
+            sse(vec![
+                Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-think-1"}}"#)),
+                Ok(create_message_event(r#"{"type":"response.reasoning_text.delta","delta":"step 1"}"#)),
+                Ok(create_message_event(r#"{"type":"response.reasoning_summary_text.delta","delta":"step 2"}"#)),
+                Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"done"}"#)),
+                Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-think-1"}}"#)),
+            ]),
+        );
 
+        let iface = make_iface(client);
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -573,7 +535,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_error() {
-        let iface = OpenaiInterface::new("https://example.test/v1".into(), "sk-test".into());
+        let mut client = DefaultClient::default();
+        let iface = make_iface(client.clone());
+        let url = format!("{BASE_URL}/responses");
+
         for v in &[
             json!({
                 "type": "error",
@@ -591,7 +556,7 @@ mod tests {
                 },
             }),
         ] {
-            iface.client.set_events(vec![Ok(create_message_event(&v.to_string()))]);
+            client.add_response(&url, sse(vec![Ok(create_message_event(&v.to_string()))]));
 
             let params = InferenceParams {
                 model_id: "test-model",

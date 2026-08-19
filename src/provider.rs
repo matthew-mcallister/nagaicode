@@ -4,6 +4,7 @@ use diesel::sqlite::SqliteConnection;
 
 use crate::error::AnyResult;
 use crate::interface::{Interface, InterfaceId};
+use crate::request::DefaultClient;
 use crate::schema::provider;
 use crate::schema::provider::dsl;
 
@@ -88,8 +89,8 @@ impl Provider {
         Ok(providers)
     }
 
-    pub fn create_interface(&self) -> AnyResult<Interface> {
-        Interface::from_provider(self)
+    pub fn create_interface(&self, client: &DefaultClient) -> AnyResult<Interface> {
+        Interface::from_provider(self, client)
     }
 
     pub fn base_url_normalized(&self) -> Option<&str> {
