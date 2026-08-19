@@ -124,7 +124,8 @@ pub struct Item {
     pub id: i32,
     pub session_id: i32,
     pub chain_id: Option<i32>,
-    pub r#type: String,
+    #[diesel(column_name = "type")]
+    pub ty: String,
     pub response_id: Option<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
@@ -135,7 +136,8 @@ pub struct Item {
 pub struct NewItem<'a> {
     pub session_id: i32,
     pub chain_id: Option<i32>,
-    pub r#type: &'a str,
+    #[diesel(column_name = "type")]
+    pub ty: &'a str,
     pub response_id: Option<&'a str>,
 }
 
@@ -144,13 +146,13 @@ impl Item {
         conn: &mut SqliteConnection,
         session_id: i32,
         chain_id: Option<i32>,
-        r#type: &str,
+        ty: &str,
         response_id: Option<&str>,
     ) -> AnyResult<Item> {
         let new = NewItem {
             session_id,
             chain_id,
-            r#type,
+            ty,
             response_id,
         };
         let item = diesel::insert_into(item::table)
@@ -196,7 +198,8 @@ impl Item {
 pub struct Content {
     pub id: i32,
     pub item_id: i32,
-    pub r#type: String,
+    #[diesel(column_name = "type")]
+    pub ty: String,
     pub value: String,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
@@ -206,7 +209,8 @@ pub struct Content {
 #[diesel(table_name = content)]
 pub struct NewContent<'a> {
     pub item_id: i32,
-    pub r#type: &'a str,
+    #[diesel(column_name = "type")]
+    pub ty: &'a str,
     pub value: &'a str,
 }
 
@@ -214,12 +218,12 @@ impl Content {
     pub fn create(
         conn: &mut SqliteConnection,
         item_id: i32,
-        r#type: &str,
+        ty: &str,
         value: &str,
     ) -> AnyResult<Content> {
         let new = NewContent {
             item_id,
-            r#type,
+            ty,
             value,
         };
         let content = diesel::insert_into(content::table)
@@ -332,7 +336,7 @@ mod tests {
             .expect("create item1");
         assert_eq!(item1.session_id, session.id);
         assert_eq!(item1.chain_id, Some(chain.id));
-        assert_eq!(item1.r#type, "user_message");
+        assert_eq!(item1.ty, "user_message");
         assert_eq!(item1.response_id, None);
 
         // Create item without chain_id but with response_id
@@ -352,7 +356,7 @@ mod tests {
         let c1 = Content::create(&mut conn, item1.id, "text", "Hello world").expect("create content 1");
         let c2 = Content::create(&mut conn, item1.id, "text", "Another part").expect("create content 2");
         assert_eq!(c1.item_id, item1.id);
-        assert_eq!(c1.r#type, "text");
+        assert_eq!(c1.ty, "text");
         assert_eq!(c1.value, "Hello world");
 
         let contents = Content::list_by_item(&mut conn, item1.id).expect("list contents");
