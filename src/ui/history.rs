@@ -770,10 +770,10 @@ mod tests {
             lines.join("\n")
         }
 
-        assert_eq!(render("hello", 10), "▐ hello   ");
-        assert_eq!(render("foo\nbar", 8), "▐ foo   \n▐ bar   ");
-        assert_eq!(render("hello world", 8), "▐ hello \n▐ world ");
-        assert_eq!(render("", 6), "");
+        assert_eq!(render("hello", 14), "  ▐ hello     ");
+        assert_eq!(render("foo\nbar", 12), "  ▐ foo     \n  ▐ bar     ");
+        assert_eq!(render("hello world", 12), "  ▐ hello   \n  ▐ world   ");
+        assert_eq!(render("", 8), "");
     }
 
     #[test]
@@ -786,8 +786,7 @@ mod tests {
 
             let mut prefix = String::new();
             let _ = SetStyle(THEME_DARK.text_error.into()).write_ansi(&mut prefix);
-            prefix.push('▐');
-            prefix.push(' ');
+            prefix.push_str("  ▐ ");
             let _ = SetStyle(THEME_DARK.text_subtle.into()).write_ansi(&mut prefix);
             for line in lines.iter_mut() {
                 *line = line.trim_start_matches(&prefix).to_owned();
@@ -796,10 +795,10 @@ mod tests {
             lines.join("\n")
         }
 
-        assert_eq!(render("hello", 10), "hello   ");
-        assert_eq!(render("foo\nbar", 8), "foo   \nbar   ");
-        assert_eq!(render("hello world", 8), "hello \nworld ");
-        assert_eq!(render("", 6), "");
+        assert_eq!(render("hello", 12), "hello   ");
+        assert_eq!(render("foo\nbar", 12), "foo     \nbar     ");
+        assert_eq!(render("hello world", 12), "hello   \nworld   ");
+        assert_eq!(render("", 8), "");
     }
 
     #[test]
