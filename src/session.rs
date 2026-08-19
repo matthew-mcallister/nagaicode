@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_session_crud() {
-        let mut conn = crate::db::open_in_memory().expect("failed to open in-memory db");
+        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
 
         let s1 = Session::create(&mut conn, "Session 1").expect("create session failed");
         assert_eq!(s1.name, "Session 1");
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_chain_crud_and_cascade() {
-        let mut conn = crate::db::open_in_memory().expect("failed to open in-memory db");
+        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
         let session = Session::create(&mut conn, "Test Session").expect("create session");
 
         // Note: provider_id 999 does not exist in provider table, proving provider_id is *not* a foreign key
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn test_item_and_content_crud_and_cascade() {
-        let mut conn = crate::db::open_in_memory().expect("failed to open in-memory db");
+        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
         let session = Session::create(&mut conn, "Chat").expect("create session");
         let chain = Chain::create(&mut conn, session.id, 1, "openai", "gpt-4o").expect("create chain");
 

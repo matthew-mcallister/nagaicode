@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn test_provider() {
-        let mut conn = crate::db::open_in_memory().expect("failed to open in-memory db");
+        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
 
         let created = Provider::create(&mut conn, "test", InterfaceId::Openai, "key123", None)
             .expect("create failed");

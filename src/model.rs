@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_model() {
-        let mut conn = crate::db::open_in_memory().expect("failed to open in-memory db");
+        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
         let provider = seed_provider(&mut conn);
 
         let created =
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_model_isolation_by_provider() {
-        let mut conn = crate::db::open_in_memory().expect("failed to open in-memory db");
+        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
         let p1 = Provider::create(&mut conn, "p1", InterfaceId::Openai, "k1", None).expect("create p1");
         let p2 = Provider::create(&mut conn, "p2", InterfaceId::Openai, "k2", None).expect("create p2");
 
@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_model_cascade_delete_with_provider() {
-        let mut conn = crate::db::open_in_memory().expect("failed to open in-memory db");
+        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
         let provider = seed_provider(&mut conn);
         Model::create(&mut conn, provider.id, "gpt-4").expect("create model");
 
