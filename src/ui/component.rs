@@ -1,6 +1,8 @@
 use crossterm::Command;
 use crossterm::event::Event;
 
+use crate::ui::canvas::Canvas;
+
 /// Trait which all drawable UI components implement. This UI is *row-based*:
 /// every drawable must be able to decompose itself into rows, which the parent
 /// may style or transform as needed. Each row must be printable to the
@@ -22,6 +24,10 @@ pub trait Component {
     /// Returns an iterator over the component's printable rows.
     // TODO: Replace this with a canvas that's just Vec<StyledString>.
     fn drawable_rows(&self) -> Self::RowIter<'_>;
+
+    /// Renders the component to a drawing surface.
+    fn draw<'a>(&self, canvas: &mut Canvas<'a>) {
+    }
 
     /// Returns the component's width.
     fn width(&self) -> usize;

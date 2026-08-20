@@ -1,6 +1,7 @@
 // TODO maybe: write a diffing system that compares each row with the row from
 // the previous draw and only redraws the portions which changed.
 
+pub mod canvas;
 pub mod chat;
 pub mod command_editor;
 pub mod component;
