@@ -2,7 +2,7 @@
 
 use crossterm::Command;
 use crossterm::style::{
-    Attribute, Attributes, Color, ContentStyle, SetAttribute, SetForegroundColor
+    Attribute, Attributes, Color, ContentStyle, SetAttribute, SetBackgroundColor, SetForegroundColor
 };
 
 pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
@@ -25,6 +25,33 @@ pub struct TextStyle {
     pub italic: bool,
     pub underline: bool,
     pub strikethrough: bool,
+}
+
+impl From<TextStyle> for ContentStyle {
+    fn from(value: TextStyle) -> Self {
+        let mut attributes = Attributes::none();
+        if value.bold {
+            attributes.set(Attribute::Bold);
+        } else {
+            attributes.unset(Attribute::NormalIntensity);
+        }
+        if value.italic {
+            attributes.set(Attribute::Italic);
+        } else {
+            attributes.unset(Attribute::NoItalic);
+        }
+        if value.strikethrough {
+            attributes.set(Attribute::CrossedOut);
+        } else {
+            attributes.unset(Attribute::NotCrossedOut);
+        }
+        Self {
+            foreground_color: Some(value.fg_color),
+            background_color: None,
+            underline_color: None,
+            attributes,
+        }
+    }
 }
 
 impl TextStyle {
@@ -59,14 +86,69 @@ impl TextStyle {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Style {
+    pub text: TextStyle,
+    pub bg_color: Color,
+}
+
+impl From<Style> for ContentStyle {
+    fn from(value: Style) -> Self {
+        let mut style: ContentStyle = value.text.into();
+        style.background_color = Some(value.bg_color);
+        style
+    }
+}
+
+impl Style {
+    pub fn new(text: TextStyle, bg_color: Color) -> Self {
+        Self { text, bg_color }
+    }
+
+    pub fn with_text(self, text: TextStyle) -> Self {
+        Self {
+            text,
+            ..self
+        }
+    }
+
+    pub fn with_bg_color(self, bg_color: Color) -> Self {
+        Self {
+            bg_color,
+            ..self
+        }
+    }
+
+    pub const fn bolded(mut self) -> Self {
+        self.text = self.text.bolded();
+        self
+    }
+
+    pub const fn italicized(mut self) -> Self {
+        self.text = self.text.italicized();
+        self
+    }
+
+    pub const fn underlined(mut self) -> Self {
+        self.text = self.text.underlined();
+        self
+    }
+
+    pub const fn struck_out(mut self) -> Self {
+        self.text = self.text.struck_out();
+        self
+    }
+}
+
 /// Tuple `(old, new)`, replaces terminal text style
 #[derive(Clone, Copy, Debug)]
-pub struct UpdateStyle(pub TextStyle, pub TextStyle);
+pub struct UpdateStyle(pub Style, pub Style);
 
 impl Command for UpdateStyle {
     fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-        let UpdateStyle(old, new) = self;
+        let UpdateStyle(old_style, new_style) = self;
 
+        let (old, new) = (old_style.text, new_style.text);
         if old.fg_color != new.fg_color {
             SetForegroundColor(new.fg_color).write_ansi(f)?;
         }
@@ -94,35 +176,11 @@ impl Command for UpdateStyle {
             })
             .write_ansi(f)?;
         }
+        if old_style.bg_color != new_style.bg_color {
+            SetBackgroundColor(new_style.bg_color).write_ansi(f)?;
+        }
 
         Ok(())
-    }
-}
-
-impl From<TextStyle> for ContentStyle {
-    fn from(value: TextStyle) -> Self {
-        let mut attributes = Attributes::none();
-        if value.bold {
-            attributes.set(Attribute::Bold);
-        } else {
-            attributes.unset(Attribute::NormalIntensity);
-        }
-        if value.italic {
-            attributes.set(Attribute::Italic);
-        } else {
-            attributes.unset(Attribute::NoItalic);
-        }
-        if value.strikethrough {
-            attributes.set(Attribute::CrossedOut);
-        } else {
-            attributes.unset(Attribute::NotCrossedOut);
-        }
-        Self {
-            foreground_color: Some(value.fg_color),
-            background_color: None,
-            underline_color: None,
-            attributes,
-        }
     }
 }
 
@@ -141,6 +199,12 @@ pub struct Theme {
     pub text_scroll_bar_track: TextStyle,
     pub text_scroll_bar_focused: TextStyle,
     pub text_scroll_bar_unfocused: TextStyle,
+}
+
+impl Theme {
+    pub fn base_style(&self) -> Style {
+        Style { text: self.text_base, bg_color: self.bg_base }
+    }
 }
 
 // Stock Tailwind CSS colors

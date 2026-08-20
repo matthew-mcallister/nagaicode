@@ -4,7 +4,7 @@
 use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Text};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::ui::style::{TextStyle, Theme};
+use crate::ui::style::{Style, TextStyle, Theme};
 use crate::ui::styled_string::{SavePoint, StyledString};
 use crate::ui::text::{Row, SPACES, TAB_WIDTH, wrap_line, wrap_line_naive};
 
@@ -50,7 +50,7 @@ struct Marker {
     /// Byte offset to insert control sequence in plain_text
     offset: usize,
     /// Style to apply
-    style: TextStyle,
+    style: Style,
 }
 
 #[derive(Debug)]
@@ -58,11 +58,11 @@ struct PhrasingBuilder {
     theme: &'static Theme,
     plain_text: String,
     markers: Vec<Marker>,
-    cur_style: TextStyle,
+    cur_style: Style,
 }
 
 impl PhrasingBuilder {
-    fn new(theme: &'static Theme, base_style: TextStyle) -> Self {
+    fn new(theme: &'static Theme, base_style: Style) -> Self {
         Self {
             theme,
             plain_text: String::new(),
@@ -105,7 +105,12 @@ impl PhrasingBuilder {
         }
     }
 
-    fn set_style(&mut self, style: TextStyle) {
+    fn set_text(&mut self, style: TextStyle) {
+        let style = self.cur_style.with_text(style);
+        self.set_style(style);
+    }
+
+    fn set_style(&mut self, style: Style) {
         if style != self.cur_style {
             self.markers.push(Marker {
                 offset: self.plain_text.len(),
@@ -124,7 +129,7 @@ impl PhrasingBuilder {
             // Styling
             Node::InlineCode(inner) => {
                 let prev = self.cur_style;
-                self.set_style(self.theme.text_code);
+                self.set_text(self.theme.text_code);
                 self.push_inline_code(&inner.value);
                 self.set_style(prev);
             }
@@ -189,7 +194,7 @@ impl PhrasingBuilder {
             }
             Node::InlineMath(math) => {
                 let prev = self.cur_style;
-                self.set_style(self.theme.text_math);
+                self.set_text(self.theme.text_math);
                 self.push_inline_code(&math.value);
                 self.set_style(prev);
             }
@@ -259,8 +264,8 @@ impl FlowBuilder {
         Self {
             theme,
             width,
-            prefix: StyledString::new(theme.text_base, 2 * width),
-            row: StyledString::new(theme.text_base, 2 * width),
+            prefix: StyledString::new(theme.base_style(), 2 * width),
+            row: StyledString::new(theme.base_style(), 2 * width),
             rows: Vec::new(),
             depth: 0,
             resume_point: ResumePoint {
@@ -389,7 +394,7 @@ fn heading_to_rows(flow: &mut FlowBuilder, heading: &Heading) {
     flow.restore(restore_point);
 }
 
-fn push_preformatted(flow: &mut FlowBuilder, style: TextStyle, value: &str) {
+fn push_preformatted(flow: &mut FlowBuilder, style: Style, value: &str) {
     let restore = flow.save();
     flow.prefix.set_style(style);
     flow.prefix.freeze_style(true);
@@ -408,7 +413,7 @@ fn push_preformatted(flow: &mut FlowBuilder, style: TextStyle, value: &str) {
 fn thematic_break(flow: &mut FlowBuilder) {
     let count = flow.remaining_width();
     let restore = flow.save();
-    flow.row.set_style(flow.theme.text_subtle);
+    flow.row.set_text(flow.theme.text_subtle);
     flow.row.push(&"┄".repeat(count), count);
     flow.end_row();
     flow.restore(restore);
@@ -418,11 +423,11 @@ fn blockquote(flow: &mut FlowBuilder, quote: &Blockquote) {
     let restore = flow.save();
     let border_style = flow.theme.text_quote;
 
-    flow.prefix.set_style(border_style);
+    flow.prefix.set_text(border_style);
     flow.prefix.push("\u{2590} ", 2);
     flow.prefix.freeze_style(true);
 
-    flow.row.set_style(border_style);
+    flow.row.set_text(border_style);
     flow.row.push("\u{2590} ", 2);
     flow.row.freeze_style(true);
 
@@ -526,11 +531,11 @@ fn push_flow_node(flow: &mut FlowBuilder, node: &Node) {
 
         Node::Paragraph(paragraph) => push_phrasing(flow, &paragraph.children),
         Node::Blockquote(quote) => blockquote(flow, quote),
-        Node::Code(code) => push_preformatted(flow, flow.theme.text_code, &code.value),
-        Node::Math(math) => push_preformatted(flow, flow.theme.text_math, &math.value),
+        Node::Code(code) => push_preformatted(flow, Style::new(flow.theme.text_code, flow.theme.bg_base), &code.value),
+        Node::Math(math) => push_preformatted(flow, Style::new(flow.theme.text_math, flow.theme.bg_base), &math.value),
         Node::FootnoteDefinition(footnote) => footnote_definition(flow, footnote),
         Node::Definition(def) => definition(flow, def),
-        Node::Html(html) => push_preformatted(flow, flow.theme.text_code, &html.value),
+        Node::Html(html) => push_preformatted(flow, Style::new(flow.theme.text_code, flow.theme.bg_base), &html.value),
         Node::Heading(heading) => heading_to_rows(flow, heading),
         Node::ThematicBreak(_) => thematic_break(flow),
         Node::ListItem(list_item) => {
@@ -614,7 +619,7 @@ pub fn render_mdast(
     let mut flow = FlowBuilder::new(theme, width);
 
     // Force full style update
-    flow.prefix.set_style(theme.text_base);
+    flow.prefix.set_style(theme.base_style());
     flow.prefix.flush_style();
     flow.apply_prefix();
     push_flow_node(&mut flow, node);
@@ -634,7 +639,7 @@ mod test_paragraph {
 
         // In tests, strip the style initialization commands for readability
         let mut prefix = String::new();
-        let _ = SetStyle(THEME_DARK.text_base.into()).write_ansi(&mut prefix);
+        let _ = SetStyle(THEME_DARK.base_style().into()).write_ansi(&mut prefix);
 
         result
             .rows

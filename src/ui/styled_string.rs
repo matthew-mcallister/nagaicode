@@ -1,7 +1,7 @@
 use crossterm::Command;
-use crossterm::style::{Print, SetStyle};
+use crossterm::style::{Color, Print, SetStyle};
 
-use crate::ui::style::{TextStyle, UpdateStyle};
+use crate::ui::style::{Style, TextStyle, UpdateStyle};
 use crate::ui::text::SPACES;
 
 /// Saved state for backtracking
@@ -9,8 +9,8 @@ use crate::ui::text::SPACES;
 pub struct SavePoint {
     len: usize,
     width: usize,
-    prev_style: Option<TextStyle>,
-    cur_style: TextStyle,
+    prev_style: Option<Style>,
+    cur_style: Style,
     style_frozen: bool,
 }
 
@@ -21,17 +21,17 @@ pub struct SavePoint {
 pub struct StyledString {
     inner: String,
     // Style at beginning of string, allows concatenating styled strings
-    initial_style: TextStyle,
+    initial_style: Style,
     // Tracking previous style allows us to emit redundant style updates
     // without emitting extra control sequences
-    prev_style: Option<TextStyle>,
-    cur_style: TextStyle,
+    prev_style: Option<Style>,
+    cur_style: Style,
     width: usize,
     style_frozen: bool,
 }
 
 impl StyledString {
-    pub fn new(style: TextStyle, capacity: usize) -> Self {
+    pub fn new(style: Style, capacity: usize) -> Self {
         Self {
             inner: String::with_capacity(capacity),
             initial_style: style,
@@ -50,7 +50,7 @@ impl StyledString {
         self.inner.len()
     }
 
-    pub fn cur_style(&self) -> TextStyle {
+    pub fn cur_style(&self) -> Style {
         self.cur_style
     }
 
@@ -73,7 +73,7 @@ impl StyledString {
         }
     }
 
-    pub fn set_style(&mut self, style: TextStyle) {
+    pub fn set_style(&mut self, style: Style) {
         if self.style_frozen { return; }
         if self.inner.is_empty() {
             self.initial_style = style;
@@ -84,6 +84,14 @@ impl StyledString {
             self.prev_style = Some(self.cur_style);
         }
         self.cur_style = style;
+    }
+
+    pub fn set_text(&mut self, text: TextStyle) {
+        self.set_style(self.cur_style.with_text(text));
+    }
+
+    pub fn set_bg_color(&mut self, bg_color: Color) {
+        self.set_style(self.cur_style.with_bg_color(bg_color));
     }
 
     // Kludge for preventing child nodes from changing the style inside code
@@ -153,15 +161,15 @@ impl Command for StyledString {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::style::{TextStyle, THEME_DARK};
+    use crate::ui::style::{Style, THEME_DARK};
 
-    fn transition(old: TextStyle, new: TextStyle) -> String {
+    fn transition(old: Style, new: Style) -> String {
         let mut out = String::new();
         UpdateStyle(old, new).write_ansi(&mut out).unwrap();
         out
     }
 
-    fn full_style(style: TextStyle) -> String {
+    fn full_style(style: Style) -> String {
         let mut out = String::new();
         SetStyle(style.into()).write_ansi(&mut out).unwrap();
         out
@@ -169,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_push_and_width() {
-        let base = THEME_DARK.text_base;
+        let base = THEME_DARK.base_style();
         let mut s = StyledString::new(base, 16);
 
         assert_eq!(s.len(), 0);
@@ -192,10 +200,11 @@ mod tests {
 
     #[test]
     fn test_style_transitions() {
-        let base = THEME_DARK.text_base;
-        let header = THEME_DARK.text_header;
-        let code = THEME_DARK.text_code;
-        let math = THEME_DARK.text_math;
+        let theme = &THEME_DARK;
+        let base = theme.base_style();
+        let header = Style::new(theme.text_header, theme.bg_base);
+        let code = Style::new(theme.text_code, theme.bg_base);
+        let math = Style::new(theme.text_math, theme.bg_base);
 
         // set_style before any content updates the initial style silently
         let mut s = StyledString::new(base, 16);
@@ -222,8 +231,9 @@ mod tests {
 
     #[test]
     fn test_push_styled() {
-        let base = THEME_DARK.text_base;
-        let header = THEME_DARK.text_header;
+        let theme = &THEME_DARK;
+        let base = theme.base_style();
+        let header = Style::new(theme.text_header, theme.bg_base);
 
         // Matching style: content/width appended, no transitions, state clean
         let mut a = StyledString::new(base, 16);
@@ -288,8 +298,9 @@ mod tests {
 
     #[test]
     fn test_save_restore_and_freeze() {
-        let base = THEME_DARK.text_base;
-        let header = THEME_DARK.text_header;
+        let theme = &THEME_DARK;
+        let base = theme.base_style();
+        let header = Style::new(theme.text_header, theme.bg_base);
 
         let mut s = StyledString::new(base, 16);
         s.push("abc", 3);
@@ -328,8 +339,9 @@ mod tests {
 
     #[test]
     fn test_pad_to_width() {
-        let base = THEME_DARK.text_base;
-        let header = THEME_DARK.text_header;
+        let theme = &THEME_DARK;
+        let base = theme.base_style();
+        let header = Style::new(theme.text_header, theme.bg_base);
 
         // No-op when already at the target width
         let mut s = StyledString::new(base, 16);

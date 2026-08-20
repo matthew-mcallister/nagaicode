@@ -5,14 +5,13 @@ use std::fmt;
 
 use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::style::{ContentStyle, SetStyle};
 use fnv::FnvHashMap;
 
 use crate::arena::{Arena, Id};
 use crate::session::{Content, ContentType, Item, ItemType};
 use crate::ui::canvas::Canvas;
 use crate::ui::markdown::{MarkdownResult, ResumePoint};
-use crate::ui::style::{Theme, TextStyle};
+use crate::ui::style::{Style, Theme};
 use crate::ui::styled_string::StyledString;
 use crate::ui::text::{wrap_line, SPACES};
 use crate::ui::Component;
@@ -22,7 +21,7 @@ pub(crate) fn render_help(
     width: usize,
     content: &str,
 ) -> Vec<StyledString> {
-    let style = theme.text_quote;
+    let style = Style::new(theme.text_quote, theme.bg_base);
     content.lines().flat_map(|line|
         wrap_line(width - 6, line)
             .into_iter()
@@ -42,8 +41,8 @@ pub(crate) fn render_error(
     width: usize,
     content: &str,
 ) -> Vec<StyledString> {
-    let error_style = theme.text_error;
-    let subtle_style = theme.text_subtle;
+    let error_style = Style::new(theme.text_error, theme.bg_base);
+    let subtle_style = Style::new(theme.text_subtle, theme.bg_base);
     content.lines().flat_map(|line|
         wrap_line(width - 6, line)
             .into_iter()
@@ -67,14 +66,11 @@ pub(crate) fn render_prompt(
     if content.is_empty() {
         return Vec::new();
     }
-    let mut style: ContentStyle = theme.text_base.into();
-    style.background_color = Some(theme.bg_prompt);
-    let mut codes = String::new();
-    let _ = SetStyle(style).write_ansi(&mut codes);
+    let style = Style::new(theme.text_base, theme.bg_prompt);
 
     let make_padding = || {
-        let mut s = StyledString::new(theme.text_base, width + 4);
-        s.push(&codes, 0);
+        let mut s = StyledString::new(style, width + 4);
+        s.flush_style();
         s.push(&SPACES[..width], width);
         s
     };
@@ -84,8 +80,8 @@ pub(crate) fn render_prompt(
         wrap_line(width - 4, line)
             .into_iter()
             .map(|row| {
-                let mut s = StyledString::new(theme.text_base, width + 4);
-                s.push(&codes, 0);
+                let mut s = StyledString::new(style, width + 4);
+                s.flush_style();
                 s.push("  ", 2);
                 s.push(&row.to_padded_string(width - 4), width - 4);
                 s.push("  ", 2);
@@ -103,7 +99,7 @@ pub(crate) fn render_markdown(
 ) -> MarkdownResult {
     let mut result = crate::ui::markdown::render_markdown(theme, width - 4, content);
     for row in result.rows.iter_mut() {
-        let mut padded = StyledString::new(theme.text_base, width + 4);
+        let mut padded = StyledString::new(theme.base_style(), width + 4);
         padded.push("  ", 2);
         padded.push_styled(row);
         padded.pad_to_width(width);
@@ -238,11 +234,12 @@ impl HistoryItem {
     ) -> Id<Self> {
         let (rendered, resume_point) = render(theme, width, ty, &content);
         Self::from_rendered(
-            items, rows, prev, width, ty, content, content_id, resume_point, rendered,
+            theme, items, rows, prev, width, ty, content, content_id, resume_point, rendered,
         )
     }
 
     fn from_rendered(
+        theme: &'static Theme,
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
         prev: Id<HistoryRow>,
@@ -265,7 +262,7 @@ impl HistoryItem {
             num_rows: 0,
         });
 
-        let mut padding = StyledString::new(TextStyle::default(), width);
+        let mut padding = StyledString::new(theme.base_style(), width);
         padding.pad_to_width(width);
         rendered.push(padding); // Add vertical padding row
         let num_rows = rendered.len();
@@ -306,7 +303,7 @@ impl HistoryItem {
         remove_rows(rows, prev, self.num_rows - old_row);
 
         let mut rendered: Vec<StyledString> = result.rows;
-        let mut padding = StyledString::new(TextStyle::default(), width);
+        let mut padding = StyledString::new(theme.base_style(), width);
         padding.pad_to_width(width);
         rendered.push(padding);
         let len = rendered.len();
@@ -343,7 +340,7 @@ impl HistoryItem {
         remove_rows(rows, prev, self.num_rows);
 
         let mut rendered = rendered;
-        let mut padding = StyledString::new(TextStyle::default(), width);
+        let mut padding = StyledString::new(theme.base_style(), width);
         padding.pad_to_width(width);
         rendered.push(padding);
         let len = rendered.len();
@@ -385,7 +382,7 @@ impl History {
         // Insert dummy head, distinct from all other rows.
         let head = rows.insert(HistoryRow {
             item: Id::null(),
-            preformatted: StyledString::new(theme.text_base, 0),
+            preformatted: StyledString::new(theme.base_style(), 0),
             prev: Id::null(),
             next: Id::null(),
         });
@@ -531,7 +528,7 @@ impl History {
 
         let head = self.rows.insert(HistoryRow {
             item: Id::null(),
-            preformatted: StyledString::new(self.theme.text_base, 0),
+            preformatted: StyledString::new(self.theme.base_style(), 0),
             prev: Id::null(),
             next: Id::null(),
         });
@@ -805,12 +802,14 @@ mod tests {
         use crossterm::style::SetStyle;
 
         fn render(content: &str, width: usize) -> String {
-            let lines = super::render_help(&THEME_DARK, width, content);
+            let theme = &THEME_DARK;
+            let lines = super::render_help(theme, width, content);
 
             // In tests, strip the style initialization commands for
             // readability.
             let mut prefix = String::new();
-            let _ = SetStyle(THEME_DARK.text_quote.into()).write_ansi(&mut prefix);
+            let style = Style::new(theme.text_quote, theme.bg_base);
+            let _ = SetStyle(style.into()).write_ansi(&mut prefix);
             lines
                 .iter()
                 .map(|line| line.as_str().trim_start_matches(&prefix).to_owned())
@@ -830,12 +829,14 @@ mod tests {
         use crossterm::style::SetStyle;
 
         fn render(content: &str, width: usize) -> String {
-            let lines = super::render_error(&THEME_DARK, width, content);
+            let theme = &THEME_DARK;
+            let lines = super::render_error(theme, width, content);
 
             let mut prefix = String::new();
-            let _ = SetStyle(THEME_DARK.text_error.into()).write_ansi(&mut prefix);
+            let style = Style::new(theme.text_error, theme.bg_base);
+            let _ = SetStyle(style.into()).write_ansi(&mut prefix);
             prefix.push_str("  ▐ ");
-            let _ = SetStyle(THEME_DARK.text_subtle.into()).write_ansi(&mut prefix);
+            let _ = SetStyle(theme.text_subtle.into()).write_ansi(&mut prefix);
             lines
                 .iter()
                 .map(|line| line.as_str().trim_start_matches(&prefix).to_owned())
