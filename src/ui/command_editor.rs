@@ -94,13 +94,9 @@ impl Component for CommandEditor {
         )
     }
 
-    fn draw(&self, canvas: &mut Canvas) {
-        self.input.draw(&mut Canvas {
-            rows: canvas.rows,
-        });
-        self.scroll_bar.draw(&mut Canvas {
-            rows: canvas.rows,
-        });
+    fn draw(&self, canvas: Canvas) {
+        self.input.draw(&mut *canvas);
+        self.scroll_bar.draw(canvas);
     }
 
     fn set_width(&mut self, width: usize) {

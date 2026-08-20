@@ -1083,18 +1083,18 @@ impl Component for InputBox {
         )
     }
 
-    fn draw(&self, canvas: &mut Canvas) {
+    fn draw(&self, canvas: Canvas) {
         let prev = self.rows[self.viewport_top].prev;
         for (i, (_, row)) in self.iter_range(prev, self.viewport_bottom).enumerate() {
-            let pad_width = canvas.rows[i].width() + self.width;
+            let pad_width = canvas[i].width() + self.width;
             for g in &row.graphemes {
                 match &g.data[..] {
-                    "\t" => canvas.rows[i].push(&SPACES[..g.width as usize], g.width as usize),
+                    "\t" => canvas[i].push(&SPACES[..g.width as usize], g.width as usize),
                     "\n" => {}
-                    _ => canvas.rows[i].push(&g.data, g.width as usize),
+                    _ => canvas[i].push(&g.data, g.width as usize),
                 }
             }
-            canvas.rows[i].pad_to_width(pad_width);
+            canvas[i].pad_to_width(pad_width);
         }
     }
 

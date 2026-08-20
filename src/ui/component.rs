@@ -26,7 +26,7 @@ pub trait Component {
     fn drawable_rows(&self) -> Self::RowIter<'_>;
 
     /// Renders the component to a drawing surface.
-    fn draw<'a>(&self, _canvas: &mut Canvas<'a>) {
+    fn draw(&self, _canvas: Canvas) {
     }
 
     /// Returns the component's width.

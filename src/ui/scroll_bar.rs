@@ -119,7 +119,7 @@ impl Component for ScrollBar {
         }))
     }
 
-    fn draw(&self, canvas: &mut Canvas) {
+    fn draw(&self, canvas: Canvas) {
         if self.width == 0 {
             return;
         }
@@ -134,10 +134,10 @@ impl Component for ScrollBar {
             } else {
                 self.theme.text_scroll_bar_track
             };
-            canvas.rows[row].set_bg_color(self.theme.bg_base);
-            canvas.rows[row].set_text(text_style);
-            canvas.rows[row].push("▐", 1);
-            canvas.rows[row].pad(self.width - 1);
+            canvas[row].set_bg_color(self.theme.bg_base);
+            canvas[row].set_text(text_style);
+            canvas[row].push("▐", 1);
+            canvas[row].pad(self.width - 1);
         }
     }
 

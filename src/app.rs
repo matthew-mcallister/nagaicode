@@ -73,14 +73,13 @@ impl App {
             .collect()
     }
 
-    pub fn draw(&self, canvas: &mut Canvas) {
+    pub fn draw(&self, canvas: Canvas) {
         self.chat.draw(canvas);
     }
 
     pub fn render(&mut self) -> AnyResult<()> {
         let mut rows = self.make_canvas();
-        let mut canvas = Canvas { rows: &mut rows[..] };
-        self.draw(&mut canvas);
+        self.draw(&mut rows);
 
         for row in &rows {
             debug_assert!(row.width() <= self.chat.width());

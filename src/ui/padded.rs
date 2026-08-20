@@ -120,30 +120,28 @@ impl<C: Component> Component for Padded<C> {
         })())
     }
 
-    fn draw(&self, canvas: &mut Canvas) {
+    fn draw(&self, canvas: Canvas) {
         if let Some(bg_color) = self.background_color {
-            for row in canvas.rows[..self.height()].iter_mut() {
+            for row in canvas[..self.height()].iter_mut() {
                 row.set_bg_color(bg_color);
             }
         }
 
         // Vertical pad
         for i in 0..self.v_padding {
-            canvas.rows[i].pad(self.width());
+            canvas[i].pad(self.width());
         }
         for i in self.height() - self.v_padding..self.height() {
-            canvas.rows[i].pad(self.width());
+            canvas[i].pad(self.width());
         }
 
         // Render child
         for i in self.v_padding..self.height() - self.v_padding {
-            canvas.rows[i].pad(self.h_padding);
+            canvas[i].pad(self.h_padding);
         }
-        self.inner.draw(&mut Canvas {
-            rows: &mut canvas.rows[self.v_padding..self.height() - self.v_padding],
-        });
+        self.inner.draw(&mut canvas[self.v_padding..self.height() - self.v_padding]);
         for i in self.v_padding..self.height() - self.v_padding {
-            canvas.rows[i].pad(self.h_padding);
+            canvas[i].pad(self.h_padding);
         }
     }
 

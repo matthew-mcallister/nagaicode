@@ -97,13 +97,9 @@ impl Component for HistoryView {
         )
     }
 
-    fn draw(&self, canvas: &mut Canvas) {
-        self.history.draw(&mut Canvas {
-            rows: canvas.rows,
-        });
-        self.scroll_bar.draw(&mut Canvas {
-            rows: canvas.rows,
-        });
+    fn draw(&self, canvas: Canvas) {
+        self.history.draw(&mut *canvas);
+        self.scroll_bar.draw(canvas);
     }
 
     fn set_width(&mut self, width: usize) {

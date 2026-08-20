@@ -79,7 +79,7 @@ impl Component for Chat {
         self.stacked.drawable_rows()
     }
 
-    fn draw(&self, canvas: &mut Canvas) {
+    fn draw(&self, canvas: Canvas) {
         self.stacked.draw(canvas);
     }
 

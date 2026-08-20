@@ -155,18 +155,14 @@ impl Component for StackedView {
         Box::new(empty.chain(history).chain(spacer).chain(input))
     }
 
-    fn draw(&self, canvas: &mut Canvas) {
+    fn draw(&self, canvas: Canvas) {
         let empty_rows = self.height - self.history.height() - self.input.height() - 1;
         for i in 0..empty_rows {
-            canvas.rows[i].pad(self.width);
+            canvas[i].pad(self.width);
         }
-        self.history.draw(&mut Canvas {
-            rows: &mut canvas.rows[empty_rows..empty_rows + self.history.height()],
-        });
-        canvas.rows[empty_rows + self.history.height()].pad(self.width);
-        self.input.draw(&mut Canvas {
-            rows: &mut canvas.rows[self.height() - self.input.height()..self.height()],
-        });
+        self.history.draw(&mut canvas[empty_rows..empty_rows + self.history.height()]);
+        canvas[empty_rows + self.history.height()].pad(self.width);
+        self.input.draw(&mut canvas[self.height() - self.input.height()..self.height()]);
     }
 
     fn set_width(&mut self, width: usize) {

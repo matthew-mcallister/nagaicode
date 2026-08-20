@@ -662,13 +662,13 @@ impl Component for History {
         )
     }
 
-    fn draw(&self, canvas: &mut Canvas) {
+    fn draw(&self, canvas: Canvas) {
         let prev = self.rows[self.viewport_top].prev;
         for (i, (_, row)) in self.iter_range(prev, self.viewport_bottom).enumerate() {
-            if i >= canvas.rows.len() {
+            if i >= canvas.len() {
                 break;
             }
-            canvas.rows[i].push_styled(&row.preformatted);
+            canvas[i].push_styled(&row.preformatted);
         }
     }
 
