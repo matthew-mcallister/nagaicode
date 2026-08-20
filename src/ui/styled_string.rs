@@ -2,6 +2,7 @@ use crossterm::Command;
 use crossterm::style::SetStyle;
 
 use crate::ui::style::{TextStyle, UpdateStyle};
+use crate::ui::text::SPACES;
 
 /// Saved state for backtracking
 #[derive(Clone, Copy, Debug)]
@@ -130,6 +131,14 @@ impl StyledString {
     /// of each row the canvas.
     pub fn flush_style(&mut self) {
         let _ = SetStyle(self.cur_style().into()).write_ansi(&mut self.inner);
+    }
+
+    pub fn pad_to_width(&mut self, width: usize) {
+        if self.width >= width { return; }
+        while self.width < width {
+            let n = (width - self.width).min(SPACES.len());
+            self.push(&SPACES[..n], n);
+        }
     }
 }
 
@@ -307,5 +316,54 @@ mod tests {
         t.set_style(header);
         t.flush_style();
         assert_eq!(t.as_str(), full_style(header));
+    }
+
+    #[test]
+    fn test_pad_to_width() {
+        let base = THEME_DARK.text_base;
+        let header = THEME_DARK.text_header;
+
+        // No-op when already at the target width
+        let mut s = StyledString::new(base, 16);
+        s.push("hello", 5);
+        s.pad_to_width(5);
+        assert_eq!(s.as_str(), "hello");
+        assert_eq!(s.width(), 5);
+        assert_eq!(s.len(), 5);
+
+        // No-op when already wider than the target
+        s.pad_to_width(3);
+        assert_eq!(s.as_str(), "hello");
+        assert_eq!(s.width(), 5);
+
+        // Pads with spaces up to the target width, no control codes
+        s.pad_to_width(11);
+        assert_eq!(s.as_str(), "hello      ");
+        assert_eq!(s.width(), 11);
+        assert_eq!(s.len(), "hello      ".len());
+        assert!(!s.as_str().contains('\x1b'));
+
+        // Pads from an empty string
+        let mut t = StyledString::new(base, 16);
+        t.pad_to_width(4);
+        assert_eq!(t.as_str(), "    ");
+        assert_eq!(t.width(), 4);
+
+        // Padding past SPACES.len() still reaches the target
+        let mut u = StyledString::new(base, SPACES.len() + 102);
+        u.push("ab", 2);
+        u.pad_to_width(SPACES.len() + 100);
+        assert_eq!(u.width(), SPACES.len() + 100);
+        assert_eq!(u.len(), SPACES.len() + 100);
+        assert!(u.as_str().starts_with("ab"));
+        assert!(u.as_str().chars().skip(2).all(|c| c == ' '));
+
+        // Padding after a style change emits the transition before the spaces
+        let mut v = StyledString::new(base, 16);
+        v.push("foo", 3);
+        v.set_style(header);
+        v.pad_to_width(7);
+        assert_eq!(v.as_str(), format!("foo{}    ", transition(base, header)));
+        assert_eq!(v.width(), 7);
     }
 }
