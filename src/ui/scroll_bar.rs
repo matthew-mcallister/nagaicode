@@ -133,6 +133,7 @@ mod tests {
 
     use super::*;
     use crate::ui::style::{THEME_DARK, TextStyle};
+    use crate::ui::styled_string::StyledString;
 
     fn bar(height: usize, width: usize, num_rows: usize, top: usize, bottom: usize) -> ScrollBar {
         let mut bar = ScrollBar::new(&THEME_DARK);
@@ -144,7 +145,18 @@ mod tests {
     }
 
     fn render(bar: &ScrollBar) -> String {
-        todo!()
+        let mut rows: Vec<StyledString> = (0..bar.height())
+            .map(|_| StyledString::new(bar.theme.base_style(), bar.width()))
+            .collect();
+        bar.draw(&mut rows);
+        rows.iter()
+            .map(|row| {
+                let mut out = String::new();
+                row.write_ansi(&mut out).unwrap();
+                out
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn style_prefix(style: TextStyle) -> String {
