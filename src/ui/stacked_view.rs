@@ -1,13 +1,13 @@
-use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent};
 
 use crate::app::AppEvent;
 use crate::session::{Content, Item};
 use crate::ui::canvas::Canvas;
 use crate::ui::style::Theme;
-use crate::ui::command_editor::{CommandEditor, CommandEditorRow};
-use crate::ui::history_view::{self, HistoryView, HistoryViewRow};
-use crate::ui::{write_spaces, Component};
+use crate::ui::command_editor::CommandEditor;
+use crate::ui::history_view;
+use crate::ui::history_view::HistoryView;
+use crate::ui::Component;
 
 /// Which child of `StackedView` currently receives keyboard input.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
@@ -97,23 +97,6 @@ impl StackedView {
     }
 }
 
-#[derive(Debug)]
-pub enum StackedRow<'a> {
-    Empty { width: usize },
-    History(HistoryViewRow<'a>),
-    Input(CommandEditorRow<'a>),
-}
-
-impl Command for StackedRow<'_> {
-    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-        match self {
-            StackedRow::Empty { width } => write_spaces(f, *width),
-            StackedRow::History(row) => row.write_ansi(f),
-            StackedRow::Input(row) => row.write_ansi(f),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
     ContentCreated { item: &'a Item, content: &'a Content },
@@ -136,24 +119,8 @@ impl<'a> TryFrom<Update<'a>> for history_view::Update<'a> {
 }
 
 impl Component for StackedView {
-    type Row<'a> = StackedRow<'a> where Self: 'a;
-    type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
     type Update<'a> = Update<'a>;
     type Event = Option<AppEvent>;
-
-    fn drawable_rows(&self) -> Self::RowIter<'_> {
-        let empty_rows = self
-            .height
-            .saturating_sub(self.history.height())
-            .saturating_sub(self.input.height())
-            .saturating_sub(1);
-        let width = self.width;
-        let empty = (0..empty_rows).map(move |_| StackedRow::Empty { width });
-        let spacer = std::iter::once(StackedRow::Empty { width });
-        let history = self.history.drawable_rows().map(StackedRow::History);
-        let input = self.input.drawable_rows().map(StackedRow::Input);
-        Box::new(empty.chain(history).chain(spacer).chain(input))
-    }
 
     fn draw(&self, canvas: Canvas) {
         let empty_rows = self.height - self.history.height() - self.input.height() - 1;

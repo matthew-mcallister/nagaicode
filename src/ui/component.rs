@@ -1,4 +1,3 @@
-use crossterm::Command;
 use crossterm::event::Event;
 
 use crate::ui::canvas::Canvas;
@@ -14,20 +13,13 @@ use crate::ui::canvas::Canvas;
 /// report an intrinsic size which the parent may read back to compute its
 /// layout.
 pub trait Component {
-    type Row<'a>: Command where Self: 'a;
-    type RowIter<'a>: Iterator<Item = Self::Row<'a>> where Self: 'a;
     /// The type(s) of update which the component responds to
     type Update<'a>;
     /// Event(s) fired in response to input.
     type Event;
 
-    /// Returns an iterator over the component's printable rows.
-    // TODO: Replace this with a canvas that's just Vec<StyledString>.
-    fn drawable_rows(&self) -> Self::RowIter<'_>;
-
     /// Renders the component to a drawing surface.
-    fn draw(&self, _canvas: Canvas) {
-    }
+    fn draw(&self, _canvas: Canvas);
 
     /// Returns the component's width.
     fn width(&self) -> usize;

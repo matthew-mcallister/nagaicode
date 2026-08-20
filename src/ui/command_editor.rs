@@ -1,30 +1,12 @@
-use std::fmt;
-
-use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::AppEvent;
 use crate::ui::canvas::Canvas;
-use crate::ui::input_box::{InputBox, InputBoxRow};
-use crate::ui::padded::{Padded, PaddedRow};
-use crate::ui::scroll_bar::{ScrollBar, ScrollBarRow};
+use crate::ui::input_box::InputBox;
+use crate::ui::padded::Padded;
+use crate::ui::scroll_bar::ScrollBar;
 use crate::ui::style::Theme;
 use crate::ui::Component;
-
-/// A single drawable row of the command editor. The scroll bar is rendered to
-/// the right of the padded input box.
-#[derive(Debug)]
-pub struct CommandEditorRow<'a> {
-    input: PaddedRow<InputBoxRow<'a>>,
-    bar: ScrollBarRow<'a>,
-}
-
-impl Command for CommandEditorRow<'_> {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        self.input.write_ansi(f)?;
-        self.bar.write_ansi(f)
-    }
-}
 
 /// Command input editor, wrapper around InputBox
 #[derive(Debug)]
@@ -80,19 +62,8 @@ impl CommandEditor {
 }
 
 impl Component for CommandEditor {
-    type Row<'a> = CommandEditorRow<'a> where Self: 'a;
-    type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
     type Update<'a> = ();
     type Event = Option<AppEvent>;
-
-    fn drawable_rows(&self) -> Self::RowIter<'_> {
-        Box::new(
-            self.input
-                .drawable_rows()
-                .zip(self.scroll_bar.drawable_rows())
-                .map(|(input, bar)| CommandEditorRow { input, bar }),
-        )
-    }
 
     fn draw(&self, canvas: Canvas) {
         self.input.draw(&mut *canvas);

@@ -1,29 +1,11 @@
-use std::fmt;
-
-use crossterm::Command;
 use crossterm::event::Event;
 
 use crate::session::{Content, Item};
 use crate::ui::canvas::Canvas;
-use crate::ui::history::{self, History, HistoryRowRef};
-use crate::ui::scroll_bar::{ScrollBar, ScrollBarRow};
+use crate::ui::history::{self, History};
+use crate::ui::scroll_bar::ScrollBar;
 use crate::ui::style::Theme;
 use crate::ui::Component;
-
-/// A single drawable row of the history view. The scroll bar is rendered to
-/// the right of the history.
-#[derive(Debug)]
-pub struct HistoryViewRow<'a> {
-    history: HistoryRowRef<'a>,
-    bar: ScrollBarRow<'a>,
-}
-
-impl Command for HistoryViewRow<'_> {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        self.history.write_ansi(f)?;
-        self.bar.write_ansi(f)
-    }
-}
 
 /// Chat history view, wrapper around History
 #[derive(Debug)]
@@ -83,19 +65,8 @@ impl<'a> TryFrom<Update<'a>> for history::Update<'a> {
 }
 
 impl Component for HistoryView {
-    type Row<'a> = HistoryViewRow<'a> where Self: 'a;
-    type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
     type Update<'a> = Update<'a>;
     type Event = ();
-
-    fn drawable_rows(&self) -> Self::RowIter<'_> {
-        Box::new(
-            self.history
-                .drawable_rows()
-                .zip(self.scroll_bar.drawable_rows())
-                .map(|(history, bar)| HistoryViewRow { history, bar }),
-        )
-    }
 
     fn draw(&self, canvas: Canvas) {
         self.history.draw(&mut *canvas);

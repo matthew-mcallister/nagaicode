@@ -1,9 +1,6 @@
 //! Scrolling chat history. Data is constructed as a linked list of rows for
 //! fast viewport scrolling and rendering.
 
-use std::fmt;
-
-use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use fnv::FnvHashMap;
 
@@ -628,18 +625,6 @@ impl History {
     }
 }
 
-/// A single drawable row of the history.
-#[derive(Debug)]
-pub struct HistoryRowRef<'a> {
-    row: &'a HistoryRow,
-}
-
-impl Command for HistoryRowRef<'_> {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        f.write_str(self.row.preformatted.as_str())
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
     ContentCreated { item: &'a Item, content: &'a Content },
@@ -649,18 +634,8 @@ pub enum Update<'a> {
 }
 
 impl Component for History {
-    type Row<'a> = HistoryRowRef<'a> where Self: 'a;
-    type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
     type Update<'a> = Update<'a>;
     type Event = ();
-
-    fn drawable_rows(&self) -> Self::RowIter<'_> {
-        let prev = self.rows[self.viewport_top].prev;
-        Box::new(
-            self.iter_range(prev, self.viewport_bottom)
-                .map(|(_, row)| HistoryRowRef { row }),
-        )
-    }
 
     fn draw(&self, canvas: Canvas) {
         let prev = self.rows[self.viewport_top].prev;

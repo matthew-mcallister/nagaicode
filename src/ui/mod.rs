@@ -16,18 +16,4 @@ pub mod style;
 pub mod styled_string;
 pub mod text;
 
-use std::fmt;
-
-use text::SPACES;
-
 pub use component::Component;
-
-pub(crate) fn write_spaces(f: &mut impl fmt::Write, count: usize) -> fmt::Result {
-    let mut remaining = count;
-    while remaining != 0 {
-        let n = remaining.min(SPACES.len());
-        f.write_str(&SPACES[..n])?;
-        remaining -= n;
-    }
-    Ok(())
-}

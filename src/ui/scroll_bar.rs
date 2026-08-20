@@ -1,16 +1,11 @@
 //! Scroll bar indicator. Renders as a one-column-wide bar on the left side of
 //! the component. The bar's position and height are derived from the size of
 //! the scrolled content and the position of the viewport within it.
-
-use std::fmt;
-
-use crossterm::Command;
 use crossterm::event::Event;
-use crossterm::style::{Color, ContentStyle, SetStyle};
 
 use crate::ui::canvas::Canvas;
-use crate::ui::style::{TextStyle, Theme};
-use crate::ui::{write_spaces, Component};
+use crate::ui::style::Theme;
+use crate::ui::Component;
 
 #[derive(Debug)]
 pub struct ScrollBar {
@@ -74,50 +69,9 @@ impl ScrollBar {
     }
 }
 
-/// A single drawable row of the scroll bar. The first column is filled with
-/// the bar character, styled as either the bar or the track.
-#[derive(Debug)]
-pub struct ScrollBarRow<'a> {
-    style: &'a TextStyle,
-    background: Color,
-    width: usize,
-}
-
-impl Command for ScrollBarRow<'_> {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        if self.width == 0 {
-            return Ok(());
-        }
-        let mut style: ContentStyle = (*self.style).into();
-        style.background_color = Some(self.background);
-        SetStyle(style).write_ansi(f)?;
-        f.write_char('▐')?;
-        write_spaces(f, self.width - 1)
-    }
-}
-
 impl Component for ScrollBar {
-    type Row<'a> = ScrollBarRow<'a> where Self: 'a;
-    type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
     type Update<'a> = ();
     type Event = ();
-
-    fn drawable_rows(&self) -> Self::RowIter<'_> {
-        let (start, end) = self.scroll_bar_range();
-        Box::new((0..self.height).map(move |row| ScrollBarRow {
-            style: if (start..end).contains(&row) {
-                if self.focused {
-                    &self.theme.text_scroll_bar_focused
-                } else {
-                    &self.theme.text_scroll_bar_unfocused
-                }
-            } else {
-                &self.theme.text_scroll_bar_track
-            },
-            background: self.theme.bg_base,
-            width: self.width,
-        }))
-    }
 
     fn draw(&self, canvas: Canvas) {
         if self.width == 0 {
@@ -174,8 +128,11 @@ impl Component for ScrollBar {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::Command;
+    use crossterm::style::{ContentStyle, SetStyle};
+
     use super::*;
-    use crate::ui::style::THEME_DARK;
+    use crate::ui::style::{THEME_DARK, TextStyle};
 
     fn bar(height: usize, width: usize, num_rows: usize, top: usize, bottom: usize) -> ScrollBar {
         let mut bar = ScrollBar::new(&THEME_DARK);
@@ -187,14 +144,7 @@ mod tests {
     }
 
     fn render(bar: &ScrollBar) -> String {
-        bar.drawable_rows()
-            .map(|row| {
-                let mut out = String::new();
-                row.write_ansi(&mut out).unwrap();
-                out
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        todo!()
     }
 
     fn style_prefix(style: TextStyle) -> String {

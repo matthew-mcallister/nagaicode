@@ -7,17 +7,15 @@
 // size textboxes are handled using HTML + JavaScript; CSS alone can't do it
 // correctly.
 
-use std::fmt;
 
 use compact_str::CompactString;
-use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::AppEvent;
 use crate::arena::{Arena, Id};
 use crate::ui::canvas::Canvas;
 use crate::ui::text::{Row, SPACES, strip_cr, wrap_line};
-use crate::ui::{write_spaces, Component};
+use crate::ui::Component;
 
 /// A pair `(row_id, grapheme_index)` pointing to the location of a grapheme.
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
@@ -1047,41 +1045,9 @@ impl InputBox {
     }
 }
 
-/// A single drawable row of the input box. The cursor is rendered as a
-/// reverse-video cell.
-#[derive(Debug)]
-pub struct InputBoxRow<'a> {
-    row: &'a InputRow,
-    width: usize,
-}
-
-impl Command for InputBoxRow<'_> {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        for g in self.row.graphemes.iter() {
-            match &g.data[..] {
-                "\t" => f.write_str(&SPACES[..g.width as usize])?,
-                "\n" => {}
-                _ => f.write_str(&g.data)?,
-            }
-        }
-        write_spaces(f, self.width - self.row.width)
-    }
-}
-
 impl Component for InputBox {
-    type Row<'a> = InputBoxRow<'a> where Self: 'a;
-    type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
     type Update<'a> = ();
     type Event = Option<AppEvent>;
-
-    fn drawable_rows(&self) -> Self::RowIter<'_> {
-        let prev = self.rows[self.viewport_top].prev;
-        let width = self.width;
-        Box::new(
-            self.iter_range(prev, self.viewport_bottom)
-                .map(move |(_, row)| InputBoxRow { row, width }),
-        )
-    }
 
     fn draw(&self, canvas: Canvas) {
         let prev = self.rows[self.viewport_top].prev;

@@ -4,8 +4,8 @@ use dedent::dedent;
 use crate::app::AppEvent;
 use crate::session::{Content, Item};
 use crate::ui::canvas::Canvas;
-use crate::ui::padded::{Padded, PaddedRow};
-use crate::ui::stacked_view::{self, StackedRow, StackedView};
+use crate::ui::padded::Padded;
+use crate::ui::stacked_view::{self, StackedView};
 use crate::ui::style::Theme;
 use crate::ui::Component;
 
@@ -70,14 +70,8 @@ impl<'a> TryFrom<Update<'a>> for stacked_view::Update<'a> {
 }
 
 impl Component for Chat {
-    type Row<'a> = PaddedRow<StackedRow<'a>> where Self: 'a;
-    type RowIter<'a> = Box<dyn Iterator<Item = Self::Row<'a>> + 'a> where Self: 'a;
     type Update<'a> = Update<'a>;
     type Event = Option<AppEvent>;
-
-    fn drawable_rows(&self) -> Self::RowIter<'_> {
-        self.stacked.drawable_rows()
-    }
 
     fn draw(&self, canvas: Canvas) {
         self.stacked.draw(canvas);
