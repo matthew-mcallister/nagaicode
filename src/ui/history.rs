@@ -5,7 +5,7 @@ use std::fmt;
 
 use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::style::SetStyle;
+use crossterm::style::{ContentStyle, SetStyle};
 use fnv::FnvHashMap;
 
 use crate::arena::{Arena, Id};
@@ -45,6 +45,29 @@ pub(crate) fn render_error(
     ).collect()
 }
 
+pub(crate) fn render_prompt(
+    theme: &'static Theme,
+    width: usize,
+    content: &str,
+) -> Vec<String> {
+    if content.is_empty() {
+        return Vec::new();
+    }
+    let mut style: ContentStyle = theme.text_base.into();
+    style.background_color = Some(theme.bg_prompt);
+    let mut prefix = String::new();
+    let _ = SetStyle(style).write_ansi(&mut prefix);
+    let padding = format!("{prefix}{}", " ".repeat(width));
+    let mut rows = vec![padding.clone()];
+    rows.extend(content.lines().flat_map(|line|
+        wrap_line(width - 4, line)
+            .into_iter()
+            .map(|row| format!("{prefix}  {}  ", row.to_padded_string(width - 4)))
+    ));
+    rows.push(padding);
+    rows
+}
+
 pub(crate) fn render_markdown(
     theme: &'static Theme,
     width: usize,
@@ -67,6 +90,7 @@ fn render(
     match ty {
         HistoryItemType::Help => (render_help(theme, width, content), ResumePoint { offset: 0, row: 0 }),
         HistoryItemType::Error => (render_error(theme, width, content), ResumePoint { offset: 0, row: 0 }),
+        HistoryItemType::User => (render_prompt(theme, width, content), ResumePoint { offset: 0, row: 0 }),
         _ => {
             let result = render_markdown(theme, width, content);
             (result.rows, result.resume_point)
@@ -276,14 +300,14 @@ impl HistoryItem {
         new_value: &str,
     ) {
         self.content = new_value.to_string();
-        let result = render_markdown(theme, width, new_value);
+        let (rendered, resume_point) = render(theme, width, self.ty, new_value);
 
         let prev = rows[self.first_row].prev;
         let next = rows[self.last_row].next;
         let item_id = rows[self.first_row].item;
         remove_rows(rows, prev, self.num_rows);
 
-        let mut rendered: Vec<String> = result.rows;
+        let mut rendered = rendered;
         rendered.push(" ".repeat(width));
         let len = rendered.len();
         insert_rows(rows, item_id, rendered, prev);
@@ -291,7 +315,7 @@ impl HistoryItem {
         self.first_row = rows[prev].next;
         self.last_row = rows[next].prev;
         self.num_rows = len;
-        self.resume_point = result.resume_point;
+        self.resume_point = resume_point;
     }
 }
 
@@ -779,10 +803,45 @@ mod tests {
     }
 
     #[test]
+    fn test_render_prompt() {
+        use crossterm::Command;
+        use crossterm::style::{ContentStyle, SetStyle};
+
+        fn render(content: &str, width: usize) -> String {
+            let mut lines = super::render_prompt(&THEME_DARK, width, content);
+
+            let mut style: ContentStyle = THEME_DARK.text_base.into();
+            style.background_color = Some(THEME_DARK.bg_prompt);
+            let mut prefix = String::new();
+            let _ = SetStyle(style).write_ansi(&mut prefix);
+            for line in lines.iter_mut() {
+                *line = line.trim_start_matches(&prefix).to_owned();
+            }
+
+            lines.join("\n")
+        }
+
+        let pad = |w: usize| " ".repeat(w);
+        assert_eq!(
+            render("hello", 14),
+            format!("{}\n  hello       \n{}", pad(14), pad(14))
+        );
+        assert_eq!(
+            render("foo\nbar", 12),
+            format!("{}\n  foo       \n  bar       \n{}", pad(12), pad(12))
+        );
+        assert_eq!(
+            render("hello world", 12),
+            format!("{}\n  hello     \n  world     \n{}", pad(12), pad(12))
+        );
+        assert_eq!(render("", 8), "");
+    }
+
+    #[test]
     fn test_scroll() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemType::User, format!("message {i}"));
+            history.add_item(HistoryItemType::Response, format!("message {i}"));
         }
         assert_eq!(history.num_rows(), 20);
 
@@ -823,7 +882,7 @@ mod tests {
     fn test_set_viewport_top_pos() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemType::User, format!("message {i}"));
+            history.add_item(HistoryItemType::Response, format!("message {i}"));
         }
 
         let row = history.row_offset(history.first_row(), 5).unwrap();
@@ -837,7 +896,7 @@ mod tests {
     fn test_home_end() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemType::User, format!("message {i}"));
+            history.add_item(HistoryItemType::Response, format!("message {i}"));
         }
 
         // Start at the bottom; scroll up so we're not at either extreme.
@@ -865,14 +924,14 @@ mod tests {
         let full = "# Title\n\nfirst\n\nsecond\n\nthird";
 
         let mut incremental = history(20, 20);
-        incremental.add_item(HistoryItemType::User, "# Title".into());
+        incremental.add_item(HistoryItemType::Response, "# Title".into());
         update_item(&mut incremental, 0, "\n\nfirst");
         update_item(&mut incremental, 0, "\n\nsecond");
         update_item(&mut incremental, 0, "\n\nthird");
         assert_eq!(incremental.num_rows(), 8);
 
         let mut whole = history(20, 20);
-        whole.add_item(HistoryItemType::User, full.into());
+        whole.add_item(HistoryItemType::Response, full.into());
 
         assert_eq!(render_history(&incremental), render_history(&whole));
     }

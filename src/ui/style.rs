@@ -129,8 +129,7 @@ impl From<TextStyle> for ContentStyle {
 #[derive(Clone, Copy, Debug)]
 pub struct Theme {
     pub bg_base: Color,
-    pub bg_collapsible: Color,
-    pub bg_collapsible_hover: Color,
+    pub bg_prompt: Color,
     pub bg_input_box: Color,
     pub text_base: TextStyle,
     pub text_header: TextStyle,
@@ -178,8 +177,7 @@ pub const THEME_DARK: Theme = Theme {
     text_scroll_bar_focused: text_style! { fg_color: SKY_400 },
     text_scroll_bar_unfocused: text_style! { fg_color: GREY_600 },
     bg_base: GREY_950,
-    bg_collapsible: GREY_950,
-    bg_collapsible_hover: GREY_900,
+    bg_prompt: GREY_900,
     bg_input_box: GREY_800,
 };
 

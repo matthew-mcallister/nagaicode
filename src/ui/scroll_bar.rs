@@ -6,7 +6,7 @@ use std::fmt;
 
 use crossterm::Command;
 use crossterm::event::Event;
-use crossterm::style::SetStyle;
+use crossterm::style::{Color, ContentStyle, SetStyle};
 
 use crate::ui::style::{TextStyle, Theme};
 use crate::ui::{write_spaces, Component};
@@ -78,6 +78,7 @@ impl ScrollBar {
 #[derive(Debug)]
 pub struct ScrollBarRow<'a> {
     style: &'a TextStyle,
+    background: Color,
     width: usize,
 }
 
@@ -86,7 +87,9 @@ impl Command for ScrollBarRow<'_> {
         if self.width == 0 {
             return Ok(());
         }
-        SetStyle((*self.style).into()).write_ansi(f)?;
+        let mut style: ContentStyle = (*self.style).into();
+        style.background_color = Some(self.background);
+        SetStyle(style).write_ansi(f)?;
         f.write_char('▐')?;
         write_spaces(f, self.width - 1)
     }
@@ -110,6 +113,7 @@ impl Component for ScrollBar {
             } else {
                 &self.theme.text_scroll_bar_track
             },
+            background: self.theme.bg_base,
             width: self.width,
         }))
     }
@@ -170,11 +174,11 @@ mod tests {
             .join("\n")
     }
 
-    // Renders the ANSI prefix produced by `SetStyle` for a text style, for
-    // use in expected render output.
     fn style_prefix(style: TextStyle) -> String {
         let mut out = String::new();
-        SetStyle(style.into()).write_ansi(&mut out).unwrap();
+        let mut content: ContentStyle = style.into();
+        content.background_color = Some(THEME_DARK.bg_base);
+        SetStyle(content).write_ansi(&mut out).unwrap();
         out
     }
 
