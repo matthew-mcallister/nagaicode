@@ -3,6 +3,7 @@ use dedent::dedent;
 
 use crate::app::AppEvent;
 use crate::session::{Content, Item};
+use crate::ui::canvas::Canvas;
 use crate::ui::padded::{Padded, PaddedRow};
 use crate::ui::stacked_view::{self, StackedRow, StackedView};
 use crate::ui::style::Theme;
@@ -78,6 +79,10 @@ impl Component for Chat {
         self.stacked.drawable_rows()
     }
 
+    fn draw(&self, canvas: &mut Canvas) {
+        self.stacked.draw(canvas);
+    }
+
     fn width(&self) -> usize {
         self.stacked.width()
     }
@@ -103,18 +108,12 @@ impl Component for Chat {
     }
 
     fn handle_input(&mut self, event: Event) -> Self::Event {
-        // Intercept terminal resizes to relayout the chat. Other input events
-        // are forwarded to the stacked view.
         if let Event::Resize(w, h) = event {
             self.resize(w, h);
-            return None;
+            None
+        } else {
+            self.stacked.handle_input(event)
         }
-
-        let response = self.stacked.handle_input(event);
-        // The input box may have grown or shrunk, so recompute the
-        // history region's height.
-        self.stacked.inner_mut().resize();
-        response
     }
 
     fn handle_update<'a>(&mut self, update: Self::Update<'a>) {

@@ -121,8 +121,6 @@ impl<C: Component> Component for Padded<C> {
     }
 
     fn draw(&self, canvas: &mut Canvas) {
-        let child_width = canvas.rows[0].width() + self.width() - self.h_padding;
-
         if let Some(bg_color) = self.background_color {
             for row in canvas.rows[..self.height()].iter_mut() {
                 row.set_bg_color(bg_color);
@@ -142,11 +140,10 @@ impl<C: Component> Component for Padded<C> {
             canvas.rows[i].pad(self.h_padding);
         }
         self.inner.draw(&mut Canvas {
-            width: child_width,
-            rows: &mut canvas.rows[self.v_padding..self.height() - self.v_padding - 1],
+            rows: &mut canvas.rows[self.v_padding..self.height() - self.v_padding],
         });
         for i in self.v_padding..self.height() - self.v_padding {
-            canvas.rows[i].pad(self.width());
+            canvas.rows[i].pad(self.h_padding);
         }
     }
 

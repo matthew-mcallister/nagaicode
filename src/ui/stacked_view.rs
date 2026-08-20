@@ -3,6 +3,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent};
 
 use crate::app::AppEvent;
 use crate::session::{Content, Item};
+use crate::ui::canvas::Canvas;
 use crate::ui::style::Theme;
 use crate::ui::command_editor::{CommandEditor, CommandEditorRow};
 use crate::ui::history_view::{self, HistoryView, HistoryViewRow};
@@ -154,6 +155,20 @@ impl Component for StackedView {
         Box::new(empty.chain(history).chain(spacer).chain(input))
     }
 
+    fn draw(&self, canvas: &mut Canvas) {
+        let empty_rows = self.height - self.history.height() - self.input.height() - 1;
+        for i in 0..empty_rows {
+            canvas.rows[i].pad(self.width);
+        }
+        self.history.draw(&mut Canvas {
+            rows: &mut canvas.rows[empty_rows..empty_rows + self.history.height()],
+        });
+        canvas.rows[empty_rows + self.history.height()].pad(self.width);
+        self.input.draw(&mut Canvas {
+            rows: &mut canvas.rows[self.height() - self.input.height()..self.height()],
+        });
+    }
+
     fn set_width(&mut self, width: usize) {
         self.width = width;
         self.history.set_width(width);
@@ -197,7 +212,7 @@ impl Component for StackedView {
     }
 
     fn handle_input(&mut self, event: Event) -> Self::Event {
-        match event {
+        let out = match event {
             // Tab switches focus
             Event::Key(KeyEvent { code: KeyCode::Tab, .. }) => {
                 self.toggle_focus();
@@ -212,7 +227,9 @@ impl Component for StackedView {
                 },
                 FocusState::CommandEditor => self.input.handle_input(e),
             },
-        }
+        };
+        self.resize();
+        out
     }
 
     fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
@@ -220,5 +237,6 @@ impl Component for StackedView {
             self.history.handle_update(child_update);
         }
         self.input.handle_update(());
+        self.resize();
     }
 }

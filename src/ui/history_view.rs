@@ -4,6 +4,7 @@ use crossterm::Command;
 use crossterm::event::Event;
 
 use crate::session::{Content, Item};
+use crate::ui::canvas::Canvas;
 use crate::ui::history::{self, History, HistoryRowRef};
 use crate::ui::scroll_bar::{ScrollBar, ScrollBarRow};
 use crate::ui::style::Theme;
@@ -94,6 +95,15 @@ impl Component for HistoryView {
                 .zip(self.scroll_bar.drawable_rows())
                 .map(|(history, bar)| HistoryViewRow { history, bar }),
         )
+    }
+
+    fn draw(&self, canvas: &mut Canvas) {
+        self.history.draw(&mut Canvas {
+            rows: canvas.rows,
+        });
+        self.scroll_bar.draw(&mut Canvas {
+            rows: canvas.rows,
+        });
     }
 
     fn set_width(&mut self, width: usize) {

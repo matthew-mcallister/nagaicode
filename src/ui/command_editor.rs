@@ -4,6 +4,7 @@ use crossterm::Command;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::AppEvent;
+use crate::ui::canvas::Canvas;
 use crate::ui::input_box::{InputBox, InputBoxRow};
 use crate::ui::padded::{Padded, PaddedRow};
 use crate::ui::scroll_bar::{ScrollBar, ScrollBarRow};
@@ -91,6 +92,15 @@ impl Component for CommandEditor {
                 .zip(self.scroll_bar.drawable_rows())
                 .map(|(input, bar)| CommandEditorRow { input, bar }),
         )
+    }
+
+    fn draw(&self, canvas: &mut Canvas) {
+        self.input.draw(&mut Canvas {
+            rows: canvas.rows,
+        });
+        self.scroll_bar.draw(&mut Canvas {
+            rows: canvas.rows,
+        });
     }
 
     fn set_width(&mut self, width: usize) {

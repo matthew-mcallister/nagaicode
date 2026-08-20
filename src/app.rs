@@ -16,9 +16,11 @@ use crate::error::AnyResult;
 use crate::model::Model;
 use crate::session::{Content, ContentType, Item, ItemType, Session};
 use crate::terminal::{DefaultTerminal, Terminal};
+use crate::ui::canvas::Canvas;
 use crate::ui::chat::{Chat, Update};
-use crate::ui::style::{Theme, THEME_DARK};
+use crate::ui::style::{THEME_DARK, Theme};
 use crate::ui::Component;
+use crate::ui::styled_string::StyledString;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
@@ -34,6 +36,7 @@ pub struct App {
     chat: Chat,
     selected_model: Option<Model>,
     quit: bool,
+    // XXX replace most uses of &'static Theme with Arc<Theme> or Rc<Theme>
     theme: &'static Theme,
     conn: SqliteConnection,
     session: Option<Session>,
@@ -63,7 +66,26 @@ impl App {
         self.selected_model = Some(model);
     }
 
-    pub fn draw(&mut self) -> AnyResult<()> {
+    fn make_canvas(&self) -> Vec<StyledString> {
+        let style = self.theme.base_style();
+        (0..self.chat.height())
+            .map(|_| StyledString::new(style, 2 * self.chat.width()))
+            .collect()
+    }
+
+    pub fn draw(&self, canvas: &mut Canvas) {
+        self.chat.draw(canvas);
+    }
+
+    pub fn render(&mut self) -> AnyResult<()> {
+        let mut rows = self.make_canvas();
+        let mut canvas = Canvas { rows: &mut rows[..] };
+        self.draw(&mut canvas);
+
+        for row in &rows {
+            debug_assert!(row.width() <= self.chat.width());
+        }
+
         let stdout = self.terminal.stdout();
 
         let text_style = self.theme.text_base;
@@ -74,7 +96,7 @@ impl App {
             SetForegroundColor(text_style.fg_color),
             SetBackgroundColor(bg),
         )?;
-        for (y, row) in self.chat.drawable_rows().enumerate() {
+        for (y, row) in rows.into_iter().enumerate() {
             queue!(stdout, MoveTo(0, y as u16), row)?;
         }
         if let Some((row, col)) = self.chat.cursor() {
@@ -89,7 +111,7 @@ impl App {
         execute!(self.terminal.stdout(), EnterAlternateScreen, DisableLineWrap)?;
 
         while !self.quit {
-            self.draw()?;
+            self.render()?;
             let event = self.terminal
                 .events()
                 .next()

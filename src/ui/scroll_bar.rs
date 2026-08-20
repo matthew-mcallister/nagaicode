@@ -134,9 +134,10 @@ impl Component for ScrollBar {
             } else {
                 self.theme.text_scroll_bar_track
             };
+            canvas.rows[row].set_bg_color(self.theme.bg_base);
             canvas.rows[row].set_text(text_style);
             canvas.rows[row].push("▐", 1);
-            canvas.rows[row].pad_to_width(canvas.width);
+            canvas.rows[row].pad(self.width - 1);
         }
     }
 

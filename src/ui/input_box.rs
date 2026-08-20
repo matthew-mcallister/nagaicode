@@ -15,6 +15,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::AppEvent;
 use crate::arena::{Arena, Id};
+use crate::ui::canvas::Canvas;
 use crate::ui::text::{Row, SPACES, strip_cr, wrap_line};
 use crate::ui::{write_spaces, Component};
 
@@ -1080,6 +1081,21 @@ impl Component for InputBox {
             self.iter_range(prev, self.viewport_bottom)
                 .map(move |(_, row)| InputBoxRow { row, width }),
         )
+    }
+
+    fn draw(&self, canvas: &mut Canvas) {
+        let prev = self.rows[self.viewport_top].prev;
+        for (i, (_, row)) in self.iter_range(prev, self.viewport_bottom).enumerate() {
+            let pad_width = canvas.rows[i].width() + self.width;
+            for g in &row.graphemes {
+                match &g.data[..] {
+                    "\t" => canvas.rows[i].push(&SPACES[..g.width as usize], g.width as usize),
+                    "\n" => {}
+                    _ => canvas.rows[i].push(&g.data, g.width as usize),
+                }
+            }
+            canvas.rows[i].pad_to_width(pad_width);
+        }
     }
 
     fn set_width(&mut self, width: usize) {
