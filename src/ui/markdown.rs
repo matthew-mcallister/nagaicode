@@ -1,12 +1,11 @@
 // FIXME: need to cap prefix size/set a lower bound on width to prevent
 // underflow and broken layout
 // FIXME: probably should escape the actual escape char if it appears in source
-use crossterm::Command;
-use crossterm::style::SetStyle;
 use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Text};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::ui::style::{TextStyle, Theme, UpdateStyle};
+use crate::ui::style::{TextStyle, Theme};
+use crate::ui::styled_string::{SavePoint, StyledString};
 use crate::ui::text::{Row, SPACES, TAB_WIDTH, wrap_line, wrap_line_naive};
 
 /// Replaces runs of whitespace with a single space character. Preserves
@@ -36,11 +35,11 @@ fn collapse_whitespace(out: &mut String, s: &str) {
 }
 
 /// Appends `count` spaces to `out`.
-fn push_spaces(out: &mut String, count: usize) {
+fn push_spaces(out: &mut StyledString, count: usize) {
     let mut remaining = count;
     while remaining > 0 {
         let n = remaining.min(SPACES.len());
-        out.push_str(&SPACES[..n]);
+        out.push(&SPACES[..n], n);
         remaining -= n;
     }
 }
@@ -235,69 +234,6 @@ impl PhrasingBuilder {
     }
 }
 
-/// String wrapper which tracks current style and lazily writes control
-/// statements when needed. Also tracks column information since we need that
-/// anyways
-#[derive(Debug)]
-struct StyledString {
-    inner: String,
-    // Tracking previous style allows us to emit redundant style updates
-    // without emitting extra control sequences
-    prev_style: Option<TextStyle>,
-    cur_style: TextStyle,
-    width: usize,
-    // Kludge for preventing child nodes from changing the style inside code
-    // and quote blocks
-    style_frozen: bool,
-}
-
-impl StyledString {
-    fn new(style: TextStyle, capacity: usize) -> Self {
-        Self {
-            inner: String::with_capacity(capacity),
-            prev_style: None,
-            cur_style: style,
-            width: 0,
-            style_frozen: false,
-        }
-    }
-
-    fn set_style(&mut self, style: TextStyle) {
-        if self.style_frozen { return; }
-        if self.prev_style.is_none() {
-            self.prev_style = Some(self.cur_style);
-        }
-        self.cur_style = style;
-    }
-
-    fn push(&mut self, s: &str, width: usize) {
-        if let Some(prev) = self.prev_style {
-            let _ = UpdateStyle(prev, self.cur_style).write_ansi(&mut self.inner);
-        }
-        self.inner.push_str(s);
-        self.width += width;
-        self.prev_style = None;
-    }
-
-    fn width(&self) -> usize {
-        self.width
-    }
-
-    fn len(&self) -> usize {
-        self.inner.len()
-    }
-}
-
-/// Saved prefix state for backtracking
-#[derive(Clone, Copy, Debug)]
-struct SavePrefix {
-    len: usize,
-    width: usize,
-    prev_style: Option<TextStyle>,
-    cur_style: TextStyle,
-    style_frozen: bool,
-}
-
 /// High-level renderer for dealing with flow layout constructs
 #[derive(Debug)]
 struct FlowBuilder {
@@ -336,40 +272,26 @@ impl FlowBuilder {
 
     fn apply_prefix(&mut self) {
         let remain = self.width - self.prefix.width();
-        let mut inner = String::with_capacity(self.prefix.len() + 2 * remain);
-        inner.push_str(&self.prefix.inner);
-        self.row = StyledString {
-            inner,
-            ..self.prefix
-        }
+        self.row = self.prefix.clone_with_capacity(self.prefix.len() + 2 * remain);
     }
 
     /// Pads the current row to `width` cols and starts a new row
     fn end_row(&mut self) {
         let pad = self.width - self.row.width();
-        push_spaces(&mut self.row.inner, pad);
-        self.rows.push(std::mem::take(&mut self.row.inner));
-        self.apply_prefix();
+        push_spaces(&mut self.row, pad);
+        let remain = self.width - self.prefix.width();
+        let row = self.prefix.clone_with_capacity(self.prefix.len() + 2 * remain);
+        self.rows.push(std::mem::replace(&mut self.row, row).into_inner());
     }
 
-    fn save(&self) -> SavePrefix {
-        SavePrefix {
-            len: self.prefix.len(),
-            width: self.prefix.width(),
-            prev_style: self.prefix.prev_style,
-            cur_style: self.prefix.cur_style,
-            style_frozen: self.prefix.style_frozen,
-        }
+    fn save(&mut self) -> SavePoint {
+        self.prefix.save()
     }
 
-    fn restore(&mut self, saved: SavePrefix) {
+    fn restore(&mut self, saved: SavePoint) {
         // Only restore before text has been pushed to row
         debug_assert_eq!(self.row.width(), self.prefix.width());
-        self.prefix.inner.truncate(saved.len);
-        self.prefix.prev_style = saved.prev_style;
-        self.prefix.cur_style = saved.cur_style;
-        self.prefix.width = saved.width;
-        self.prefix.style_frozen = saved.style_frozen;
+        self.prefix.restore(saved);
         self.apply_prefix();
     }
 
@@ -405,7 +327,7 @@ fn push_rows(fb: &mut FlowBuilder, rows: &[Row]) {
 /// The returned iterator is owned, so `children` need only live for the
 /// duration of this call.
 fn push_phrasing(flow: &mut FlowBuilder, children: &[Node]) {
-    let mut phrasing = PhrasingBuilder::new(flow.theme, flow.prefix.cur_style);
+    let mut phrasing = PhrasingBuilder::new(flow.theme, flow.prefix.cur_style());
     phrasing.push_all(children);
     let PhrasingBuilder {
         plain_text,
@@ -413,7 +335,7 @@ fn push_phrasing(flow: &mut FlowBuilder, children: &[Node]) {
         ..
     } = phrasing;
 
-    let mut cur_style = flow.prefix.cur_style;
+    let mut cur_style = flow.prefix.cur_style();
     let mut marker_idx = 0usize;
     let mut offset = 0usize;
 
@@ -461,8 +383,8 @@ fn heading_to_rows(flow: &mut FlowBuilder, heading: &Heading) {
 
     children.extend(heading.children.iter().cloned());
     let restore_point = flow.save();
-    flow.prefix.set_style(flow.prefix.cur_style.bolded());
-    flow.row.set_style(flow.row.cur_style.bolded());
+    flow.prefix.set_style(flow.prefix.cur_style().bolded());
+    flow.row.set_style(flow.row.cur_style().bolded());
     push_phrasing(flow, &children);
     flow.restore(restore_point);
 }
@@ -470,9 +392,9 @@ fn heading_to_rows(flow: &mut FlowBuilder, heading: &Heading) {
 fn push_preformatted(flow: &mut FlowBuilder, style: TextStyle, value: &str) {
     let restore = flow.save();
     flow.prefix.set_style(style);
-    flow.prefix.style_frozen = true;
+    flow.prefix.freeze_style(true);
     flow.row.set_style(style);
-    flow.row.style_frozen = true;
+    flow.row.freeze_style(true);
 
     for line in value.split('\n') {
         let rows = wrap_line_naive(flow.remaining_width(), line);
@@ -498,11 +420,11 @@ fn blockquote(flow: &mut FlowBuilder, quote: &Blockquote) {
 
     flow.prefix.set_style(border_style);
     flow.prefix.push("\u{2590} ", 2);
-    flow.prefix.style_frozen = true;
+    flow.prefix.freeze_style(true);
 
     flow.row.set_style(border_style);
     flow.row.push("\u{2590} ", 2);
-    flow.row.style_frozen = true;
+    flow.row.freeze_style(true);
 
     push_flow_children(flow, true, &quote.children);
 
@@ -691,9 +613,9 @@ pub fn render_mdast(
 ) -> MarkdownResult {
     let mut flow = FlowBuilder::new(theme, width);
 
-    // Do full style update
-    let _ = SetStyle(theme.text_base.into()).write_ansi(&mut flow.prefix.inner);
+    // Force full style update
     flow.prefix.set_style(theme.text_base);
+    flow.prefix.flush_style();
     flow.apply_prefix();
     push_flow_node(&mut flow, node);
 

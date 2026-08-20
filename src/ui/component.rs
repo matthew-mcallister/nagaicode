@@ -11,9 +11,6 @@ use crossterm::event::Event;
 /// is responsible for determining its childrens' sizes, but some components
 /// report an intrinsic size which the parent may read back to compute its
 /// layout.
-// XXX: Maybe get rid of set_width/set_height/set_focus and pass those as
-// parameters to draw()? Then draw() will lazily recompute style and layout
-// when it notices the params change. Basically replacing state with caching.
 pub trait Component {
     type Row<'a>: Command where Self: 'a;
     type RowIter<'a>: Iterator<Item = Self::Row<'a>> where Self: 'a;
@@ -23,6 +20,7 @@ pub trait Component {
     type Event;
 
     /// Returns an iterator over the component's printable rows.
+    // TODO: Replace this with a canvas that's just Vec<StyledString>.
     fn drawable_rows(&self) -> Self::RowIter<'_>;
 
     /// Returns the component's width.

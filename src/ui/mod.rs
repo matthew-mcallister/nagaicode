@@ -12,6 +12,7 @@ pub mod padded;
 pub mod scroll_bar;
 pub mod stacked_view;
 pub mod style;
+pub mod styled_string;
 pub mod text;
 
 use std::fmt;
