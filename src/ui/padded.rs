@@ -6,6 +6,7 @@ use std::iter::iter;
 use crossterm::Command;
 use crossterm::style::{Color, ResetColor, SetBackgroundColor};
 
+use crate::ui::canvas::Canvas;
 use crate::ui::write_spaces;
 use crate::ui::Component;
 
@@ -117,6 +118,36 @@ impl<C: Component> Component for Padded<C> {
                 yield PaddedRow::Fill { background, width };
             }
         })())
+    }
+
+    fn draw(&self, canvas: &mut Canvas) {
+        let child_width = canvas.rows[0].width() + self.width() - self.h_padding;
+
+        if let Some(bg_color) = self.background_color {
+            for row in canvas.rows[..self.height()].iter_mut() {
+                row.set_bg_color(bg_color);
+            }
+        }
+
+        // Vertical pad
+        for i in 0..self.v_padding {
+            canvas.rows[i].pad(self.width());
+        }
+        for i in self.height() - self.v_padding..self.height() {
+            canvas.rows[i].pad(self.width());
+        }
+
+        // Render child
+        for i in self.v_padding..self.height() - self.v_padding {
+            canvas.rows[i].pad(self.h_padding);
+        }
+        self.inner.draw(&mut Canvas {
+            width: child_width,
+            rows: &mut canvas.rows[self.v_padding..self.height() - self.v_padding - 1],
+        });
+        for i in self.v_padding..self.height() - self.v_padding {
+            canvas.rows[i].pad(self.width());
+        }
     }
 
     fn set_width(&mut self, width: usize) {

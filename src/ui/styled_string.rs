@@ -148,6 +148,11 @@ impl StyledString {
             self.push(&SPACES[..n], n);
         }
     }
+
+    /// Shortcut for `pad_to_width(self.width() + count)`
+    pub fn pad(&mut self, count: usize) {
+        self.pad_to_width(self.width + count)
+    }
 }
 
 impl Command for StyledString {

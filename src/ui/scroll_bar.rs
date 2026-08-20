@@ -8,6 +8,7 @@ use crossterm::Command;
 use crossterm::event::Event;
 use crossterm::style::{Color, ContentStyle, SetStyle};
 
+use crate::ui::canvas::Canvas;
 use crate::ui::style::{TextStyle, Theme};
 use crate::ui::{write_spaces, Component};
 
@@ -116,6 +117,27 @@ impl Component for ScrollBar {
             background: self.theme.bg_base,
             width: self.width,
         }))
+    }
+
+    fn draw(&self, canvas: &mut Canvas) {
+        if self.width == 0 {
+            return;
+        }
+        let (start, end) = self.scroll_bar_range();
+        for row in 0..self.height {
+            let text_style = if (start..end).contains(&row) {
+                if self.focused {
+                    self.theme.text_scroll_bar_focused
+                } else {
+                    self.theme.text_scroll_bar_unfocused
+                }
+            } else {
+                self.theme.text_scroll_bar_track
+            };
+            canvas.rows[row].set_text(text_style);
+            canvas.rows[row].push("▐", 1);
+            canvas.rows[row].pad_to_width(canvas.width);
+        }
     }
 
     fn set_width(&mut self, width: usize) {
