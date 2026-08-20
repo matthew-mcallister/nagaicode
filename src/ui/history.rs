@@ -10,22 +10,30 @@ use fnv::FnvHashMap;
 
 use crate::arena::{Arena, Id};
 use crate::session::{Content, ContentType, Item, ItemType};
+use crate::ui::canvas::Canvas;
 use crate::ui::markdown::{MarkdownResult, ResumePoint};
-use crate::ui::style::Theme;
+use crate::ui::style::{Theme, TextStyle};
+use crate::ui::styled_string::StyledString;
+use crate::ui::text::{wrap_line, SPACES};
 use crate::ui::Component;
-use crate::ui::text::wrap_line;
 
 pub(crate) fn render_help(
     theme: &'static Theme,
     width: usize,
     content: &str,
-) -> Vec<String> {
-    let mut quote = String::new();
-    let _ = SetStyle(theme.text_quote.into()).write_ansi(&mut quote);
+) -> Vec<StyledString> {
+    let style = theme.text_quote;
     content.lines().flat_map(|line|
         wrap_line(width - 6, line)
             .into_iter()
-            .map(|row| format!("{quote}  ▐ {}  ", row.to_padded_string(width - 6)))
+            .map(|row| {
+                let mut s = StyledString::new(style, width + 4);
+                s.flush_style();
+                s.push("  ▐ ", 4);
+                s.push(&row.to_padded_string(width - 6), width - 6);
+                s.push("  ", 2);
+                s
+            })
     ).collect()
 }
 
@@ -33,15 +41,21 @@ pub(crate) fn render_error(
     theme: &'static Theme,
     width: usize,
     content: &str,
-) -> Vec<String> {
-    let mut error = String::new();
-    let _ = SetStyle(theme.text_error.into()).write_ansi(&mut error);
-    let mut subtle = String::new();
-    let _ = SetStyle(theme.text_subtle.into()).write_ansi(&mut subtle);
+) -> Vec<StyledString> {
+    let error_style = theme.text_error;
+    let subtle_style = theme.text_subtle;
     content.lines().flat_map(|line|
         wrap_line(width - 6, line)
             .into_iter()
-            .map(|row| format!("{error}  ▐ {subtle}{}  ", row.to_padded_string(width - 6)))
+            .map(|row| {
+                let mut s = StyledString::new(error_style, width + 4);
+                s.flush_style();
+                s.push("  ▐ ", 4);
+                s.set_style(subtle_style);
+                s.push(&row.to_padded_string(width - 6), width - 6);
+                s.push("  ", 2);
+                s
+            })
     ).collect()
 }
 
@@ -49,22 +63,36 @@ pub(crate) fn render_prompt(
     theme: &'static Theme,
     width: usize,
     content: &str,
-) -> Vec<String> {
+) -> Vec<StyledString> {
     if content.is_empty() {
         return Vec::new();
     }
     let mut style: ContentStyle = theme.text_base.into();
     style.background_color = Some(theme.bg_prompt);
-    let mut prefix = String::new();
-    let _ = SetStyle(style).write_ansi(&mut prefix);
-    let padding = format!("{prefix}{}", " ".repeat(width));
-    let mut rows = vec![padding.clone()];
+    let mut codes = String::new();
+    let _ = SetStyle(style).write_ansi(&mut codes);
+
+    let make_padding = || {
+        let mut s = StyledString::new(theme.text_base, width + 4);
+        s.push(&codes, 0);
+        s.push(&SPACES[..width], width);
+        s
+    };
+
+    let mut rows = vec![make_padding()];
     rows.extend(content.lines().flat_map(|line|
         wrap_line(width - 4, line)
             .into_iter()
-            .map(|row| format!("{prefix}  {}  ", row.to_padded_string(width - 4)))
+            .map(|row| {
+                let mut s = StyledString::new(theme.text_base, width + 4);
+                s.push(&codes, 0);
+                s.push("  ", 2);
+                s.push(&row.to_padded_string(width - 4), width - 4);
+                s.push("  ", 2);
+                s
+            })
     ));
-    rows.push(padding);
+    rows.push(make_padding());
     rows
 }
 
@@ -75,8 +103,11 @@ pub(crate) fn render_markdown(
 ) -> MarkdownResult {
     let mut result = crate::ui::markdown::render_markdown(theme, width - 4, content);
     for row in result.rows.iter_mut() {
-        row.insert_str(0, "  ");
-        row.push_str("  ");
+        let mut padded = StyledString::new(theme.text_base, width + 4);
+        padded.push("  ", 2);
+        padded.push_styled(row);
+        padded.pad_to_width(width);
+        *row = padded;
     }
     result
 }
@@ -86,7 +117,7 @@ fn render(
     width: usize,
     ty: HistoryItemType,
     content: &str,
-) -> (Vec<String>, ResumePoint) {
+) -> (Vec<StyledString>, ResumePoint) {
     match ty {
         HistoryItemType::Help => (render_help(theme, width, content), ResumePoint { offset: 0, row: 0 }),
         HistoryItemType::Error => (render_error(theme, width, content), ResumePoint { offset: 0, row: 0 }),
@@ -110,7 +141,7 @@ fn get_content_type(item: &Item, content: &Content) -> HistoryItemType {
 pub struct HistoryRow {
     item: Id<HistoryItem>,
     /// Preformatted, pre-padded row contents
-    preformatted: String,
+    preformatted: StyledString,
     prev: Id<HistoryRow>,
     next: Id<HistoryRow>,
 }
@@ -156,7 +187,7 @@ fn remove_rows(rows: &mut Arena<HistoryRow>, prev: Id<HistoryRow>, count: usize)
 fn insert_rows(
     rows: &mut Arena<HistoryRow>,
     item: Id<HistoryItem>,
-    rendered: Vec<String>,
+    rendered: Vec<StyledString>,
     prev: Id<HistoryRow>,
 ) {
     let next = rows[prev].next;
@@ -220,7 +251,7 @@ impl HistoryItem {
         content: String,
         content_id: Option<i32>,
         resume_point: ResumePoint,
-        mut rendered: Vec<String>,
+        mut rendered: Vec<StyledString>,
     ) -> Id<Self> {
         let next = rows[prev].next;
 
@@ -234,7 +265,9 @@ impl HistoryItem {
             num_rows: 0,
         });
 
-        rendered.push(" ".repeat(width)); // Add vertical padding row
+        let mut padding = StyledString::new(TextStyle::default(), width);
+        padding.pad_to_width(width);
+        rendered.push(padding); // Add vertical padding row
         let num_rows = rendered.len();
         insert_rows(rows, item, rendered, prev);
 
@@ -272,8 +305,10 @@ impl HistoryItem {
         // Replace rows
         remove_rows(rows, prev, self.num_rows - old_row);
 
-        let mut rendered: Vec<String> = result.rows;
-        rendered.push(" ".repeat(width));
+        let mut rendered: Vec<StyledString> = result.rows;
+        let mut padding = StyledString::new(TextStyle::default(), width);
+        padding.pad_to_width(width);
+        rendered.push(padding);
         let len = rendered.len();
 
         insert_rows(rows, item_id, rendered, prev);
@@ -308,7 +343,9 @@ impl HistoryItem {
         remove_rows(rows, prev, self.num_rows);
 
         let mut rendered = rendered;
-        rendered.push(" ".repeat(width));
+        let mut padding = StyledString::new(TextStyle::default(), width);
+        padding.pad_to_width(width);
+        rendered.push(padding);
         let len = rendered.len();
         insert_rows(rows, item_id, rendered, prev);
 
@@ -348,7 +385,7 @@ impl History {
         // Insert dummy head, distinct from all other rows.
         let head = rows.insert(HistoryRow {
             item: Id::null(),
-            preformatted: String::new(),
+            preformatted: StyledString::new(theme.text_base, 0),
             prev: Id::null(),
             next: Id::null(),
         });
@@ -494,7 +531,7 @@ impl History {
 
         let head = self.rows.insert(HistoryRow {
             item: Id::null(),
-            preformatted: String::new(),
+            preformatted: StyledString::new(self.theme.text_base, 0),
             prev: Id::null(),
             next: Id::null(),
         });
@@ -602,7 +639,7 @@ pub struct HistoryRowRef<'a> {
 
 impl Command for HistoryRowRef<'_> {
     fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        f.write_str(&self.row.preformatted)
+        f.write_str(self.row.preformatted.as_str())
     }
 }
 
@@ -626,6 +663,16 @@ impl Component for History {
             self.iter_range(prev, self.viewport_bottom)
                 .map(|(_, row)| HistoryRowRef { row }),
         )
+    }
+
+    fn draw(&self, canvas: &mut Canvas) {
+        let prev = self.rows[self.viewport_top].prev;
+        for (i, (_, row)) in self.iter_range(prev, self.viewport_bottom).enumerate() {
+            if i >= canvas.rows.len() {
+                break;
+            }
+            canvas.rows[i].push_styled(&row.preformatted);
+        }
     }
 
     fn set_width(&mut self, width: usize) {
@@ -736,7 +783,7 @@ mod tests {
     fn render_history(history: &History) -> String {
         history
             .iter_range(history.head, history.last_row())
-            .map(|(_, row)| row.preformatted.clone())
+            .map(|(_, row)| row.preformatted.as_str().to_owned())
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -758,17 +805,17 @@ mod tests {
         use crossterm::style::SetStyle;
 
         fn render(content: &str, width: usize) -> String {
-            let mut lines = super::render_help(&THEME_DARK, width, content);
+            let lines = super::render_help(&THEME_DARK, width, content);
 
             // In tests, strip the style initialization commands for
             // readability.
             let mut prefix = String::new();
             let _ = SetStyle(THEME_DARK.text_quote.into()).write_ansi(&mut prefix);
-            for line in lines.iter_mut() {
-                *line = line.trim_start_matches(&prefix).to_owned();
-            }
-
-            lines.join("\n")
+            lines
+                .iter()
+                .map(|line| line.as_str().trim_start_matches(&prefix).to_owned())
+                .collect::<Vec<_>>()
+                .join("\n")
         }
 
         assert_eq!(render("hello", 14), "  ▐ hello     ");
@@ -783,17 +830,17 @@ mod tests {
         use crossterm::style::SetStyle;
 
         fn render(content: &str, width: usize) -> String {
-            let mut lines = super::render_error(&THEME_DARK, width, content);
+            let lines = super::render_error(&THEME_DARK, width, content);
 
             let mut prefix = String::new();
             let _ = SetStyle(THEME_DARK.text_error.into()).write_ansi(&mut prefix);
             prefix.push_str("  ▐ ");
             let _ = SetStyle(THEME_DARK.text_subtle.into()).write_ansi(&mut prefix);
-            for line in lines.iter_mut() {
-                *line = line.trim_start_matches(&prefix).to_owned();
-            }
-
-            lines.join("\n")
+            lines
+                .iter()
+                .map(|line| line.as_str().trim_start_matches(&prefix).to_owned())
+                .collect::<Vec<_>>()
+                .join("\n")
         }
 
         assert_eq!(render("hello", 12), "hello   ");
@@ -808,17 +855,17 @@ mod tests {
         use crossterm::style::{ContentStyle, SetStyle};
 
         fn render(content: &str, width: usize) -> String {
-            let mut lines = super::render_prompt(&THEME_DARK, width, content);
+            let lines = super::render_prompt(&THEME_DARK, width, content);
 
             let mut style: ContentStyle = THEME_DARK.text_base.into();
             style.background_color = Some(THEME_DARK.bg_prompt);
             let mut prefix = String::new();
             let _ = SetStyle(style).write_ansi(&mut prefix);
-            for line in lines.iter_mut() {
-                *line = line.trim_start_matches(&prefix).to_owned();
-            }
-
-            lines.join("\n")
+            lines
+                .iter()
+                .map(|line| line.as_str().trim_start_matches(&prefix).to_owned())
+                .collect::<Vec<_>>()
+                .join("\n")
         }
 
         let pad = |w: usize| " ".repeat(w);

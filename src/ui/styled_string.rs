@@ -1,5 +1,5 @@
 use crossterm::Command;
-use crossterm::style::SetStyle;
+use crossterm::style::{Print, SetStyle};
 
 use crate::ui::style::{TextStyle, UpdateStyle};
 use crate::ui::text::SPACES;
@@ -17,7 +17,7 @@ pub struct SavePoint {
 /// String wrapper which tracks current style and lazily writes control
 /// statements when needed. Also tracks column information since we need that
 /// anyways
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StyledString {
     inner: String,
     // Style at beginning of string, allows concatenating styled strings
@@ -127,8 +127,8 @@ impl StyledString {
         self.style_frozen = saved.style_frozen;
     }
 
-    /// Writes a full style update to the string. This is used at the beginning
-    /// of each row the canvas.
+    /// Writes a full style update to the string.
+    // XXX delete this after switching to draw() rendering
     pub fn flush_style(&mut self) {
         let _ = SetStyle(self.cur_style().into()).write_ansi(&mut self.inner);
     }
@@ -139,6 +139,14 @@ impl StyledString {
             let n = (width - self.width).min(SPACES.len());
             self.push(&SPACES[..n], n);
         }
+    }
+}
+
+impl Command for StyledString {
+    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+        SetStyle(self.initial_style.into()).write_ansi(f)?;
+        Print(&self.inner[..]).write_ansi(f)?;
+        Ok(())
     }
 }
 

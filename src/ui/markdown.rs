@@ -246,7 +246,7 @@ struct FlowBuilder {
     /// Current row, always starts with prefix
     row: StyledString,
     /// Completed rows.
-    rows: Vec<String>,
+    rows: Vec<StyledString>,
     /// Recursion depth
     depth: usize,
     /// Place to begin at next rerender. This is the start of the last flow
@@ -281,7 +281,7 @@ impl FlowBuilder {
         push_spaces(&mut self.row, pad);
         let remain = self.width - self.prefix.width();
         let row = self.prefix.clone_with_capacity(self.prefix.len() + 2 * remain);
-        self.rows.push(std::mem::replace(&mut self.row, row).into_inner());
+        self.rows.push(std::mem::replace(&mut self.row, row));
     }
 
     fn save(&mut self) -> SavePoint {
@@ -576,7 +576,7 @@ pub struct ResumePoint {
 #[derive(Debug)]
 pub struct MarkdownResult {
     /// Rendered rows
-    pub rows: Vec<String>,
+    pub rows: Vec<StyledString>,
     /// Place to begin next rerender
     pub resume_point: ResumePoint,
 }
@@ -635,12 +635,13 @@ mod test_paragraph {
         // In tests, strip the style initialization commands for readability
         let mut prefix = String::new();
         let _ = SetStyle(THEME_DARK.text_base.into()).write_ansi(&mut prefix);
-        let mut rows = result.rows;
-        for row in rows.iter_mut() {
-            *row = row.trim_start_matches(&prefix).to_owned();
-        }
 
-        rows.join("\n")
+        result
+            .rows
+            .iter()
+            .map(|row| row.as_str().trim_start_matches(&prefix).to_owned())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
