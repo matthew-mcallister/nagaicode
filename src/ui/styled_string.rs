@@ -19,6 +19,8 @@ pub struct SavePoint {
 #[derive(Debug)]
 pub struct StyledString {
     inner: String,
+    // Style at beginning of string, allows concatenating styled strings
+    initial_style: TextStyle,
     // Tracking previous style allows us to emit redundant style updates
     // without emitting extra control sequences
     prev_style: Option<TextStyle>,
@@ -31,6 +33,7 @@ impl StyledString {
     pub fn new(style: TextStyle, capacity: usize) -> Self {
         Self {
             inner: String::with_capacity(capacity),
+            initial_style: style,
             prev_style: None,
             cur_style: style,
             width: 0,
@@ -71,6 +74,11 @@ impl StyledString {
 
     pub fn set_style(&mut self, style: TextStyle) {
         if self.style_frozen { return; }
+        if self.inner.is_empty() {
+            self.initial_style = style;
+            self.cur_style = style;
+            return;
+        }
         if self.prev_style.is_none() {
             self.prev_style = Some(self.cur_style);
         }
@@ -92,6 +100,14 @@ impl StyledString {
         self.prev_style = None;
     }
 
+    pub fn push_styled(&mut self, other: &StyledString) {
+        self.set_style(other.cur_style);
+        self.inner.push_str(&other.inner);
+        self.prev_style = other.prev_style;
+        self.width += other.width;
+        self.style_frozen = other.style_frozen;
+    }
+
     pub fn save(&mut self) -> SavePoint {
         SavePoint {
             len: self.len(),
@@ -110,8 +126,186 @@ impl StyledString {
         self.style_frozen = saved.style_frozen;
     }
 
-    // XXX shouldn't need this
+    /// Writes a full style update to the string. This is used at the beginning
+    /// of each row the canvas.
     pub fn flush_style(&mut self) {
         let _ = SetStyle(self.cur_style().into()).write_ansi(&mut self.inner);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::style::{TextStyle, THEME_DARK};
+
+    fn transition(old: TextStyle, new: TextStyle) -> String {
+        let mut out = String::new();
+        UpdateStyle(old, new).write_ansi(&mut out).unwrap();
+        out
+    }
+
+    fn full_style(style: TextStyle) -> String {
+        let mut out = String::new();
+        SetStyle(style.into()).write_ansi(&mut out).unwrap();
+        out
+    }
+
+    #[test]
+    fn test_push_and_width() {
+        let base = THEME_DARK.text_base;
+        let mut s = StyledString::new(base, 16);
+
+        assert_eq!(s.len(), 0);
+        assert_eq!(s.width(), 0);
+        assert_eq!(s.as_str(), "");
+        assert_eq!(s.cur_style(), base);
+
+        // Pushing without a style change emits no control codes
+        s.push("hello", 5);
+        assert_eq!(s.as_str(), "hello");
+        assert_eq!(s.len(), 5);
+        assert_eq!(s.width(), 5);
+        assert!(!s.as_str().contains('\x1b'));
+
+        s.push(" world", 6);
+        assert_eq!(s.as_str(), "hello world");
+        assert_eq!(s.width(), 11);
+        assert_eq!(s.len(), "hello world".len());
+    }
+
+    #[test]
+    fn test_style_transitions() {
+        let base = THEME_DARK.text_base;
+        let header = THEME_DARK.text_header;
+        let code = THEME_DARK.text_code;
+        let math = THEME_DARK.text_math;
+
+        // set_style before any content updates the initial style silently
+        let mut s = StyledString::new(base, 16);
+        s.set_style(header);
+        assert_eq!(s.cur_style(), header);
+        s.push("Title", 5);
+        assert_eq!(s.as_str(), "Title");
+        assert!(!s.as_str().contains('\x1b'));
+
+        // Changing style after content marks a transition emitted on next push
+        s.set_style(code);
+        assert_eq!(s.cur_style(), code);
+        s.push("code", 4);
+        assert_eq!(s.as_str(), format!("Title{}code", transition(header, code)));
+
+        // Multiple set_style calls collapse into a single transition on push
+        s.set_style(header);
+        s.set_style(math);
+        assert_eq!(s.cur_style(), math);
+        let prev = format!("Title{}code", transition(header, code));
+        s.push("math", 4);
+        assert_eq!(s.as_str(), format!("{}{}math", prev, transition(code, math)));
+    }
+
+    #[test]
+    fn test_push_styled() {
+        let base = THEME_DARK.text_base;
+        let header = THEME_DARK.text_header;
+
+        // Matching style: content/width appended, no transitions, state clean
+        let mut a = StyledString::new(base, 16);
+        a.push("foo", 3);
+        let mut b = StyledString::new(base, 16);
+        b.push("bar", 3);
+        a.push_styled(&b);
+        assert_eq!(a.as_str(), "foobar");
+        assert_eq!(a.width(), 6);
+        assert_eq!(a.len(), 6);
+        assert_eq!(a.cur_style(), base);
+        assert_eq!(a.prev_style, None);
+        assert!(!a.style_frozen);
+
+        // Different style on a flush_style'd other: full style baked into content
+        let mut c = StyledString::new(base, 16);
+        c.push("foo", 3);
+        let mut d = StyledString::new(header, 16);
+        d.flush_style();
+        d.push("bar", 3);
+        c.push_styled(&d);
+        assert_eq!(c.as_str(), format!("foo{}bar", full_style(header)));
+        assert_eq!(c.width(), 6);
+        assert_eq!(c.cur_style(), header);
+        assert_eq!(c.prev_style, None);
+
+        // Inherits other's pending transition; subsequent push emits it
+        let mut e = StyledString::new(base, 16);
+        e.push("foo", 3);
+        let mut f = StyledString::new(base, 16);
+        f.push("x", 1);
+        f.set_style(header);
+        assert_eq!(f.prev_style, Some(base));
+        e.push_styled(&f);
+        assert_eq!(e.as_str(), "foox");
+        assert_eq!(e.cur_style(), header);
+        assert_eq!(e.prev_style, Some(base));
+        e.push("!", 1);
+        assert_eq!(e.as_str(), format!("foox{}!", transition(base, header)));
+
+        // Inherits other's style_frozen
+        let mut g = StyledString::new(base, 16);
+        g.freeze_style(true);
+        g.push("x", 1);
+        let mut h = StyledString::new(base, 16);
+        h.push("foo", 3);
+        h.push_styled(&g);
+        assert!(h.style_frozen);
+        assert_eq!(h.cur_style(), base);
+
+        // freeze_style on self blocks set_style inside push_styled
+        let mut i = StyledString::new(base, 16);
+        i.push("foo", 3);
+        i.freeze_style(true);
+        let mut j = StyledString::new(header, 16);
+        j.push("bar", 3);
+        i.push_styled(&j);
+        assert_eq!(i.cur_style(), base);
+        assert_eq!(i.prev_style, None);
+        assert_eq!(i.as_str(), "foobar");
+    }
+
+    #[test]
+    fn test_save_restore_and_freeze() {
+        let base = THEME_DARK.text_base;
+        let header = THEME_DARK.text_header;
+
+        let mut s = StyledString::new(base, 16);
+        s.push("abc", 3);
+        let save = s.save();
+        s.push("de", 2);
+        s.set_style(header);
+        s.push("fg", 2);
+        assert_eq!(s.width(), 7);
+
+        // Restore reverts content, width, and style to the save point
+        s.restore(save);
+        assert_eq!(s.as_str(), "abc");
+        assert_eq!(s.width(), 3);
+        assert_eq!(s.len(), 3);
+        assert_eq!(s.cur_style(), base);
+        assert_eq!(s.prev_style, None);
+
+        // freeze_style blocks subsequent set_style calls
+        s.freeze_style(true);
+        s.set_style(header);
+        assert_eq!(s.cur_style(), base);
+        assert_eq!(s.prev_style, None);
+
+        // Unfreezing allows style changes again
+        s.freeze_style(false);
+        s.set_style(header);
+        assert_eq!(s.cur_style(), header);
+        assert_eq!(s.prev_style, Some(base));
+
+        // flush_style always emits the full current style
+        let mut t = StyledString::new(base, 16);
+        t.set_style(header);
+        t.flush_style();
+        assert_eq!(t.as_str(), full_style(header));
     }
 }
