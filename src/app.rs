@@ -4,7 +4,7 @@ use std::io::Write;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::execute;
 use crossterm::queue;
-use crossterm::style::{ResetColor, SetBackgroundColor, SetForegroundColor};
+use crossterm::style::ResetColor;
 use crossterm::terminal::{
     DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -87,14 +87,7 @@ impl App {
 
         let stdout = self.terminal.stdout();
 
-        let text_style = self.theme.text_base;
-        let bg = self.theme.bg_base;
-        queue!(
-            stdout,
-            Hide,
-            SetForegroundColor(text_style.fg_color),
-            SetBackgroundColor(bg),
-        )?;
+        queue!(stdout, Hide)?;
         for (y, row) in rows.into_iter().enumerate() {
             queue!(stdout, MoveTo(0, y as u16), row)?;
         }
@@ -103,6 +96,13 @@ impl App {
         }
         stdout.flush()?;
         Ok(())
+    }
+
+    pub fn handle_input(&mut self, input: crossterm::event::Event) {
+        let event = self.chat.handle_input(input);
+        if let Some(event) = event {
+            self.process_event(event);
+        }
     }
 
     pub async fn run(&mut self) -> AnyResult<()> {
@@ -116,10 +116,7 @@ impl App {
                 .next()
                 .await
                 .ok_or_else(|| std::io::Error::other("terminal stream closed"))??;
-            let event = self.chat.handle_input(event);
-            if let Some(event) = event {
-                self.process_event(event);
-            }
+            self.handle_input(event);
         }
 
         execute!(self.terminal.stdout(), EnableLineWrap, LeaveAlternateScreen)?;

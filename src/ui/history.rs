@@ -18,13 +18,14 @@ pub(crate) fn render_help(
     width: usize,
     content: &str,
 ) -> Vec<StyledString> {
-    let style = Style::new(theme.text_quote, theme.bg_base);
     content.lines().flat_map(|line|
         wrap_line(width - 6, line)
             .into_iter()
             .map(|row| {
+                let style = Style::new(theme.text_subtle, theme.bg_base);
                 let mut s = StyledString::new(style, width + 4);
                 s.push("  ▐ ", 4);
+                s.set_text(theme.text_quote);
                 s.push(&row.to_padded_string(width - 6), width - 6);
                 s.push("  ", 2);
                 s
@@ -37,15 +38,14 @@ pub(crate) fn render_error(
     width: usize,
     content: &str,
 ) -> Vec<StyledString> {
-    let error_style = Style::new(theme.text_error, theme.bg_base);
-    let subtle_style = Style::new(theme.text_subtle, theme.bg_base);
     content.lines().flat_map(|line|
         wrap_line(width - 6, line)
             .into_iter()
             .map(|row| {
-                let mut s = StyledString::new(error_style, width + 4);
+                let style = Style::new(theme.text_error, theme.bg_base);
+                let mut s = StyledString::new(style, width + 4);
                 s.push("  ▐ ", 4);
-                s.set_style(subtle_style);
+                s.set_text(theme.text_subtle);
                 s.push(&row.to_padded_string(width - 6), width - 6);
                 s.push("  ", 2);
                 s
@@ -748,14 +748,6 @@ mod tests {
         history.set_viewport_bottom_at(history.last_row(), history.num_rows() - 1);
     }
 
-    fn render_history(history: &History) -> String {
-        history
-            .iter_range(history.head, history.last_row())
-            .map(|(_, row)| row.preformatted.as_str().to_owned())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     fn render_draw(history: &History) -> String {
         use crossterm::Command;
 
@@ -775,9 +767,6 @@ mod tests {
 
     #[test]
     fn test_render_draw() {
-        use crossterm::Command;
-        use crossterm::style::SetStyle;
-
         let mut h = history(12, 5);
         assert_eq!(h.width(), 12);
         assert_eq!(h.height(), 0);
@@ -788,14 +777,11 @@ mod tests {
         assert_eq!(h.height(), 2);
         assert_eq!(h.num_rows(), 2);
 
-        let mut help_prefix = String::new();
-        let help_style = Style::new(THEME_DARK.text_quote, THEME_DARK.bg_base);
-        let _ = SetStyle(help_style.into()).write_ansi(&mut help_prefix);
+        let help_prefix = "\x1b[48;2;12;10;9m\x1b[38;2;168;162;158m";
+        let base_prefix = "\x1b[48;2;12;10;9m\x1b[38;5;15m";
+        let italic = "\x1b[3m";
 
-        let mut base_prefix = String::new();
-        let _ = SetStyle(THEME_DARK.base_style().into()).write_ansi(&mut base_prefix);
-
-        let expected_help_row = format!("{help_prefix}  ▐ hello   ");
+        let expected_help_row = format!("{help_prefix}  ▐ {italic}hello   ");
         let expected_pad_row = format!("{base_prefix}            ");
         assert_eq!(
             render_draw(&h),
@@ -807,8 +793,8 @@ mod tests {
         assert_eq!(h.num_rows(), 3);
         assert_eq!(h.height(), 2);
 
-        let row_one = format!("{help_prefix}  ▐ one     ");
-        let row_two = format!("{help_prefix}  ▐ two     ");
+        let row_one = format!("{help_prefix}  ▐ {italic}one     ");
+        let row_two = format!("{help_prefix}  ▐ {italic}two     ");
         assert_eq!(render_draw(&h), format!("{row_two}\n{expected_pad_row}"));
 
         h.scroll_up(1);
@@ -843,9 +829,9 @@ mod tests {
                 .join("\n")
         }
 
-        assert_eq!(render("hello", 14), "  ▐ hello     ");
-        assert_eq!(render("foo\nbar", 12), "  ▐ foo     \n  ▐ bar     ");
-        assert_eq!(render("hello world", 12), "  ▐ hello   \n  ▐ world   ");
+        assert_eq!(render("hello", 14), "  ▐ \x1b[3mhello     ");
+        assert_eq!(render("foo\nbar", 12), "  ▐ \x1b[3mfoo     \n  ▐ \x1b[3mbar     ");
+        assert_eq!(render("hello world", 12), "  ▐ \x1b[3mhello   \n  ▐ \x1b[3mworld   ");
         assert_eq!(render("", 8), "");
     }
 
@@ -886,18 +872,17 @@ mod tests {
                 .join("\n")
         }
 
-        let pad = |w: usize| " ".repeat(w);
         assert_eq!(
             render("hello", 14),
-            format!("{}\n  hello       \n{}", pad(14), pad(14))
+            format!("              \n  hello       \n              ")
         );
         assert_eq!(
             render("foo\nbar", 12),
-            format!("{}\n  foo       \n  bar       \n{}", pad(12), pad(12))
+            format!("            \n  foo       \n  bar       \n            ")
         );
         assert_eq!(
             render("hello world", 12),
-            format!("{}\n  hello     \n  world     \n{}", pad(12), pad(12))
+            format!("            \n  hello     \n  world     \n            ")
         );
         assert_eq!(render("", 8), "");
     }
@@ -998,6 +983,6 @@ mod tests {
         let mut whole = history(20, 20);
         whole.add_item(HistoryItemType::Response, full.into());
 
-        assert_eq!(render_history(&incremental), render_history(&whole));
+        assert_eq!(render_draw(&incremental), render_draw(&whole));
     }
 }

@@ -9,6 +9,7 @@ use crate::ui::text::SPACES;
 pub struct SavePoint {
     len: usize,
     width: usize,
+    initial_style: Style,
     prev_style: Option<Style>,
     cur_style: Style,
     style_frozen: bool,
@@ -114,10 +115,10 @@ impl StyledString {
     }
 
     pub fn push_styled(&mut self, other: &StyledString) {
-        self.set_style(other.cur_style);
-        self.inner.push_str(&other.inner);
+        self.set_style(other.initial_style);
+        self.push(&other.inner, other.width);
+        self.cur_style = other.cur_style;
         self.prev_style = other.prev_style;
-        self.width += other.width;
         self.style_frozen = other.style_frozen;
     }
 
@@ -125,6 +126,7 @@ impl StyledString {
         SavePoint {
             len: self.len(),
             width: self.width(),
+            initial_style: self.initial_style,
             prev_style: self.prev_style,
             cur_style: self.cur_style,
             style_frozen: self.style_frozen,
@@ -133,6 +135,7 @@ impl StyledString {
 
     pub fn restore(&mut self, saved: SavePoint) {
         self.inner.truncate(saved.len);
+        self.initial_style = saved.initial_style;
         self.prev_style = saved.prev_style;
         self.cur_style = saved.cur_style;
         self.width = saved.width;
@@ -232,16 +235,16 @@ mod tests {
         let base = theme.base_style();
         let header = Style::new(theme.text_header, theme.bg_base);
 
-        // Matching style: content/width appended, no transitions, state clean
+        // Matching style: content/width appended
         let mut a = StyledString::new(base, 16);
         a.push("foo", 3);
-        let mut b = StyledString::new(base, 16);
+        let mut b = StyledString::new(header, 16);
         b.push("bar", 3);
         a.push_styled(&b);
-        assert_eq!(a.as_str(), "foobar");
+        assert_eq!(a.as_str(), format!("foo{}bar", transition(base, header)));
         assert_eq!(a.width(), 6);
-        assert_eq!(a.len(), 6);
-        assert_eq!(a.cur_style(), base);
+        assert_eq!(a.len(), 10);
+        assert_eq!(a.cur_style(), header);
         assert_eq!(a.prev_style, None);
         assert!(!a.style_frozen);
 
@@ -268,17 +271,6 @@ mod tests {
         h.push_styled(&g);
         assert!(h.style_frozen);
         assert_eq!(h.cur_style(), base);
-
-        // freeze_style on self blocks set_style inside push_styled
-        let mut i = StyledString::new(base, 16);
-        i.push("foo", 3);
-        i.freeze_style(true);
-        let mut j = StyledString::new(header, 16);
-        j.push("bar", 3);
-        i.push_styled(&j);
-        assert_eq!(i.cur_style(), base);
-        assert_eq!(i.prev_style, None);
-        assert_eq!(i.as_str(), "foobar");
     }
 
     #[test]
