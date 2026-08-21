@@ -626,191 +626,215 @@ pub fn render_mdast(
 
 #[cfg(test)]
 mod test_paragraph {
-    use crossterm::Command;
-
-    use crate::ui::style::{THEME_DARK, UpdateStyle};
+    use crate::ui::canvas::render_canvas;
+    use crate::ui::style::{Style, THEME_DARK, UpdateStyle};
+    use crate::ui::style::testing::{ResetBold, ResetItalic, SetBold, SetItalic};
 
     fn render(text: &str, width: usize) -> String {
-        let result = super::render_markdown(&THEME_DARK, width, text);
-        let base = THEME_DARK.base_style();
-
-        result
-            .rows
-            .iter()
-            .map(|row| {
-                let mut out = String::new();
-                let _ = UpdateStyle(base, row.initial_style()).write_ansi(&mut out);
-                out.push_str(row.as_str());
-                out
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        let mut result = super::render_markdown(&THEME_DARK, width, text);
+        render_canvas(&mut result.rows[..])
     }
 
     #[test]
     fn plain() {
-        assert_eq!(render("hello world", 20), "hello world         ");
+        let base = THEME_DARK.base_style();
+        assert_eq!(render("hello world", 20), format!("{base}hello world         "));
     }
 
     #[test]
     fn bold() {
-        assert_eq!(render("**hi**", 20), "\x1b[1mhi                  ");
+        let base = THEME_DARK.base_style();
+        let bold = SetBold;
+        assert_eq!(render("**hi**", 20), format!("{base}{bold}hi                  "));
     }
 
     #[test]
     fn inline_spacing() {
-        assert_eq!(render("a*b*c", 20), "a\x1b[3mb\x1b[23mc                 ");
-        assert_eq!(render("a *h*c", 20), "a \x1b[3mh\x1b[23mc                ");
-        assert_eq!(render("a*h* c", 20), "a\x1b[3mh\x1b[23m c                ");
-        assert_eq!(render("a *h* c", 20), "a \x1b[3mh\x1b[23m c               ");
+        let base = THEME_DARK.base_style();
+        let italic = SetItalic;
+        let reset_italic = ResetItalic;
+        assert_eq!(render("a*b*c", 20), format!("{base}a{italic}b{reset_italic}c                 "));
+        assert_eq!(render("a *h*c", 20), format!("{base}a {italic}h{reset_italic}c                "));
+        assert_eq!(render("a*h* c", 20), format!("{base}a{italic}h{reset_italic} c                "));
+        assert_eq!(render("a *h* c", 20), format!("{base}a {italic}h{reset_italic} c               "));
     }
 
     #[test]
     fn wrap() {
-        assert_eq!(render("hello world foo", 8), "hello   \nworld   \nfoo     ");
+        let base = THEME_DARK.base_style();
+        assert_eq!(
+            render("hello world foo", 8),
+            format!("{base}hello   \n{base}world   \n{base}foo     "),
+        );
     }
 
     #[test]
     fn styles() {
+        let base = THEME_DARK.base_style();
+        let code = Style::new(THEME_DARK.text_code, THEME_DARK.bg_base);
+        let bold = SetBold;
+        let reset_bold = ResetBold;
+        let italic = SetItalic;
         assert_eq!(
             render("**bold** *italic*\\\n`code`", 20),
-            "\x1b[1mbold\x1b[22m \x1b[3mitalic         \n\x1b[38;2;254;240;138mcode                ",
+            format!("{base}{bold}bold{reset_bold} {italic}italic         \n{code}code                "),
         );
     }
 
     #[test]
     fn blockquote() {
+        let quote = Style::new(THEME_DARK.text_quote, THEME_DARK.bg_base);
+
         assert_eq!(
             render("> hello *world*", 20),
-            "\x1b[38;2;168;162;158m\x1b[3m▐ hello world       ",
+            format!("{quote}▐ hello world       "),
         );
         assert_eq!(
             render("> **bold** `code`", 20),
-            "\x1b[38;2;168;162;158m\x1b[3m▐ bold code         ",
+            format!("{quote}▐ bold code         "),
         );
         assert_eq!(
             render("> hello world foo", 8),
-            "\x1b[38;2;168;162;158m\x1b[3m▐ hello \n\x1b[38;2;168;162;158m\x1b[3m▐ world \n\x1b[38;2;168;162;158m\x1b[3m▐ foo   ",
+            format!("{quote}▐ hello \n{quote}▐ world \n{quote}▐ foo   "),
         );
         assert_eq!(
             render("> first\n>\n> second", 16),
-            "\x1b[38;2;168;162;158m\x1b[3m▐ first         \n\x1b[38;2;168;162;158m\x1b[3m▐               \n\x1b[38;2;168;162;158m\x1b[3m▐ second        ",
+            format!("{quote}▐ first         \n{quote}▐               \n{quote}▐ second        "),
         );
     }
 
     #[test]
     fn two_paragraphs() {
+        let base = THEME_DARK.base_style();
         assert_eq!(
             render("first paragraph\n\nsecond paragraph", 20),
-            "first paragraph     \n                    \nsecond paragraph    ",
+            format!("{base}first paragraph     \n{base}                    \n{base}second paragraph    "),
         );
     }
 
     #[test]
     fn code() {
+        let code = Style::new(THEME_DARK.text_code, THEME_DARK.bg_base);
         assert_eq!(
             render("```\nfn main() {}\n```", 20),
-            "\x1b[38;2;254;240;138mfn main() {}        ",
+            format!("{code}fn main() {{}}        "),
         );
     }
 
     #[test]
     fn code_wrap() {
+        let code = Style::new(THEME_DARK.text_code, THEME_DARK.bg_base);
         assert_eq!(
             render("```\nabcdefgh\n```", 4),
-            "\x1b[38;2;254;240;138mabcd\n\x1b[38;2;254;240;138mefgh",
+            format!("{code}abcd\n{code}efgh"),
         );
     }
 
     #[test]
     fn math() {
+        let math = Style::new(THEME_DARK.text_math, THEME_DARK.bg_base);
         assert_eq!(
             render("$$\nx^2 + y^2 = z^2\n$$", 20),
-            "\x1b[38;2;254;240;138m\x1b[3mx^2 + y^2 = z^2     ",
+            format!("{math}x^2 + y^2 = z^2     "),
         );
     }
 
     #[test]
     fn inline_math() {
+        let base = THEME_DARK.base_style();
+        let math = Style::new(THEME_DARK.text_math, THEME_DARK.bg_base);
+        let to_math = UpdateStyle(base, math);
+        let from_math = UpdateStyle(math, base);
         assert_eq!(
             render("a $x^2$ b", 20),
-            "a \x1b[38;2;254;240;138m\x1b[3mx^2\x1b[38;5;15m\x1b[23m b             ",
+            format!("{base}a {to_math}x^2{from_math} b             "),
         );
     }
 
     #[test]
     fn footnote_definition() {
+        let base = THEME_DARK.base_style();
         assert_eq!(
             render("text[^1]\n\n[^1]: the note", 20),
-            "text[^1]            \n                    \n[^1]:               \n  the note          ",
+            format!("{base}text[^1]            \n{base}                    \n{base}[^1]:               \n{base}  the note          "),
         );
     }
 
     #[test]
     fn footnote_definition_wrap() {
+        let base = THEME_DARK.base_style();
         assert_eq!(
             render("[^1]: aaaabbbb", 8),
-            "[^1]:   \n  aaaabb\n  bb    ",
+            format!("{base}[^1]:   \n{base}  aaaabb\n{base}  bb    "),
         );
     }
 
     #[test]
     fn definition() {
+        let base = THEME_DARK.base_style();
         assert_eq!(
             render("[foo]: https://example.com", 28),
-            "[foo]: https://example.com  ",
+            format!("{base}[foo]: https://example.com  "),
         );
     }
 
     #[test]
     fn definition_wrap() {
+        let base = THEME_DARK.base_style();
         assert_eq!(
             render("[foo]: https://example.com", 16),
-            "[foo]: https://e\nxample.com      ",
+            format!("{base}[foo]: https://e\n{base}xample.com      "),
         );
     }
 
     #[test]
     fn html() {
+        let code = Style::new(THEME_DARK.text_code, THEME_DARK.bg_base);
         assert_eq!(
             render("<div>\n<p>hi</p>\n</div>", 20),
-            "\x1b[38;2;254;240;138m<div>               \n\x1b[38;2;254;240;138m<p>hi</p>           \n\x1b[38;2;254;240;138m</div>              ",
+            format!("{code}<div>               \n{code}<p>hi</p>           \n{code}</div>              "),
         );
     }
 
     #[test]
     fn heading() {
-        assert_eq!(render("# Hello", 20), "\x1b[1m# Hello             ");
-        assert_eq!(render("#### Deep", 20), "\x1b[1m#### Deep           ");
+        let header = THEME_DARK.base_style().bolded();
+        let italic = SetItalic;
+        assert_eq!(render("# Hello", 20), format!("{header}# Hello             "));
+        assert_eq!(render("#### Deep", 20), format!("{header}#### Deep           "));
         assert_eq!(
             render("## Hello *world*", 20),
-            "\x1b[1m## Hello \x1b[3mworld      ",
+            format!("{header}## Hello {italic}world      "),
         );
     }
 
     #[test]
     fn thematic_break() {
+        let subtle = Style::new(THEME_DARK.text_subtle, THEME_DARK.bg_base);
         assert_eq!(
             render("---", 10),
-            "\x1b[38;2;168;162;158m┄┄┄┄┄┄┄┄┄┄",
+            format!("{subtle}┄┄┄┄┄┄┄┄┄┄"),
         );
     }
 
     #[test]
     fn unordered_list() {
-        assert_eq!(render("- a", 16), "- a             ");
-        assert_eq!(render("- a\n- b", 16), "- a             \n- b             ");
+        let base = THEME_DARK.base_style();
+        let italic = SetItalic;
+        assert_eq!(render("- a", 16), format!("{base}- a             "));
+        assert_eq!(render("- a\n- b", 16), format!("{base}- a             \n{base}- b             "));
         assert_eq!(
             render("- a\n\n- b", 16),
-            "- a             \n                \n- b             ",
+            format!("{base}- a             \n{base}                \n{base}- b             "),
         );
-        assert_eq!(render("- *hi*", 16), "- \x1b[3mhi            ");
-        assert_eq!(render("- hello world foo", 8), "- hello \n  world \n  foo   ");
+        assert_eq!(render("- *hi*", 16), format!("{base}- {italic}hi            "));
+        assert_eq!(render("- hello world foo", 8), format!("{base}- hello \n{base}  world \n{base}  foo   "));
     }
 
     #[test]
     fn ordered_list() {
-        assert_eq!(render("1. a\n2. b", 16), "1. a            \n2. b            ");
+        let base = THEME_DARK.base_style();
+        assert_eq!(render("1. a\n2. b", 16), format!("{base}1. a            \n{base}2. b            "));
         let src = "\
             1. item\n\
             1. item\n\
@@ -818,38 +842,38 @@ mod test_paragraph {
             1. item\
         ";
         assert_eq!(
-            render(&src, 12),
-            "1. item     \n\
-             2. item     \n\
-             3. item     \n\
-             4. item     ",
+            render(src, 12),
+            format!("\
+{base}1. item     \n\
+{base}2. item     \n\
+{base}3. item     \n\
+{base}4. item     "),
         );
         assert_eq!(
             render("1. hello world foo", 8),
-            "1. hello\n        \n   world\n    foo ",
+            format!("{base}1. hello\n{base}        \n{base}   world\n{base}    foo "),
         );
-        assert_eq!(render("1. a\n1. b", 16), "1. a            \n2. b            ");
+        assert_eq!(render("1. a\n1. b", 16), format!("{base}1. a            \n{base}2. b            "));
     }
 
     #[test]
     fn nested_lists() {
-        // N.B. Commonmark requires nested lists to be indented 4 spaces, but
-        // we render aligned with the other ListItem siblings
+        let base = THEME_DARK.base_style();
         assert_eq!(
             render("- one\n  - two\n  - three", 12),
-            "- one       \n  - two     \n  - three   ",
+            format!("{base}- one       \n{base}  - two     \n{base}  - three   "),
         );
         assert_eq!(
             render("- one\n  1. two\n  2. three", 12),
-            "- one       \n  1. two    \n  2. three  ",
+            format!("{base}- one       \n{base}  1. two    \n{base}  2. three  "),
         );
         assert_eq!(
             render("1. one\n    - two\n    - three", 12),
-            "1. one      \n   - two    \n   - three  ",
+            format!("{base}1. one      \n{base}   - two    \n{base}   - three  "),
         );
         assert_eq!(
             render("1. one\n    1. two\n    2. three", 12),
-            "1. one      \n   1. two   \n   2. three ",
+            format!("{base}1. one      \n{base}   1. two   \n{base}   2. three "),
         );
     }
 

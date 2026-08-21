@@ -734,7 +734,9 @@ impl<'i> std::iter::FusedIterator for HistoryRowIter<'i> {}
 mod tests {
     use super::*;
 
+    use crate::ui::canvas::render_canvas;
     use crate::ui::style::THEME_DARK;
+    use crate::ui::style::testing::SetItalic;
 
     fn history(width: usize, max_height: usize) -> History {
         History::new(width, max_height, &THEME_DARK)
@@ -749,24 +751,17 @@ mod tests {
     }
 
     fn render_draw(history: &History) -> String {
-        use crossterm::Command;
-
         let mut rows: Vec<StyledString> = (0..history.height())
             .map(|_| StyledString::new(history.theme.base_style(), history.width()))
             .collect();
         history.draw(&mut rows);
-        rows.iter()
-            .map(|row| {
-                let mut out = String::new();
-                row.write_ansi(&mut out).unwrap();
-                out
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        render_canvas(&mut rows[..])
     }
 
     #[test]
     fn test_render_draw() {
+        let theme = &THEME_DARK;
+
         let mut h = history(12, 5);
         assert_eq!(h.width(), 12);
         assert_eq!(h.height(), 0);
@@ -777,15 +772,13 @@ mod tests {
         assert_eq!(h.height(), 2);
         assert_eq!(h.num_rows(), 2);
 
-        let help_prefix = "\x1b[48;2;12;10;9m\x1b[38;2;168;162;158m";
-        let base_prefix = "\x1b[48;2;12;10;9m\x1b[38;5;15m";
-        let italic = "\x1b[3m";
+        let help_style = Style::new(theme.text_subtle, theme.bg_base);
+        let base_style = theme.base_style();
+        let italic = SetItalic;
 
-        let expected_help_row = format!("{help_prefix}  ▐ {italic}hello   ");
-        let expected_pad_row = format!("{base_prefix}            ");
         assert_eq!(
             render_draw(&h),
-            format!("{expected_help_row}\n{expected_pad_row}"),
+            format!("{help_style}  ▐ {italic}hello   \n{base_style}            "),
         );
 
         let mut h = history(12, 2);
@@ -793,12 +786,10 @@ mod tests {
         assert_eq!(h.num_rows(), 3);
         assert_eq!(h.height(), 2);
 
-        let row_one = format!("{help_prefix}  ▐ {italic}one     ");
-        let row_two = format!("{help_prefix}  ▐ {italic}two     ");
-        assert_eq!(render_draw(&h), format!("{row_two}\n{expected_pad_row}"));
+        assert_eq!(render_draw(&h), format!("{help_style}  ▐ {italic}two     \n{base_style}            "));
 
         h.scroll_up(1);
-        assert_eq!(render_draw(&h), format!("{row_one}\n{row_two}"));
+        assert_eq!(render_draw(&h), format!("{help_style}  ▐ {italic}one     \n{help_style}  ▐ {italic}two     "));
 
         h.set_width(14);
         assert_eq!(h.width(), 14);
@@ -820,69 +811,62 @@ mod tests {
 
     #[test]
     fn test_render_help() {
+        let theme = &THEME_DARK;
+        let help_style = Style::new(theme.text_subtle, theme.bg_base);
+        let italic = SetItalic;
+
         fn render(content: &str, width: usize) -> String {
-            let lines = super::render_help(&THEME_DARK, width, content);
-            lines
-                .iter()
-                .map(|line| line.as_str().to_owned())
-                .collect::<Vec<_>>()
-                .join("\n")
+            let mut lines = super::render_help(&THEME_DARK, width, content);
+            render_canvas(&mut lines[..])
         }
 
-        assert_eq!(render("hello", 14), "  ▐ \x1b[3mhello     ");
-        assert_eq!(render("foo\nbar", 12), "  ▐ \x1b[3mfoo     \n  ▐ \x1b[3mbar     ");
-        assert_eq!(render("hello world", 12), "  ▐ \x1b[3mhello   \n  ▐ \x1b[3mworld   ");
+        assert_eq!(render("hello", 14), format!("{help_style}  ▐ {italic}hello     "));
+        assert_eq!(render("foo\nbar", 12), format!("{help_style}  ▐ {italic}foo     \n{help_style}  ▐ {italic}bar     "));
+        assert_eq!(render("hello world", 12), format!("{help_style}  ▐ {italic}hello   \n{help_style}  ▐ {italic}world   "));
         assert_eq!(render("", 8), "");
     }
 
     #[test]
     fn test_render_error() {
-        use crossterm::Command;
         use crate::ui::style::UpdateStyle;
 
-        fn render(content: &str, width: usize) -> String {
-            let error_style = Style::new(THEME_DARK.text_error, THEME_DARK.bg_base);
-            let subtle_style = Style::new(THEME_DARK.text_subtle, THEME_DARK.bg_base);
-            let mut transition = String::new();
-            let _ = UpdateStyle(error_style, subtle_style).write_ansi(&mut transition);
-            let prefix = format!("  ▐ {transition}");
+        let theme = &THEME_DARK;
+        let error_style = Style::new(theme.text_error, theme.bg_base);
+        let subtle_style = Style::new(theme.text_subtle, theme.bg_base);
+        let transition = UpdateStyle(error_style, subtle_style);
 
-            let lines = super::render_error(&THEME_DARK, width, content);
-            lines
-                .iter()
-                .map(|line| line.as_str().trim_start_matches(&prefix).to_owned())
-                .collect::<Vec<_>>()
-                .join("\n")
+        fn render(content: &str, width: usize) -> String {
+            let mut lines = super::render_error(&THEME_DARK, width, content);
+            render_canvas(&mut lines[..])
         }
 
-        assert_eq!(render("hello", 12), "hello   ");
-        assert_eq!(render("foo\nbar", 12), "foo     \nbar     ");
-        assert_eq!(render("hello world", 12), "hello   \nworld   ");
+        assert_eq!(render("hello", 12), format!("{error_style}  ▐ {transition}hello   "));
+        assert_eq!(render("foo\nbar", 12), format!("{error_style}  ▐ {transition}foo     \n{error_style}  ▐ {transition}bar     "));
+        assert_eq!(render("hello world", 12), format!("{error_style}  ▐ {transition}hello   \n{error_style}  ▐ {transition}world   "));
         assert_eq!(render("", 8), "");
     }
 
     #[test]
     fn test_render_prompt() {
+        let theme = &THEME_DARK;
+        let prompt_style = Style::new(theme.text_base, theme.bg_prompt);
+
         fn render(content: &str, width: usize) -> String {
-            let lines = super::render_prompt(&THEME_DARK, width, content);
-            lines
-                .iter()
-                .map(|line| line.as_str().to_owned())
-                .collect::<Vec<_>>()
-                .join("\n")
+            let mut lines = super::render_prompt(&THEME_DARK, width, content);
+            render_canvas(&mut lines[..])
         }
 
         assert_eq!(
             render("hello", 14),
-            format!("              \n  hello       \n              ")
+            format!("{prompt_style}              \n{prompt_style}  hello       \n{prompt_style}              ")
         );
         assert_eq!(
             render("foo\nbar", 12),
-            format!("            \n  foo       \n  bar       \n            ")
+            format!("{prompt_style}            \n{prompt_style}  foo       \n{prompt_style}  bar       \n{prompt_style}            ")
         );
         assert_eq!(
             render("hello world", 12),
-            format!("            \n  hello     \n  world     \n            ")
+            format!("{prompt_style}            \n{prompt_style}  hello     \n{prompt_style}  world     \n{prompt_style}            ")
         );
         assert_eq!(render("", 8), "");
     }

@@ -2,7 +2,7 @@
 
 use crossterm::Command;
 use crossterm::style::{
-    Attribute, Attributes, Color, ContentStyle, SetAttribute, SetBackgroundColor, SetForegroundColor
+    Attribute, Attributes, Color, ContentStyle, SetAttribute, SetBackgroundColor, SetForegroundColor, SetStyle
 };
 
 pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
@@ -140,6 +140,12 @@ impl Style {
     }
 }
 
+impl std::fmt::Display for Style {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        SetStyle((*self).into()).write_ansi(f)
+    }
+}
+
 /// Tuple `(old, new)`, replaces terminal text style
 #[derive(Clone, Copy, Debug)]
 pub struct UpdateStyle(pub Style, pub Style);
@@ -181,6 +187,12 @@ impl Command for UpdateStyle {
         }
 
         Ok(())
+    }
+}
+
+impl std::fmt::Display for UpdateStyle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.write_ansi(f)
     }
 }
 
@@ -249,4 +261,71 @@ pub const THEME_DARK: Theme = Theme {
 pub struct StyleSettings {
     pub theme: Theme,
     pub max_width: u32,
+}
+
+/// Styling helpers for tests
+#[cfg(test)]
+pub mod testing {
+    use crossterm::Command;
+    use crossterm::style::{Attribute, SetAttribute};
+
+    #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+    pub struct SetItalic;
+
+    impl Command for SetItalic {
+        fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+            SetAttribute(Attribute::Italic).write_ansi(f)
+        }
+    }
+
+    impl std::fmt::Display for SetItalic {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.write_ansi(f)
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+    pub struct ResetItalic;
+
+    impl Command for ResetItalic {
+        fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+            SetAttribute(Attribute::NoItalic).write_ansi(f)
+        }
+    }
+
+    impl std::fmt::Display for ResetItalic {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.write_ansi(f)
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+    pub struct SetBold;
+
+    impl Command for SetBold {
+        fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+            SetAttribute(Attribute::Bold).write_ansi(f)
+        }
+    }
+
+    impl std::fmt::Display for SetBold {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.write_ansi(f)
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+    pub struct ResetBold;
+
+    impl Command for ResetBold {
+        fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+            SetAttribute(Attribute::NormalIntensity).write_ansi(f)
+        }
+    }
+
+    impl std::fmt::Display for ResetBold {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.write_ansi(f)
+        }
+    }
 }
