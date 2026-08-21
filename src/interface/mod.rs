@@ -13,6 +13,8 @@ use crate::request::DefaultClient;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum InterfaceId {
     Openai,
+    Openrouter,
+    Deepseek,
 }
 
 impl FromStr for InterfaceId {
@@ -21,6 +23,8 @@ impl FromStr for InterfaceId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "openai" => Ok(Self::Openai),
+            "openrouter" => Ok(Self::Openrouter),
+            "deepseek" => Ok(Self::Deepseek),
             _ => Err(From::from(format!("unknown interface: '{}'", s))),
         }
     }
@@ -30,6 +34,8 @@ impl InterfaceId {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Openai => "openai",
+            Self::Openrouter => "openrouter",
+            Self::Deepseek => "deepseek",
         }
     }
 }
@@ -126,13 +132,22 @@ impl Interface {
     pub fn from_provider(provider: &Provider, client: &DefaultClient) -> AnyResult<Self> {
         let id: InterfaceId = provider.interface.parse()?;
         Ok(match id {
-            InterfaceId::Openai => Self::from(OpenaiInterface::new(
-                provider.base_url_normalized()
-                    .unwrap_or("https://api.openai.com/v1")
-                    .to_owned(),
-                provider.api_key.clone(),
-                client.clone(),
-            )),
+            InterfaceId::Openai
+            | InterfaceId::Openrouter
+            | InterfaceId::Deepseek => {
+                let fallback_url = match id {
+                    InterfaceId::Openai => "https://api.openai.com/v1",
+                    InterfaceId::Openrouter => "https://openrouter.ai/api/v1",
+                    InterfaceId::Deepseek => "https://api.deepseek.com",
+                };
+                Self::from(OpenaiInterface::new(
+                    provider.base_url_normalized()
+                        .unwrap_or(fallback_url)
+                        .to_owned(),
+                    provider.api_key.clone(),
+                    client.clone(),
+                ))
+            }
         })
     }
 
