@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::error::AnyResult;
 
@@ -69,10 +69,15 @@ impl ToolServer for HostToolServer {
                     .arg("-c")
                     .arg(cmd)
                     .output()?;
-                let mut content = String::from_utf8_lossy(&output.stdout).into_owned();
-                content.push_str(&String::from_utf8_lossy(&output.stderr));
+                let return_code = output.status.code().unwrap_or(-1);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
                 Ok(ToolResult {
-                    content: Value::String(content),
+                    content: json!({
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "return_code": return_code,
+                    }),
                     is_error: !output.status.success(),
                 })
             }
@@ -234,10 +239,25 @@ mod tests {
 
         let mut sys_server = HostToolServer::new();
         let sys_res = sys_server.call("sh", json!("printf 'hello'")).unwrap();
-        assert_eq!(sys_res.content, json!("hello"));
+        assert_eq!(
+            sys_res.content,
+            json!({
+                "stdout": "hello",
+                "stderr": "",
+                "return_code": 0,
+            })
+        );
         assert!(!sys_res.is_error);
 
-        let sys_err_res = sys_server.call("sh", json!("exit 1")).unwrap();
+        let sys_err_res = sys_server.call("sh", json!("printf 'err' >&2; exit 1")).unwrap();
+        assert_eq!(
+            sys_err_res.content,
+            json!({
+                "stdout": "",
+                "stderr": "err",
+                "return_code": 1,
+            })
+        );
         assert!(sys_err_res.is_error);
 
         assert!(sys_server.call("unknown", json!("test")).is_err());
