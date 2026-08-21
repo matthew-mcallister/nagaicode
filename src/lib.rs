@@ -13,3 +13,6 @@ pub mod session;
 pub mod terminal;
 pub mod testing;
 pub mod tools;
+
+#[cfg(test)]
+mod tests;

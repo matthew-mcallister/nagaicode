@@ -13,7 +13,6 @@ use crate::interface::InterfaceId;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::schema::provider::dsl;
-use crate::terminal::Terminal;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Command {
@@ -347,8 +346,8 @@ pub fn run_provider_command(command: ProviderCommand) -> Result<String, Box<dyn 
     }
 }
 
-pub fn run_model_command<T: Terminal>(
-    app: &mut App<T>,
+pub fn run_model_command(
+    app: &mut App,
     command: ModelCommand,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     let mut conn = db::open()?;

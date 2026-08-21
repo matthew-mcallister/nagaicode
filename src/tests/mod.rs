@@ -1,7 +1,10 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
-use nagai::app::App;
-use nagai::terminal::TestTerminal;
-use nagai::ui::canvas::render_canvas;
+use serde_json::json;
+
+use crate::app::{App, AppEvent};
+use crate::tools::ToolResult;
+use crate::tools::mock::ToolCall;
+use crate::ui::canvas::render_canvas;
 
 const EXPECTED_INITIAL_FRAME: &str = concat!(
     "\x1b[48;2;12;10;9m\x1b[38;5;15m                                                                                \n",
@@ -32,8 +35,7 @@ const EXPECTED_INITIAL_FRAME: &str = concat!(
 
 #[test]
 fn test_app_e2e() {
-    let terminal = TestTerminal::new();
-    let mut app = App::new(terminal).expect("failed to create app");
+    let mut app = App::new().expect("failed to create app");
 
     let mut canvas = app.make_canvas();
     app.draw(&mut canvas);
@@ -47,4 +49,74 @@ fn test_app_e2e() {
     app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
 
     assert!(app.quit());
+}
+
+#[test]
+fn test_app_process_command() {
+    let mut app = App::new().unwrap();
+
+    app.tools_mut().add_result(
+        "sh",
+        Ok(ToolResult::success(json!({
+            "stdout": "output line\n",
+            "stderr": "",
+            "return_code": 0,
+        }))),
+    );
+
+    app.process_command("!echo test").unwrap();
+
+    let calls = app.tools().get_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0],
+        ToolCall {
+            name: "sh".to_owned(),
+            args: json!("echo test"),
+        }
+    );
+
+    app.tools_mut().add_result(
+        "sh",
+        Ok(ToolResult::success(json!("string output"))),
+    );
+    app.process_command("!pwd").unwrap();
+    let calls = app.tools().get_calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1].args, json!("pwd"));
+
+    app.tools_mut().add_result(
+        "sh",
+        Ok(ToolResult::error(json!({
+            "stdout": "",
+            "stderr": "error message\n",
+            "return_code": 1,
+        }))),
+    );
+    app.process_command("!false").unwrap();
+    let calls = app.tools().get_calls();
+    assert_eq!(calls.len(), 3);
+
+    app.tools_mut().add_result(
+        "sh",
+        Ok(ToolResult::success(json!({
+            "stdout": "",
+            "stderr": "",
+            "return_code": 0,
+        }))),
+    );
+    app.process_command("!true").unwrap();
+    let calls = app.tools().get_calls();
+    assert_eq!(calls.len(), 4);
+
+    app.tools_mut().add_result(
+        "sh",
+        Err("tool error".into()),
+    );
+    app.process_event(AppEvent::Command("!failing_tool".to_string()));
+    let calls = app.tools().get_calls();
+    assert_eq!(calls.len(), 5);
+
+    assert!(app.process_command("").is_ok());
+    assert!(app.process_command("   ").is_ok());
 }

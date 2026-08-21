@@ -10,12 +10,14 @@ use crossterm::terminal::{
 };
 use diesel::SqliteConnection;
 use futures::StreamExt;
+use serde_json::Value;
 
 use crate::command::Command;
 use crate::error::AnyResult;
 use crate::model::Model;
 use crate::session::{Content, ContentType, Item, ItemType, Session};
 use crate::terminal::{DefaultTerminal, Terminal};
+use crate::tools::{DefaultToolServer, ToolServer};
 use crate::ui::canvas::Canvas;
 use crate::ui::chat::{Chat, Update};
 use crate::ui::style::{THEME_DARK, Theme};
@@ -31,8 +33,8 @@ pub enum AppEvent {
     HistoryNext,
 }
 
-pub struct App<T: Terminal = DefaultTerminal> {
-    terminal: T,
+pub struct App {
+    terminal: DefaultTerminal,
     chat: Chat,
     selected_model: Option<Model>,
     quit: bool,
@@ -40,11 +42,13 @@ pub struct App<T: Terminal = DefaultTerminal> {
     theme: &'static Theme,
     conn: SqliteConnection,
     session: Option<Session>,
+    tools: DefaultToolServer,
 }
 
-impl<T: Terminal> App<T> {
-    /// Creates a new `App` instance with the given terminal.
-    pub fn new(terminal: T) -> AnyResult<Self> {
+impl App {
+    /// Creates a new `App` instance.
+    pub fn new() -> AnyResult<Self> {
+        let terminal = DefaultTerminal::default();
         let (w, h) = terminal.size()?;
         let theme = &THEME_DARK;
         let chat = Chat::new(w, h, theme);
@@ -56,6 +60,7 @@ impl<T: Terminal> App<T> {
             theme,
             conn: crate::db::open()?,
             session: None,
+            tools: DefaultToolServer::default(),
         })
     }
 
@@ -67,6 +72,26 @@ impl<T: Terminal> App<T> {
     /// Switches the selected model.
     pub fn switch_model(&mut self, model: Model) {
         self.selected_model = Some(model);
+    }
+
+    /// Returns a reference to the terminal.
+    pub fn terminal(&self) -> &DefaultTerminal {
+        &self.terminal
+    }
+
+    /// Returns a mutable reference to the terminal.
+    pub fn terminal_mut(&mut self) -> &mut DefaultTerminal {
+        &mut self.terminal
+    }
+
+    /// Returns a reference to the tool server.
+    pub fn tools(&self) -> &DefaultToolServer {
+        &self.tools
+    }
+
+    /// Returns a mutable reference to the tool server.
+    pub fn tools_mut(&mut self) -> &mut DefaultToolServer {
+        &mut self.tools
     }
 
     /// Creates a blank canvas matching the chat dimensions and theme.
@@ -185,7 +210,21 @@ impl<T: Terminal> App<T> {
         Ok((item, content))
     }
 
-    fn process_command(&mut self, command: &str) -> AnyResult<()> {
+    fn process_bang_command(&mut self, command: &str) -> AnyResult<String> {
+        let result = self.tools.call("sh", serde_json::json!(command))?;
+        let output = if let Some(obj) = result.content.as_object() {
+            let stdout = obj.get("stdout").and_then(Value::as_str).unwrap_or("");
+            let stderr = obj.get("stderr").and_then(Value::as_str).unwrap_or("");
+            format!("{stdout}{stderr}")
+        } else if let Some(s) = result.content.as_str() {
+            s.to_string()
+        } else {
+            result.content.to_string()
+        };
+        Ok(output)
+    }
+
+    pub(crate) fn process_command(&mut self, command: &str) -> AnyResult<()> {
         if command.trim().is_empty() {
             return Ok(());
         }
@@ -194,14 +233,14 @@ impl<T: Terminal> App<T> {
         let bang_command = command.starts_with('!');
         if slash_command || bang_command {
             let command = &command[1..];
-            if slash_command {
-                let output = self.process_slash_command(command)?;
-                if !output.trim().is_empty() {
-                    self.chat.handle_update(Update::HelpMessage(&output));
-                }
+            let output = if slash_command {
+                self.process_slash_command(command)?
             } else {
-                todo!("call system()")
+                self.process_bang_command(command)?
             };
+            if !output.trim().is_empty() {
+                self.chat.handle_update(Update::HelpMessage(&output));
+            }
         } else {
             let (item, content) = self.submit_prompt(command)?;
             self.chat.handle_update(Update::ContentCreated { item: &item, content: &content });
@@ -210,7 +249,7 @@ impl<T: Terminal> App<T> {
         Ok(())
     }
 
-    fn process_event(&mut self, event: AppEvent) {
+    pub(crate) fn process_event(&mut self, event: AppEvent) {
         let res = match event {
             AppEvent::Command(cmd) => self.process_command(&cmd),
             // Consumed by the StackedView; should never reach the App.
@@ -222,7 +261,7 @@ impl<T: Terminal> App<T> {
     }
 }
 
-/// Runs the app with the default terminal.
+/// Runs the app.
 pub async fn run() -> AnyResult<()> {
-    App::new(DefaultTerminal::default())?.run().await
+    App::new()?.run().await
 }
