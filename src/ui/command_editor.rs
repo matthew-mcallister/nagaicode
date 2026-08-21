@@ -173,8 +173,106 @@ impl Component for CommandEditor {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::Command;
+    use crossterm::style::{ContentStyle, SetStyle};
+
     use super::*;
-    use crate::ui::style::THEME_DARK;
+    use crate::ui::style::{Style, THEME_DARK, UpdateStyle};
+    use crate::ui::styled_string::StyledString;
+
+    fn render(editor: &CommandEditor) -> String {
+        let mut rows: Vec<StyledString> = (0..editor.height())
+            .map(|_| StyledString::new(THEME_DARK.base_style(), editor.width()))
+            .collect();
+        editor.draw(&mut rows);
+        rows.iter()
+            .map(|row| {
+                let mut out = String::new();
+                row.write_ansi(&mut out).unwrap();
+                out
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn input_prefix() -> String {
+        let mut out = String::new();
+        let mut content: ContentStyle = THEME_DARK.text_base.into();
+        content.background_color = Some(THEME_DARK.bg_input_box);
+        SetStyle(content).write_ansi(&mut out).unwrap();
+        out
+    }
+
+    fn bar_suffix(focused: bool) -> String {
+        let old_style = Style::new(THEME_DARK.text_base, THEME_DARK.bg_input_box);
+        let text_style = if focused {
+            THEME_DARK.text_scroll_bar_focused
+        } else {
+            THEME_DARK.text_scroll_bar_unfocused
+        };
+        let new_style = Style::new(text_style, THEME_DARK.bg_base);
+        let mut out = String::new();
+        UpdateStyle(old_style, new_style).write_ansi(&mut out).unwrap();
+        out.push('▐');
+        out
+    }
+
+    fn track_suffix() -> String {
+        let old_style = Style::new(THEME_DARK.text_base, THEME_DARK.bg_input_box);
+        let new_style = Style::new(THEME_DARK.text_scroll_bar_track, THEME_DARK.bg_base);
+        let mut out = String::new();
+        UpdateStyle(old_style, new_style).write_ansi(&mut out).unwrap();
+        out.push('▐');
+        out
+    }
+
+    #[test]
+    fn test_render() {
+        let mut editor = CommandEditor::new(10, 5, &THEME_DARK);
+        let pfx = input_prefix();
+        let bar = bar_suffix(false);
+        let focused_bar = bar_suffix(true);
+        let track = track_suffix();
+
+        assert_eq!(editor.width(), 10);
+        assert_eq!(editor.height(), 3);
+        assert_eq!(editor.cursor(), Some((1, 2)));
+        assert_eq!(
+            render(&editor),
+            format!("{pfx}         {bar}\n{pfx}         {bar}\n{pfx}         {bar}"),
+        );
+
+        editor.set_focus(true);
+        assert_eq!(
+            render(&editor),
+            format!("{pfx}         {focused_bar}\n{pfx}         {focused_bar}\n{pfx}         {focused_bar}"),
+        );
+
+        editor.set_focus(false);
+        editor.input_mut().set_text("foo");
+        assert_eq!(editor.cursor(), Some((1, 2)));
+        editor.input_mut().go_to_end();
+        assert_eq!(editor.cursor(), Some((1, 5)));
+        assert_eq!(
+            render(&editor),
+            format!("{pfx}         {bar}\n{pfx}  foo    {bar}\n{pfx}         {bar}"),
+        );
+
+        let mut editor = CommandEditor::new(10, 6, &THEME_DARK);
+        editor.input_mut().set_text("1\n2\n3\n4\n5\n6\n7\n8");
+        editor.sync_scroll_bar();
+        assert_eq!(editor.width(), 10);
+        assert_eq!(editor.height(), 6);
+        assert_eq!(
+            render(&editor),
+            format!(
+                "{pfx}         {bar}\n{pfx}  1      {bar}\n{pfx}  2      {bar}\n{pfx}  3      {track}\n{pfx}  4      {track}\n{pfx}         {track}",
+            ),
+        );
+
+        editor.set_width(12);
+        assert_eq!(editor.width(), 12);
+    }
 
     // Warning: Large blob of AI-generated tests
     #[test]

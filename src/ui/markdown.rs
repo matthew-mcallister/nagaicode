@@ -618,9 +618,6 @@ pub fn render_mdast(
 ) -> MarkdownResult {
     let mut flow = FlowBuilder::new(theme, width);
 
-    // Force full style update
-    flow.prefix.set_style(theme.base_style());
-    flow.prefix.flush_style();
     flow.apply_prefix();
     push_flow_node(&mut flow, node);
 
@@ -630,21 +627,22 @@ pub fn render_mdast(
 #[cfg(test)]
 mod test_paragraph {
     use crossterm::Command;
-    use crossterm::style::SetStyle;
 
-    use crate::ui::style::THEME_DARK;
+    use crate::ui::style::{THEME_DARK, UpdateStyle};
 
     fn render(text: &str, width: usize) -> String {
         let result = super::render_markdown(&THEME_DARK, width, text);
-
-        // In tests, strip the style initialization commands for readability
-        let mut prefix = String::new();
-        let _ = SetStyle(THEME_DARK.base_style().into()).write_ansi(&mut prefix);
+        let base = THEME_DARK.base_style();
 
         result
             .rows
             .iter()
-            .map(|row| row.as_str().trim_start_matches(&prefix).to_owned())
+            .map(|row| {
+                let mut out = String::new();
+                let _ = UpdateStyle(base, row.initial_style()).write_ansi(&mut out);
+                out.push_str(row.as_str());
+                out
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }

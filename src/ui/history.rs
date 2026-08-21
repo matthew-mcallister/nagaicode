@@ -24,7 +24,6 @@ pub(crate) fn render_help(
             .into_iter()
             .map(|row| {
                 let mut s = StyledString::new(style, width + 4);
-                s.flush_style();
                 s.push("  ▐ ", 4);
                 s.push(&row.to_padded_string(width - 6), width - 6);
                 s.push("  ", 2);
@@ -45,7 +44,6 @@ pub(crate) fn render_error(
             .into_iter()
             .map(|row| {
                 let mut s = StyledString::new(error_style, width + 4);
-                s.flush_style();
                 s.push("  ▐ ", 4);
                 s.set_style(subtle_style);
                 s.push(&row.to_padded_string(width - 6), width - 6);
@@ -67,7 +65,6 @@ pub(crate) fn render_prompt(
 
     let make_padding = || {
         let mut s = StyledString::new(style, width + 4);
-        s.flush_style();
         s.push(&SPACES[..width], width);
         s
     };
@@ -78,7 +75,6 @@ pub(crate) fn render_prompt(
             .into_iter()
             .map(|row| {
                 let mut s = StyledString::new(style, width + 4);
-                s.flush_style();
                 s.push("  ", 2);
                 s.push(&row.to_padded_string(width - 4), width - 4);
                 s.push("  ", 2);
@@ -760,6 +756,71 @@ mod tests {
             .join("\n")
     }
 
+    fn render_draw(history: &History) -> String {
+        use crossterm::Command;
+
+        let mut rows: Vec<StyledString> = (0..history.height())
+            .map(|_| StyledString::new(history.theme.base_style(), history.width()))
+            .collect();
+        history.draw(&mut rows);
+        rows.iter()
+            .map(|row| {
+                let mut out = String::new();
+                row.write_ansi(&mut out).unwrap();
+                out
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn test_render_draw() {
+        use crossterm::Command;
+        use crossterm::style::SetStyle;
+
+        let mut h = history(12, 5);
+        assert_eq!(h.width(), 12);
+        assert_eq!(h.height(), 0);
+        assert_eq!(h.cursor(), None);
+        assert_eq!(render_draw(&h), "");
+
+        h.handle_update(Update::HelpMessage("hello"));
+        assert_eq!(h.height(), 2);
+        assert_eq!(h.num_rows(), 2);
+
+        let mut help_prefix = String::new();
+        let help_style = Style::new(THEME_DARK.text_quote, THEME_DARK.bg_base);
+        let _ = SetStyle(help_style.into()).write_ansi(&mut help_prefix);
+
+        let mut base_prefix = String::new();
+        let _ = SetStyle(THEME_DARK.base_style().into()).write_ansi(&mut base_prefix);
+
+        let expected_help_row = format!("{help_prefix}  ▐ hello   ");
+        let expected_pad_row = format!("{base_prefix}            ");
+        assert_eq!(
+            render_draw(&h),
+            format!("{expected_help_row}\n{expected_pad_row}"),
+        );
+
+        let mut h = history(12, 2);
+        h.handle_update(Update::HelpMessage("one\ntwo"));
+        assert_eq!(h.num_rows(), 3);
+        assert_eq!(h.height(), 2);
+
+        let row_one = format!("{help_prefix}  ▐ one     ");
+        let row_two = format!("{help_prefix}  ▐ two     ");
+        assert_eq!(render_draw(&h), format!("{row_two}\n{expected_pad_row}"));
+
+        h.scroll_up(1);
+        assert_eq!(render_draw(&h), format!("{row_one}\n{row_two}"));
+
+        h.set_width(14);
+        assert_eq!(h.width(), 14);
+
+        h.set_height(4);
+        assert_eq!(h.height(), 3);
+    }
+
     #[test]
     fn test_empty_history() {
         let history = history(20, 5);
@@ -773,21 +834,11 @@ mod tests {
 
     #[test]
     fn test_render_help() {
-        use crossterm::Command;
-        use crossterm::style::SetStyle;
-
         fn render(content: &str, width: usize) -> String {
-            let theme = &THEME_DARK;
-            let lines = super::render_help(theme, width, content);
-
-            // In tests, strip the style initialization commands for
-            // readability.
-            let mut prefix = String::new();
-            let style = Style::new(theme.text_quote, theme.bg_base);
-            let _ = SetStyle(style.into()).write_ansi(&mut prefix);
+            let lines = super::render_help(&THEME_DARK, width, content);
             lines
                 .iter()
-                .map(|line| line.as_str().trim_start_matches(&prefix).to_owned())
+                .map(|line| line.as_str().to_owned())
                 .collect::<Vec<_>>()
                 .join("\n")
         }
@@ -801,17 +852,16 @@ mod tests {
     #[test]
     fn test_render_error() {
         use crossterm::Command;
-        use crossterm::style::SetStyle;
+        use crate::ui::style::UpdateStyle;
 
         fn render(content: &str, width: usize) -> String {
-            let theme = &THEME_DARK;
-            let lines = super::render_error(theme, width, content);
+            let error_style = Style::new(THEME_DARK.text_error, THEME_DARK.bg_base);
+            let subtle_style = Style::new(THEME_DARK.text_subtle, THEME_DARK.bg_base);
+            let mut transition = String::new();
+            let _ = UpdateStyle(error_style, subtle_style).write_ansi(&mut transition);
+            let prefix = format!("  ▐ {transition}");
 
-            let mut prefix = String::new();
-            let style = Style::new(theme.text_error, theme.bg_base);
-            let _ = SetStyle(style.into()).write_ansi(&mut prefix);
-            prefix.push_str("  ▐ ");
-            let _ = SetStyle(theme.text_subtle.into()).write_ansi(&mut prefix);
+            let lines = super::render_error(&THEME_DARK, width, content);
             lines
                 .iter()
                 .map(|line| line.as_str().trim_start_matches(&prefix).to_owned())
@@ -827,19 +877,11 @@ mod tests {
 
     #[test]
     fn test_render_prompt() {
-        use crossterm::Command;
-        use crossterm::style::{ContentStyle, SetStyle};
-
         fn render(content: &str, width: usize) -> String {
             let lines = super::render_prompt(&THEME_DARK, width, content);
-
-            let mut style: ContentStyle = THEME_DARK.text_base.into();
-            style.background_color = Some(THEME_DARK.bg_prompt);
-            let mut prefix = String::new();
-            let _ = SetStyle(style).write_ansi(&mut prefix);
             lines
                 .iter()
-                .map(|line| line.as_str().trim_start_matches(&prefix).to_owned())
+                .map(|line| line.as_str().to_owned())
                 .collect::<Vec<_>>()
                 .join("\n")
         }

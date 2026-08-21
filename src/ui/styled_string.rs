@@ -54,6 +54,10 @@ impl StyledString {
         self.cur_style
     }
 
+    pub fn initial_style(&self) -> Style {
+        self.initial_style
+    }
+
     pub fn as_str(&self) -> &str {
         &self.inner
     }
@@ -135,12 +139,6 @@ impl StyledString {
         self.style_frozen = saved.style_frozen;
     }
 
-    /// Writes a full style update to the string.
-    // XXX delete this after switching to draw() rendering
-    pub fn flush_style(&mut self) {
-        let _ = SetStyle(self.cur_style().into()).write_ansi(&mut self.inner);
-    }
-
     pub fn pad_to_width(&mut self, width: usize) {
         if self.width >= width { return; }
         while self.width < width {
@@ -171,12 +169,6 @@ mod tests {
     fn transition(old: Style, new: Style) -> String {
         let mut out = String::new();
         UpdateStyle(old, new).write_ansi(&mut out).unwrap();
-        out
-    }
-
-    fn full_style(style: Style) -> String {
-        let mut out = String::new();
-        SetStyle(style.into()).write_ansi(&mut out).unwrap();
         out
     }
 
@@ -253,18 +245,6 @@ mod tests {
         assert_eq!(a.prev_style, None);
         assert!(!a.style_frozen);
 
-        // Different style on a flush_style'd other: full style baked into content
-        let mut c = StyledString::new(base, 16);
-        c.push("foo", 3);
-        let mut d = StyledString::new(header, 16);
-        d.flush_style();
-        d.push("bar", 3);
-        c.push_styled(&d);
-        assert_eq!(c.as_str(), format!("foo{}bar", full_style(header)));
-        assert_eq!(c.width(), 6);
-        assert_eq!(c.cur_style(), header);
-        assert_eq!(c.prev_style, None);
-
         // Inherits other's pending transition; subsequent push emits it
         let mut e = StyledString::new(base, 16);
         e.push("foo", 3);
@@ -334,12 +314,6 @@ mod tests {
         s.set_style(header);
         assert_eq!(s.cur_style(), header);
         assert_eq!(s.prev_style, Some(base));
-
-        // flush_style always emits the full current style
-        let mut t = StyledString::new(base, 16);
-        t.set_style(header);
-        t.flush_style();
-        assert_eq!(t.as_str(), full_style(header));
     }
 
     #[test]
