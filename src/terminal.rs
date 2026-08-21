@@ -1,11 +1,11 @@
 use std::io::Write;
 
-use crossterm::event::Event;
+use crossterm::event::{Event, EventStream};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, size};
 use futures::Stream;
 
 use crate::error::AnyResult;
-
-pub use detail::DefaultTerminal;
+use crate::testing::QueueStream;
 
 /// A wrapper around the terminal API that can be used to simulate a terminal
 /// in tests.
@@ -14,9 +14,9 @@ pub trait Terminal {
     fn stdout(&mut self) -> &mut impl Write;
 
     /// Returns an event stream.
-    fn events(&mut self) -> &mut impl Stream<Item = std::io::Result<Event>>;
+    fn events(&mut self) -> &mut (impl Stream<Item = std::io::Result<Event>> + Unpin);
 
-    /// Returns a pair `(width, height)` of the terminal, in columns and rows
+    /// Returns a pair `(width, height)` of the terminal, in columns and rows.
     fn size(&self) -> AnyResult<(u16, u16)>;
 
     /// Enables raw mode on the underlying terminal.
@@ -26,115 +26,103 @@ pub trait Terminal {
     fn disable_raw_mode(&self) -> AnyResult<()>;
 }
 
-#[cfg(not(test))]
-mod detail {
-    use std::io::Write;
+/// Terminal implementation using crossterm.
+#[derive(Debug)]
+pub struct DefaultTerminal {
+    stdout: std::io::Stdout,
+    events: EventStream,
+}
 
-    use crossterm::event::{Event, EventStream};
-    use crossterm::terminal::{disable_raw_mode, enable_raw_mode, size};
-    use futures::Stream;
-
-    use super::Terminal;
-    use crate::error::AnyResult;
-
-    /// Terminal implementation using crossterm
-    #[derive(Debug)]
-    pub struct DefaultTerminal {
-        stdout: std::io::Stdout,
-        events: EventStream,
-    }
-
-    impl Default for DefaultTerminal {
-        fn default() -> Self {
-            Self {
-                stdout: std::io::stdout(),
-                events: EventStream::new(),
-            }
-        }
-    }
-
-    impl DefaultTerminal {
-        pub fn new() -> Self {
-            Self::default()
-        }
-    }
-
-    impl Terminal for DefaultTerminal {
-        fn stdout(&mut self) -> &mut impl Write {
-            &mut self.stdout
-        }
-
-        fn events(&mut self) -> &mut impl Stream<Item = std::io::Result<Event>> {
-            &mut self.events
-        }
-
-        fn size(&self) -> AnyResult<(u16, u16)> {
-            Ok(size()?)
-        }
-
-        fn enable_raw_mode(&self) -> AnyResult<()> {
-            Ok(enable_raw_mode()?)
-        }
-
-        fn disable_raw_mode(&self) -> AnyResult<()> {
-            Ok(disable_raw_mode()?)
+impl Default for DefaultTerminal {
+    fn default() -> Self {
+        Self {
+            stdout: std::io::stdout(),
+            events: EventStream::new(),
         }
     }
 }
 
-#[cfg(test)]
-mod detail {
-    use std::io::Write;
+impl DefaultTerminal {
+    /// Creates a new `DefaultTerminal`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
-    use crossterm::event::Event;
-    use crossterm::terminal::{disable_raw_mode, enable_raw_mode, size};
-    use futures::Stream;
-
-    use super::Terminal;
-    use crate::error::AnyResult;
-    use crate::testing::QueueStream;
-
-    /// Dummy terminal implementation
-    #[derive(Debug)]
-    pub struct DefaultTerminal {
-        pub stdout: Vec<u8>,
-        pub events: QueueStream<std::io::Result<Event>>,
+impl Terminal for DefaultTerminal {
+    fn stdout(&mut self) -> &mut impl Write {
+        &mut self.stdout
     }
 
-    impl Default for DefaultTerminal {
-        fn default() -> Self {
-            Self {
-                stdout: Vec::new(),
-                events: QueueStream::default(),
-            }
-        }
+    fn events(&mut self) -> &mut impl Stream<Item = std::io::Result<Event>> {
+        &mut self.events
     }
 
-    impl DefaultTerminal {
-        pub fn new() -> Self {
-            Self::default()
-        }
+    fn size(&self) -> AnyResult<(u16, u16)> {
+        Ok(size()?)
     }
 
-    impl Terminal for DefaultTerminal {
-        fn stdout(&mut self) -> &mut impl Write {
-            &mut self.stdout
-        }
+    fn enable_raw_mode(&self) -> AnyResult<()> {
+        Ok(enable_raw_mode()?)
+    }
 
-        fn events(&mut self) -> &mut impl Stream<Item = std::io::Result<Event>> {
-            &mut self.events
-        }
+    fn disable_raw_mode(&self) -> AnyResult<()> {
+        Ok(disable_raw_mode()?)
+    }
+}
 
-        fn size(&self) -> AnyResult<(u16, u16)> {
-            Ok(size()?)
-        }
+/// Terminal implementation for testing.
+#[derive(Debug)]
+pub struct TestTerminal {
+    pub stdout: Vec<u8>,
+    pub events: QueueStream<std::io::Result<Event>>,
+    pub size: (u16, u16),
+}
 
-        fn enable_raw_mode(&self) -> AnyResult<()> {
-            Ok(enable_raw_mode()?)
+impl Default for TestTerminal {
+    fn default() -> Self {
+        Self {
+            stdout: Vec::new(),
+            events: QueueStream::default(),
+            size: (80, 24),
         }
+    }
+}
 
-        fn disable_raw_mode(&self) -> AnyResult<()> {
-            Ok(disable_raw_mode()?)
+impl TestTerminal {
+    /// Creates a new `TestTerminal` with default 80x24 size.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a new `TestTerminal` with the specified size.
+    pub fn with_size(width: u16, height: u16) -> Self {
+        Self {
+            stdout: Vec::new(),
+            events: QueueStream::default(),
+            size: (width, height),
         }
+    }
+}
+
+impl Terminal for TestTerminal {
+    fn stdout(&mut self) -> &mut impl Write {
+        &mut self.stdout
+    }
+
+    fn events(&mut self) -> &mut impl Stream<Item = std::io::Result<Event>> {
+        &mut self.events
+    }
+
+    fn size(&self) -> AnyResult<(u16, u16)> {
+        Ok(self.size)
+    }
+
+    fn enable_raw_mode(&self) -> AnyResult<()> {
+        Ok(())
+    }
+
+    fn disable_raw_mode(&self) -> AnyResult<()> {
+        Ok(())
     }
 }

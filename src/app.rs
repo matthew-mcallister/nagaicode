@@ -31,8 +31,8 @@ pub enum AppEvent {
     HistoryNext,
 }
 
-pub struct App {
-    terminal: DefaultTerminal,
+pub struct App<T: Terminal = DefaultTerminal> {
+    terminal: T,
     chat: Chat,
     selected_model: Option<Model>,
     quit: bool,
@@ -42,8 +42,9 @@ pub struct App {
     session: Option<Session>,
 }
 
-impl App {
-    pub fn new(terminal: DefaultTerminal) -> AnyResult<Self> {
+impl<T: Terminal> App<T> {
+    /// Creates a new `App` instance with the given terminal.
+    pub fn new(terminal: T) -> AnyResult<Self> {
         let (w, h) = terminal.size()?;
         let theme = &THEME_DARK;
         let chat = Chat::new(w, h, theme);
@@ -58,25 +59,30 @@ impl App {
         })
     }
 
+    /// Returns the currently selected model, if any.
     pub fn selected_model(&self) -> Option<&Model> {
         self.selected_model.as_ref()
     }
 
+    /// Switches the selected model.
     pub fn switch_model(&mut self, model: Model) {
         self.selected_model = Some(model);
     }
 
-    fn make_canvas(&self) -> Vec<StyledString> {
+    /// Creates a blank canvas matching the chat dimensions and theme.
+    pub fn make_canvas(&self) -> Vec<StyledString> {
         let style = self.theme.base_style();
         (0..self.chat.height())
             .map(|_| StyledString::new(style, 2 * self.chat.width()))
             .collect()
     }
 
+    /// Draws the chat component onto the given canvas.
     pub fn draw(&self, canvas: Canvas) {
         self.chat.draw(canvas);
     }
 
+    /// Renders the current state to the terminal.
     pub fn render(&mut self) -> AnyResult<()> {
         let mut rows = self.make_canvas();
         self.draw(&mut rows);
@@ -98,6 +104,7 @@ impl App {
         Ok(())
     }
 
+    /// Handles a terminal input event.
     pub fn handle_input(&mut self, input: crossterm::event::Event) {
         let event = self.chat.handle_input(input);
         if let Some(event) = event {
@@ -105,6 +112,12 @@ impl App {
         }
     }
 
+    /// Returns whether the app has received a quit signal.
+    pub fn quit(&self) -> bool {
+        self.quit
+    }
+
+    /// Runs the main event loop.
     pub async fn run(&mut self) -> AnyResult<()> {
         self.terminal.enable_raw_mode()?;
         execute!(self.terminal.stdout(), EnterAlternateScreen, DisableLineWrap)?;
@@ -209,6 +222,7 @@ impl App {
     }
 }
 
+/// Runs the app with the default terminal.
 pub async fn run() -> AnyResult<()> {
     App::new(DefaultTerminal::default())?.run().await
 }

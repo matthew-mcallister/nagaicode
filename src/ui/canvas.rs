@@ -6,7 +6,7 @@ use crate::ui::styled_string::StyledString;
 /// existing rows.
 pub type Canvas<'a> = &'a mut [StyledString];
 
-#[cfg(test)]
+/// Renders a canvas to an ANSI string.
 pub fn render_canvas<'a>(canvas: Canvas<'a>) -> String {
     use crossterm::Command;
     let mut out = String::new();
