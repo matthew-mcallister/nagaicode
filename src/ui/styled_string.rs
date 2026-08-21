@@ -51,16 +51,16 @@ impl StyledString {
         self.inner.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
     pub fn cur_style(&self) -> Style {
         self.cur_style
     }
 
     pub fn initial_style(&self) -> Style {
         self.initial_style
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.inner
     }
 
     pub fn into_inner(self) -> String {
@@ -173,145 +173,161 @@ impl std::fmt::Display for StyledString {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::style::{Style, THEME_DARK};
-
-    fn transition(old: Style, new: Style) -> String {
-        let mut out = String::new();
-        UpdateStyle(old, new).write_ansi(&mut out).unwrap();
-        out
-    }
+    use crate::ui::style::{THEME_DARK, UpdateStyle};
 
     #[test]
-    fn test_push_and_width() {
-        let base = THEME_DARK.base_style();
-        let mut s = StyledString::new(base, 16);
-
-        assert_eq!(s.len(), 0);
-        assert_eq!(s.width(), 0);
-        assert_eq!(s.as_str(), "");
-        assert_eq!(s.cur_style(), base);
-
-        // Pushing without a style change emits no control codes
-        s.push("hello", 5);
-        assert_eq!(s.as_str(), "hello");
-        assert_eq!(s.len(), 5);
-        assert_eq!(s.width(), 5);
-        assert!(!s.as_str().contains('\x1b'));
-
-        s.push(" world", 6);
-        assert_eq!(s.as_str(), "hello world");
-        assert_eq!(s.width(), 11);
-        assert_eq!(s.len(), "hello world".len());
-    }
-
-    #[test]
-    fn test_style_transitions() {
+    fn test_render_and_width() {
         let theme = &THEME_DARK;
         let base = theme.base_style();
         let header = Style::new(theme.text_header, theme.bg_base);
         let code = Style::new(theme.text_code, theme.bg_base);
-        let math = Style::new(theme.text_math, theme.bg_base);
+        let to_header = UpdateStyle(base, header);
+        let to_code = UpdateStyle(header, code);
 
-        // set_style before any content updates the initial style silently
         let mut s = StyledString::new(base, 16);
+        assert_eq!(s.width(), 0);
+        assert_eq!(s.len(), 0);
+        assert!(s.is_empty());
+        assert_eq!(s.cur_style(), base);
+        assert_eq!(s.initial_style(), base);
+        assert_eq!(format!("{s}"), format!("{base}"));
+
+        s.push("hello", 5);
+        assert_eq!(s.width(), 5);
+        assert_eq!(s.len(), 5);
+        assert!(!s.is_empty());
+        assert_eq!(format!("{s}"), format!("{base}hello"));
+
         s.set_style(header);
         assert_eq!(s.cur_style(), header);
-        s.push("Title", 5);
-        assert_eq!(s.as_str(), "Title");
-        assert!(!s.as_str().contains('\x1b'));
+        assert_eq!(s.width(), 5);
 
-        // Changing style after content marks a transition emitted on next push
+        s.push(" world", 6);
+        assert_eq!(s.width(), 11);
+        assert_eq!(format!("{s}"), format!("{base}hello{to_header} world"));
+
         s.set_style(code);
-        assert_eq!(s.cur_style(), code);
-        s.push("code", 4);
-        assert_eq!(s.as_str(), format!("Title{}code", transition(header, code)));
+        s.push("!", 1);
+        assert_eq!(s.width(), 12);
+        assert_eq!(format!("{s}"), format!("{base}hello{to_header} world{to_code}!"));
 
-        // Multiple set_style calls collapse into a single transition on push
-        s.set_style(header);
-        s.set_style(math);
-        assert_eq!(s.cur_style(), math);
-        let prev = format!("Title{}code", transition(header, code));
-        s.push("math", 4);
-        assert_eq!(s.as_str(), format!("{}{}math", prev, transition(code, math)));
+        let mut collapsed = StyledString::new(base, 16);
+        collapsed.push("a", 1);
+        collapsed.set_style(header);
+        collapsed.set_style(code);
+        assert_eq!(collapsed.cur_style(), code);
+        let to_code_from_base = UpdateStyle(base, code);
+        collapsed.push("b", 1);
+        assert_eq!(format!("{collapsed}"), format!("{base}a{to_code_from_base}b"));
+
+        let mut other = StyledString::new(header, 16);
+        other.push("cd", 2);
+        other.set_style(code);
+        other.push("ef", 2);
+
+        let mut combined = StyledString::new(base, 16);
+        combined.push("ab", 2);
+        combined.push_styled(&other);
+        assert_eq!(combined.width(), 6);
+        assert_eq!(combined.cur_style(), code);
+        assert_eq!(
+            format!("{combined}"),
+            format!("{base}ab{to_header}cd{to_code}ef"),
+        );
+
+        let cloned = combined.clone_with_capacity(64);
+        assert_eq!(cloned.width(), combined.width());
+        assert_eq!(cloned.cur_style(), combined.cur_style());
+        assert_eq!(cloned.initial_style(), combined.initial_style());
+        assert_eq!(format!("{cloned}"), format!("{combined}"));
+        assert_eq!(cloned.into_inner(), combined.into_inner());
     }
 
     #[test]
-    fn test_push_styled() {
+    fn test_save_restore() {
         let theme = &THEME_DARK;
         let base = theme.base_style();
         let header = Style::new(theme.text_header, theme.bg_base);
-
-        // Matching style: content/width appended
-        let mut a = StyledString::new(base, 16);
-        a.push("foo", 3);
-        let mut b = StyledString::new(header, 16);
-        b.push("bar", 3);
-        a.push_styled(&b);
-        assert_eq!(a.as_str(), format!("foo{}bar", transition(base, header)));
-        assert_eq!(a.width(), 6);
-        assert_eq!(a.len(), 10);
-        assert_eq!(a.cur_style(), header);
-        assert_eq!(a.prev_style, None);
-        assert!(!a.style_frozen);
-
-        // Inherits other's pending transition; subsequent push emits it
-        let mut e = StyledString::new(base, 16);
-        e.push("foo", 3);
-        let mut f = StyledString::new(base, 16);
-        f.push("x", 1);
-        f.set_style(header);
-        assert_eq!(f.prev_style, Some(base));
-        e.push_styled(&f);
-        assert_eq!(e.as_str(), "foox");
-        assert_eq!(e.cur_style(), header);
-        assert_eq!(e.prev_style, Some(base));
-        e.push("!", 1);
-        assert_eq!(e.as_str(), format!("foox{}!", transition(base, header)));
-
-        // Inherits other's style_frozen
-        let mut g = StyledString::new(base, 16);
-        g.freeze_style(true);
-        g.push("x", 1);
-        let mut h = StyledString::new(base, 16);
-        h.push("foo", 3);
-        h.push_styled(&g);
-        assert!(h.style_frozen);
-        assert_eq!(h.cur_style(), base);
-    }
-
-    #[test]
-    fn test_save_restore_and_freeze() {
-        let theme = &THEME_DARK;
-        let base = theme.base_style();
-        let header = Style::new(theme.text_header, theme.bg_base);
+        let code = Style::new(theme.text_code, theme.bg_base);
+        let to_code = UpdateStyle(base, code);
 
         let mut s = StyledString::new(base, 16);
-        s.push("abc", 3);
-        let save = s.save();
-        s.push("de", 2);
-        s.set_style(header);
-        s.push("fg", 2);
-        assert_eq!(s.width(), 7);
+        let empty_save = s.save();
 
-        // Restore reverts content, width, and style to the save point
-        s.restore(save);
-        assert_eq!(s.as_str(), "abc");
+        s.set_style(header);
+        assert_eq!(s.initial_style(), header);
+        assert_eq!(s.cur_style(), header);
+        s.push("title", 5);
+        assert_eq!(format!("{s}"), format!("{header}title"));
+
+        s.restore(empty_save);
+        assert_eq!(s.initial_style(), base);
+        assert_eq!(s.cur_style(), base);
+        assert_eq!(s.width(), 0);
+        assert_eq!(s.len(), 0);
+        assert!(s.is_empty());
+        assert_eq!(format!("{s}"), format!("{base}"));
+
+        s.push("foo", 3);
+        let mid_save = s.save();
+
+        s.set_style(header);
+        s.push("bar", 3);
+        s.set_style(code);
+        s.push("baz", 3);
+        assert_eq!(s.width(), 9);
+
+        s.restore(mid_save);
         assert_eq!(s.width(), 3);
-        assert_eq!(s.len(), 3);
         assert_eq!(s.cur_style(), base);
-        assert_eq!(s.prev_style, None);
+        assert_eq!(format!("{s}"), format!("{base}foo"));
 
-        // freeze_style blocks subsequent set_style calls
-        s.freeze_style(true);
+        s.push("qux", 3);
+        assert_eq!(s.width(), 6);
+        assert_eq!(format!("{s}"), format!("{base}fooqux"));
+
+        s.set_style(code);
+        let pending_save = s.save();
         s.set_style(header);
-        assert_eq!(s.cur_style(), base);
-        assert_eq!(s.prev_style, None);
+        s.push("x", 1);
+        s.restore(pending_save);
+        s.push("y", 1);
+        assert_eq!(s.width(), 7);
+        assert_eq!(format!("{s}"), format!("{base}fooqux{to_code}y"));
+    }
 
-        // Unfreezing allows style changes again
+    #[test]
+    fn test_style_frozen() {
+        let theme = &THEME_DARK;
+        let base = theme.base_style();
+        let header = Style::new(theme.text_header, theme.bg_base);
+        let to_header = UpdateStyle(base, header);
+
+        let mut s = StyledString::new(base, 16);
+        s.push("normal", 6);
+        s.freeze_style(true);
+
+        s.set_style(header);
+        s.set_text(theme.text_code);
+        s.set_bg_color(theme.bg_prompt);
+        assert_eq!(s.cur_style(), base);
+
+        s.push(" frozen", 7);
+        assert_eq!(s.width(), 13);
+        assert_eq!(format!("{s}"), format!("{base}normal frozen"));
+
         s.freeze_style(false);
         s.set_style(header);
-        assert_eq!(s.cur_style(), header);
-        assert_eq!(s.prev_style, Some(base));
+        s.push(" unfrozen", 9);
+        assert_eq!(s.width(), 22);
+        assert_eq!(format!("{s}"), format!("{base}normal frozen{to_header} unfrozen"));
+
+        let mut frozen_src = StyledString::new(base, 16);
+        frozen_src.freeze_style(true);
+        let mut target = StyledString::new(base, 16);
+        target.push_styled(&frozen_src);
+        target.set_style(header);
+        assert_eq!(target.cur_style(), base);
     }
 
     #[test]
@@ -319,48 +335,44 @@ mod tests {
         let theme = &THEME_DARK;
         let base = theme.base_style();
         let header = Style::new(theme.text_header, theme.bg_base);
+        let to_header = UpdateStyle(base, header);
 
-        // No-op when already at the target width
         let mut s = StyledString::new(base, 16);
         s.push("hello", 5);
         s.pad_to_width(5);
-        assert_eq!(s.as_str(), "hello");
         assert_eq!(s.width(), 5);
-        assert_eq!(s.len(), 5);
+        assert_eq!(format!("{s}"), format!("{base}hello"));
 
-        // No-op when already wider than the target
         s.pad_to_width(3);
-        assert_eq!(s.as_str(), "hello");
         assert_eq!(s.width(), 5);
+        assert_eq!(format!("{s}"), format!("{base}hello"));
 
-        // Pads with spaces up to the target width, no control codes
-        s.pad_to_width(11);
-        assert_eq!(s.as_str(), "hello      ");
-        assert_eq!(s.width(), 11);
-        assert_eq!(s.len(), "hello      ".len());
-        assert!(!s.as_str().contains('\x1b'));
+        s.pad_to_width(9);
+        assert_eq!(s.width(), 9);
+        assert_eq!(format!("{s}"), format!("{base}hello    "));
 
-        // Pads from an empty string
-        let mut t = StyledString::new(base, 16);
-        t.pad_to_width(4);
-        assert_eq!(t.as_str(), "    ");
-        assert_eq!(t.width(), 4);
+        s.pad(3);
+        assert_eq!(s.width(), 12);
+        assert_eq!(format!("{s}"), format!("{base}hello       "));
 
-        // Padding past SPACES.len() still reaches the target
-        let mut u = StyledString::new(base, SPACES.len() + 102);
-        u.push("ab", 2);
-        u.pad_to_width(SPACES.len() + 100);
-        assert_eq!(u.width(), SPACES.len() + 100);
-        assert_eq!(u.len(), SPACES.len() + 100);
-        assert!(u.as_str().starts_with("ab"));
-        assert!(u.as_str().chars().skip(2).all(|c| c == ' '));
+        s.set_style(header);
+        s.pad(4);
+        assert_eq!(s.width(), 16);
+        assert_eq!(format!("{s}"), format!("{base}hello       {to_header}    "));
 
-        // Padding after a style change emits the transition before the spaces
-        let mut v = StyledString::new(base, 16);
-        v.push("foo", 3);
-        v.set_style(header);
-        v.pad_to_width(7);
-        assert_eq!(v.as_str(), format!("foo{}    ", transition(base, header)));
-        assert_eq!(v.width(), 7);
+        let mut empty = StyledString::new(base, 16);
+        empty.pad_to_width(4);
+        assert_eq!(empty.width(), 4);
+        assert_eq!(format!("{empty}"), format!("{base}    "));
+
+        let large_target = SPACES.len() + 100;
+        let mut large = StyledString::new(base, large_target + 4);
+        large.push("ab", 2);
+        large.pad_to_width(large_target);
+        assert_eq!(large.width(), large_target);
+        assert_eq!(large.len(), large_target);
+        let rendered = format!("{large}");
+        assert!(rendered.starts_with(&format!("{base}ab")));
+        assert!(rendered[format!("{base}ab").len()..].chars().all(|c| c == ' '));
     }
 }
