@@ -210,6 +210,8 @@ impl App {
         Ok((item, content))
     }
 
+    // TODO eventually: execute these as an asynchronous and interruptable
+    // agent and stream stdout to history
     fn process_bang_command(&mut self, command: &str) -> AnyResult<String> {
         let result = self.tools.call("sh", serde_json::json!(command))?;
         let output = if let Some(obj) = result.content.as_object() {
@@ -233,13 +235,16 @@ impl App {
         let bang_command = command.starts_with('!');
         if slash_command || bang_command {
             let command = &command[1..];
-            let output = if slash_command {
-                self.process_slash_command(command)?
+            if slash_command {
+                let output = self.process_slash_command(command)?;
+                if !output.trim().is_empty() {
+                    self.chat.handle_update(Update::HelpMessage(&output));
+                }
             } else {
-                self.process_bang_command(command)?
-            };
-            if !output.trim().is_empty() {
-                self.chat.handle_update(Update::HelpMessage(&output));
+                let output = self.process_bang_command(command)?;
+                let prompt = format!("$ {command}");
+                self.chat.handle_update(Update::CommandPrompt(&prompt));
+                self.chat.handle_update(Update::CommandOutput(&output));
             }
         } else {
             let (item, content) = self.submit_prompt(command)?;

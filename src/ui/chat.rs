@@ -54,6 +54,8 @@ pub enum Update<'a> {
     ContentUpdated { item: &'a Item, content: &'a Content },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
+    CommandPrompt(&'a str),
+    CommandOutput(&'a str),
 }
 
 impl<'a> TryFrom<Update<'a>> for stacked_view::Update<'a> {
@@ -65,6 +67,8 @@ impl<'a> TryFrom<Update<'a>> for stacked_view::Update<'a> {
             Update::ContentUpdated { item, content } => Ok(stacked_view::Update::ContentUpdated { item, content }),
             Update::HelpMessage(content) => Ok(stacked_view::Update::HelpMessage(content)),
             Update::ErrorMessage(content) => Ok(stacked_view::Update::ErrorMessage(content)),
+            Update::CommandPrompt(content) => Ok(stacked_view::Update::CommandPrompt(content)),
+            Update::CommandOutput(content) => Ok(stacked_view::Update::CommandOutput(content)),
         }
     }
 }

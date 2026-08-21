@@ -103,6 +103,8 @@ pub enum Update<'a> {
     ContentUpdated { item: &'a Item, content: &'a Content },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
+    CommandPrompt(&'a str),
+    CommandOutput(&'a str),
 }
 
 impl<'a> TryFrom<Update<'a>> for history_view::Update<'a> {
@@ -114,6 +116,8 @@ impl<'a> TryFrom<Update<'a>> for history_view::Update<'a> {
             Update::ContentUpdated { item, content } => Ok(history_view::Update::ContentUpdated { item, content }),
             Update::HelpMessage(content) => Ok(history_view::Update::HelpMessage(content)),
             Update::ErrorMessage(content) => Ok(history_view::Update::ErrorMessage(content)),
+            Update::CommandPrompt(content) => Ok(history_view::Update::CommandPrompt(content)),
+            Update::CommandOutput(content) => Ok(history_view::Update::CommandOutput(content)),
         }
     }
 }

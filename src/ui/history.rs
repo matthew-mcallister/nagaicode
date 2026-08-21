@@ -10,7 +10,7 @@ use crate::ui::canvas::Canvas;
 use crate::ui::markdown::{MarkdownResult, ResumePoint};
 use crate::ui::style::{Style, Theme};
 use crate::ui::styled_string::StyledString;
-use crate::ui::text::{wrap_line, SPACES};
+use crate::ui::text::{wrap_line, wrap_line_naive, SPACES};
 use crate::ui::Component;
 
 pub(crate) fn render_help(
@@ -101,6 +101,44 @@ pub(crate) fn render_markdown(
     result
 }
 
+fn render_command_prompt(
+    theme: &'static Theme,
+    width: usize,
+    content: &str,
+) -> Vec<StyledString> {
+    let style = Style::new(theme.text_base, theme.bg_base);
+    content.lines().flat_map(|line|
+        wrap_line_naive(width - 4, line)
+            .into_iter()
+            .map(|row| {
+                let mut s = StyledString::new(style, width + 4);
+                s.push("  ", 2);
+                s.push(&row.to_padded_string(width - 4), width - 4);
+                s.push("  ", 2);
+                s
+            })
+    ).collect()
+}
+
+fn render_command_output(
+    theme: &'static Theme,
+    width: usize,
+    content: &str,
+) -> Vec<StyledString> {
+    let style = Style::new(theme.text_subtle, theme.bg_base);
+    content.lines().flat_map(|line|
+        wrap_line_naive(width - 4, line)
+            .into_iter()
+            .map(|row| {
+                let mut s = StyledString::new(style, width + 4);
+                s.push("  ", 2);
+                s.push(&row.to_padded_string(width - 4), width - 4);
+                s.push("  ", 2);
+                s
+            })
+    ).collect()
+}
+
 fn render(
     theme: &'static Theme,
     width: usize,
@@ -111,6 +149,8 @@ fn render(
         HistoryItemType::Help => (render_help(theme, width, content), ResumePoint { offset: 0, row: 0 }),
         HistoryItemType::Error => (render_error(theme, width, content), ResumePoint { offset: 0, row: 0 }),
         HistoryItemType::User => (render_prompt(theme, width, content), ResumePoint { offset: 0, row: 0 }),
+        HistoryItemType::CommandPrompt => (render_command_prompt(theme, width, content), ResumePoint { offset: 0, row: 0 }),
+        HistoryItemType::CommandOutput => (render_command_output(theme, width, content), ResumePoint { offset: 0, row: 0 }),
         _ => {
             let result = render_markdown(theme, width, content);
             (result.rows, result.resume_point)
@@ -201,6 +241,8 @@ pub enum HistoryItemType {
     User,
     Thought,
     Response,
+    CommandPrompt,
+    CommandOutput,
 }
 
 #[derive(Clone, Debug)]
@@ -255,9 +297,11 @@ impl HistoryItem {
             num_rows: 0,
         });
 
-        let mut padding = StyledString::new(theme.base_style(), width);
-        padding.pad_to_width(width);
-        rendered.push(padding); // Add vertical padding row
+        if ty != HistoryItemType::CommandPrompt {
+            let mut padding = StyledString::new(theme.base_style(), width);
+            padding.pad_to_width(width);
+            rendered.push(padding); // Add vertical padding row
+        }
         let num_rows = rendered.len();
         insert_rows(rows, item, rendered, prev);
 
@@ -627,6 +671,8 @@ pub enum Update<'a> {
     ContentUpdated { item: &'a Item, content: &'a Content },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
+    CommandPrompt(&'a str),
+    CommandOutput(&'a str),
 }
 
 impl Component for History {
@@ -689,6 +735,8 @@ impl Component for History {
             Update::ContentUpdated { item, content } => self.on_content_updated(&item, &content),
             Update::HelpMessage(content) => self.add_item(HistoryItemType::Help, content.into()),
             Update::ErrorMessage(content) => self.add_item(HistoryItemType::Error, content.into()),
+            Update::CommandPrompt(content) => self.add_item(HistoryItemType::CommandPrompt, content.into()),
+            Update::CommandOutput(content) => self.add_item(HistoryItemType::CommandOutput, content.into()),
         }
     }
 }
@@ -869,6 +917,52 @@ mod tests {
             format!("{prompt_style}            \n{prompt_style}  hello     \n{prompt_style}  world     \n{prompt_style}            ")
         );
         assert_eq!(render("", 8), "");
+    }
+
+    #[test]
+    fn test_render_command() {
+        let theme = &THEME_DARK;
+        let prompt_style = Style::new(theme.text_base, theme.bg_base);
+        let output_style = Style::new(theme.text_subtle, theme.bg_base);
+
+        fn render_prompt(content: &str, width: usize) -> String {
+            let mut lines = super::render_command_prompt(&THEME_DARK, width, content);
+            render_canvas(&mut lines[..])
+        }
+        fn render_output(content: &str, width: usize) -> String {
+            let mut lines = super::render_command_output(&THEME_DARK, width, content);
+            render_canvas(&mut lines[..])
+        }
+
+        assert_eq!(render_prompt("!foo", 14), format!("{prompt_style}  !foo        "));
+        assert_eq!(
+            render_prompt("!foo\n!bar", 14),
+            format!("{prompt_style}  !foo        \n{prompt_style}  !bar        ")
+        );
+        assert_eq!(
+            render_prompt("!hello world foo", 14),
+            format!("{prompt_style}  !hello wor  \n{prompt_style}  ld foo      ")
+        );
+        assert_eq!(render_output("ok", 14), format!("{output_style}  ok          "));
+        assert_eq!(
+            render_output("line1\nline2", 14),
+            format!("{output_style}  line1       \n{output_style}  line2       ")
+        );
+        assert_eq!(render_prompt("", 8), "");
+        assert_eq!(render_output("", 8), "");
+    }
+
+    #[test]
+    fn test_command_item_padding() {
+        let mut h = history(20, 10);
+        h.handle_update(Update::CommandPrompt("!echo"));
+        assert_eq!(h.num_rows(), 1);
+
+        h.handle_update(Update::CommandOutput("hi"));
+        assert_eq!(h.num_rows(), 3);
+
+        h.handle_update(Update::CommandOutput("line one\nline two"));
+        assert_eq!(h.num_rows(), 6);
     }
 
     #[test]
