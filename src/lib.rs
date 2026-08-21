@@ -12,3 +12,4 @@ pub mod schema;
 pub mod session;
 pub mod terminal;
 pub mod testing;
+pub mod tools;
