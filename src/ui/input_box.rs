@@ -991,6 +991,14 @@ impl InputBox {
             (KeyCode::Char('k'), true, _, _) => self.delete_to_line_end(),
             (KeyCode::Char('w'), true, _, _) => self.delete_prev_word(),
             (KeyCode::Char('y'), true, _, _) => self.paste_buffer(),
+            (KeyCode::Char('c'), true, _, _) => {
+                let start = self.grapheme_start();
+                let end = self.last_grapheme();
+                if start != end {
+                    self.buffer_append(start, end);
+                    self.splice(start, end, "");
+                }
+            }
             // Alt + char
             (KeyCode::Char('f'), _, _, true) => self.go_to_word_end(),
             (KeyCode::Char('b'), _, _, true) => self.go_to_prev_word_start(),
@@ -2029,6 +2037,36 @@ That on himself such murd'rous shame commits.
         assert_eq!(input.viewport_bottom, rows[13]);
         assert_eq!(input.viewport_top_pos(), 10);
         assert_eq!(input.viewport_bottom_pos(), 13);
+        check_positions(&input);
+    }
+
+    #[test]
+    fn test_ctrl_c() {
+        let mut input = InputBox::new(80, 8);
+        input.set_text("draft command");
+        input.go_to_end();
+        let response = input.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(response, None);
+        assert_eq!(input.get_text(), "\n");
+        assert_eq!(input.buffer, "draft command");
+        assert_eq!(input.num_rows(), 1);
+        input.go_to_start();
+        input.paste_buffer();
+        assert_eq!(input.get_text(), "draft command\n");
+        assert_eq!(input.buffer, "");
+
+        let mut input = InputBox::new(80, 8);
+        input.set_text("first line\nsecond line");
+        input.go_to_end();
+        input.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(input.get_text(), "\n");
+        assert_eq!(input.buffer, "first line\nsecond line");
+        assert_eq!(input.num_lines(), 1);
+
+        // Pressing Ctrl+C twice does not overwrite buffer
+        input.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(input.get_text(), "\n");
+        assert_eq!(input.buffer, "first line\nsecond line");
         check_positions(&input);
     }
 }
