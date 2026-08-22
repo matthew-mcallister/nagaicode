@@ -1,3 +1,5 @@
+// FIXME: scroll bar should be hidden when history fits entirely onto screen
+
 use crossterm::event::Event;
 
 use crate::session::{Content, Item};

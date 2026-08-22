@@ -1,6 +1,8 @@
 //! Scroll bar indicator. Renders as a one-column-wide bar on the left side of
 //! the component. The bar's position and height are derived from the size of
 //! the scrolled content and the position of the viewport within it.
+// TODO: Make scroll bar full width and switch to 1/8th row increment using
+// box shadow drawing chars and reversed colors.
 use crossterm::event::Event;
 
 use crate::ui::canvas::Canvas;
@@ -63,9 +65,29 @@ impl ScrollBar {
         if self.num_rows == 0 || self.height == 0 {
             return (0, 0);
         }
-        let bar_height = ((self.bottom - self.top + 1) * self.height).div_ceil(self.num_rows);
-        let start = (self.top * self.height) / self.num_rows;
-        (start, start + bar_height)
+
+        let w = self.bottom - self.top + 1;
+        let h = ((w * self.height) / self.num_rows).max(1);
+        let r = self.height - h;
+
+        // We are mapping [0, m] to [0, n]
+        let (m, n) = (self.num_rows - w, r);
+        let k = self.top;
+        if r == 0 {
+            (0, self.height)
+        } else if m <= n {
+            let st = (n * k) / m;
+            (st, st + h)
+        } else {
+            // Properties: scroll bar only hits top when viewport is at first
+            // row and only hits bottom when viewport is at last row.
+            debug_assert!(k <= m);
+            let b = (k > 0) as usize;
+            let k = k.max(1);
+            let p = b + ((k - 1) * (n - 1)) / (m - 1);
+            debug_assert!(p <= n);
+            (p, p + h)
+        }
     }
 }
 
@@ -204,7 +226,7 @@ mod tests {
         let unfocused = style_prefix(THEME_DARK.text_scroll_bar_unfocused);
         assert_eq!(
             render(&bar),
-            format!("{track}▐\n{unfocused}▐\n{unfocused}▐\n{track}▐\n{track}▐"),
+            format!("{track}▐\n{unfocused}▐\n{track}▐\n{track}▐\n{track}▐"),
         );
     }
 
@@ -217,14 +239,14 @@ mod tests {
         bar.set_focused(true);
         assert_eq!(
             render(&bar),
-            format!("{track}▐\n{focused}▐\n{focused}▐\n{track}▐\n{track}▐"),
+            format!("{track}▐\n{focused}▐\n{track}▐\n{track}▐\n{track}▐"),
         );
         assert!(bar.focused());
 
         bar.set_focused(false);
         assert_eq!(
             render(&bar),
-            format!("{track}▐\n{unfocused}▐\n{unfocused}▐\n{track}▐\n{track}▐"),
+            format!("{track}▐\n{unfocused}▐\n{track}▐\n{track}▐\n{track}▐"),
         );
         assert!(!bar.focused());
     }

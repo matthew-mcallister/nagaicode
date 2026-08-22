@@ -106,6 +106,10 @@ impl Component for CommandEditor {
             if text.ends_with('\n') {
                 text.pop();
             }
+            if text.is_empty() {
+                return None;
+            }
+            // TODO: Fix duplicate entry when text == previous command
             if self.has_temp_cmd {
                 self.command_history.pop();
             }
@@ -121,6 +125,9 @@ impl Component for CommandEditor {
         let response = self.input.handle_input(event);
         let response = match response {
             Some(AppEvent::Command(text)) => {
+                if text.trim_end_matches('\n').is_empty() {
+                    return None;
+                }
                 if self.has_temp_cmd {
                     self.command_history.pop();
                     self.has_temp_cmd = false;
