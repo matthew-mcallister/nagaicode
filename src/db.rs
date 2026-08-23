@@ -4,9 +4,9 @@ use diesel_migrations::MigrationHarness;
 use crate::error::AnyResult;
 
 #[cfg(not(test))]
-pub use self::real::open;
+pub use self::real::{db_url, open};
 #[cfg(test)]
-pub use self::mock::{open, open_new, reset};
+pub use self::mock::{db_url, open, open_new};
 
 fn run_migrations(conn: &mut SqliteConnection) -> AnyResult<()> {
     let migrations = diesel_migrations::FileBasedMigrations::find_migrations_directory()
@@ -41,11 +41,14 @@ mod real {
         Ok(dir)
     }
 
-    pub fn open() -> AnyResult<SqliteConnection> {
+    pub fn db_url() -> AnyResult<String> {
         let mut path = db_dir()?;
         path.push(DB_FILE_NAME);
+        Ok(path.to_str().unwrap().to_string())
+    }
 
-        let mut conn = SqliteConnection::establish(path.to_str().unwrap())?;
+    pub fn open(url: &str) -> AnyResult<SqliteConnection> {
+        let mut conn = SqliteConnection::establish(url)?;
         conn.batch_execute(
             "PRAGMA foreign_keys = ON;
              PRAGMA journal_mode = WAL;
@@ -61,36 +64,33 @@ mod real {
 
 #[cfg(test)]
 mod mock {
-    use std::cell::Cell;
-
     use diesel::connection::SimpleConnection;
     use diesel::{Connection, SqliteConnection};
 
     use crate::error::AnyResult;
     use super::run_migrations;
 
-    thread_local! {
-        static DB_NUM: Cell<u64> = const { Cell::new(0) };
+    /// Returns a URL for a fresh in-memory database.
+    pub fn db_url() -> AnyResult<String> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let db_name = format!("{:?}:{}", std::thread::current().id(), timestamp);
+        Ok(format!("file:{db_name}?mode=memory&cache=shared"))
     }
 
     /// Opens an in-memory database connection.
-    pub fn open() -> AnyResult<SqliteConnection> {
-        let db_name = format!("{:?}/{}", std::thread::current().id(), DB_NUM.get());
-        let uri = format!("file:{db_name}?mode=memory&cache=shared");
-        let mut conn = SqliteConnection::establish(&uri)?;
+    pub fn open(url: &str) -> AnyResult<SqliteConnection> {
+        let mut conn = SqliteConnection::establish(url)?;
         conn.batch_execute("PRAGMA foreign_keys = ON;")?;
         run_migrations(&mut conn)?;
         Ok(conn)
     }
 
-    /// Resets the in-memory database counter for the current thread.
-    pub fn reset() {
-        DB_NUM.set(DB_NUM.get() + 1);
-    }
-
     /// Opens a new in-memory database connection.
     pub fn open_new() -> AnyResult<SqliteConnection> {
-        reset();
-        open()
+        let url = db_url()?;
+        open(&url)
     }
 }

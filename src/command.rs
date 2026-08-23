@@ -5,10 +5,10 @@ use std::error::Error;
 use dedent::dedent;
 use diesel::QueryDsl;
 use diesel::RunQueryDsl;
+use diesel::SqliteConnection;
 use diesel::expression_methods::ExpressionMethods;
 
 use crate::app::App;
-use crate::db;
 use crate::interface::InterfaceId;
 use crate::model::Model;
 use crate::provider::Provider;
@@ -306,13 +306,15 @@ pub fn parse_command(text: &str) -> Result<Command, Box<dyn Error + Send + Sync>
     parse_args(args)
 }
 
-pub fn run_provider_command(command: ProviderCommand) -> Result<String, Box<dyn Error + Send + Sync>> {
-    let mut conn = db::open()?;
+pub fn run_provider_command(
+    conn: &mut SqliteConnection,
+    command: ProviderCommand,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
     match command {
         ProviderCommand::Ls => {
             let providers: Vec<Provider> = dsl::provider
                 .order(dsl::name.asc())
-                .load(&mut conn)?;
+                .load(conn)?;
             if providers.is_empty() {
                 return Ok("No providers configured.".into());
             }
@@ -332,11 +334,11 @@ pub fn run_provider_command(command: ProviderCommand) -> Result<String, Box<dyn 
             base_url,
         } => {
             let base_url_ref = base_url.as_deref();
-            Provider::create(&mut conn, &name, interface, &api_key, base_url_ref)?;
+            Provider::create(conn, &name, interface, &api_key, base_url_ref)?;
             Ok(format!("Created provider \"{name}\""))
         }
         ProviderCommand::Rm(name) => {
-            let deleted = Provider::delete_by_name(&mut conn, &name)?;
+            let deleted = Provider::delete_by_name(conn, &name)?;
             if deleted {
                 Ok(format!("Deleted provider \"{name}\""))
             } else {
@@ -350,22 +352,21 @@ pub fn run_model_command(
     app: &mut App,
     command: ModelCommand,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
-    let mut conn = db::open()?;
     match command {
         ModelCommand::Ls => {
             use crate::schema::model::dsl as model_dsl;
 
-            let rows: Vec<(Provider, Model)> = dsl::provider
-                .inner_join(model_dsl::model)
-                .order((dsl::id, model_dsl::id))
-                .load(&mut conn)?;
-            if rows.is_empty() {
-                return Ok("No models available. Add a provider by typing /provider".into());
-            }
             let current = app
                 .selected_model()
                 .map(|m| m.id.clone())
                 .unwrap_or_default();
+            let rows: Vec<(Provider, Model)> = dsl::provider
+                .inner_join(model_dsl::model)
+                .order((dsl::id, model_dsl::id))
+                .load(app.conn())?;
+            if rows.is_empty() {
+                return Ok("No models available. Add a provider by typing /provider".into());
+            }
             let mut out = String::new();
             for (p, m) in rows {
                 let marker = if m.id == current { "* " } else { "  " };
@@ -374,9 +375,9 @@ pub fn run_model_command(
             Ok(out)
         }
         ModelCommand::Switch { provider, model } => {
-            let p = Provider::get_by_name(&mut conn, &provider)?
+            let p = Provider::get_by_name(app.conn(), &provider)?
                 .ok_or_else(|| format!("No provider '{provider}'"))?;
-            let m = Model::get(&mut conn, p.id, &model)?
+            let m = Model::get(app.conn(), p.id, &model)?
                 .ok_or_else(|| {
                     format!("No model '{provider}:{model}''")
                 })?;

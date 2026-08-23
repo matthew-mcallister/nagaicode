@@ -47,7 +47,7 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test(flavor = "current_thread")]
+    #[tokio::test]
     async fn test_spawn_cancels() {
         let mut conn = crate::db::open_new().unwrap();
         let session = Session::create(&mut conn, "Session").expect("create session");

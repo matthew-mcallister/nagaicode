@@ -51,7 +51,7 @@ fn test_app_e2e() {
     assert!(app.quit());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn test_app_interrupt() {
     let mut app = App::new().unwrap();
 

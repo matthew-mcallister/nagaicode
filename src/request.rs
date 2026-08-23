@@ -246,7 +246,7 @@ mod tests {
         }))
     }
 
-    #[tokio::test(flavor = "current_thread")]
+    #[tokio::test]
     async fn test_mock_client() {
         #[derive(Deserialize)]
         struct Body {

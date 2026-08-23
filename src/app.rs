@@ -18,6 +18,7 @@ use crate::agent::Agent;
 use crate::command::Command;
 use crate::error::AnyResult;
 use crate::model::Model;
+use crate::model::revalidate_models;
 use crate::request::DefaultClient;
 use crate::session::{Content, ContentType, Item, ItemType, Session};
 use crate::terminal::{DefaultTerminal, Terminal};
@@ -55,6 +56,7 @@ pub struct App {
     theme: &'static Theme,
     client: DefaultClient,
     conn: SqliteConnection,
+    db_url: String,
     session: Option<Session>,
     tools: DefaultToolServer,
     // Channel for async events
@@ -72,6 +74,7 @@ impl App {
         let theme = &THEME_DARK;
         let chat = Chat::new(w, h, theme);
         let (send, recv) = unbounded_channel();
+        let db_url = crate::db::db_url()?;
         Ok(Self {
             terminal,
             chat,
@@ -79,7 +82,8 @@ impl App {
             quit: false,
             theme,
             client: DefaultClient::default(),
-            conn: crate::db::open()?,
+            conn: crate::db::open(&db_url)?,
+            db_url,
             session: None,
             tools: DefaultToolServer::default(),
             send,
@@ -111,6 +115,11 @@ impl App {
     /// Returns a reference to the tool server.
     pub fn tools(&self) -> &DefaultToolServer {
         &self.tools
+    }
+
+    /// Returns a mutable reference to the database connection.
+    pub(crate) fn conn(&mut self) -> &mut SqliteConnection {
+        &mut self.conn
     }
 
     /// Returns a mutable reference to the tool server.
@@ -173,8 +182,26 @@ impl App {
         self.cancel.as_ref().is_none()
     }
 
+    /// Spawns a background task to revalidate stale model lists.
+    fn spawn_revalidate_models(&self) {
+        let db_url = self.db_url.clone();
+        tokio::spawn(async move {
+            let mut conn = match crate::db::open(&db_url) {
+                Ok(conn) => conn,
+                Err(e) => {
+                    eprintln!("failed to open db for revalidation: {e}");
+                    return;
+                }
+            };
+            if let Err(e) = revalidate_models(&mut conn).await {
+                eprintln!("failed to revalidate models: {e}");
+            }
+        });
+    }
+
     /// Runs the main event loop.
     pub async fn run(&mut self) -> AnyResult<()> {
+        self.spawn_revalidate_models();
         self.terminal.enable_raw_mode()?;
         execute!(self.terminal.stdout(), EnterAlternateScreen, DisableLineWrap)?;
 
@@ -204,7 +231,7 @@ impl App {
             Err(e) => return Ok(e.to_string()),
         };
         match command {
-            Command::Provider(cmd) => crate::command::run_provider_command(cmd),
+            Command::Provider(cmd) => crate::command::run_provider_command(&mut self.conn, cmd),
             Command::Model(cmd) => crate::command::run_model_command(self, cmd),
             Command::Quit => {
                 self.quit = true;
@@ -258,7 +285,7 @@ impl App {
             content,
             sender: self.send.clone(),
             client: self.client.clone(),
-            conn: crate::db::open()?,
+            conn: crate::db::open(&self.db_url)?,
             cancel: cancel.clone(),
         };
 
