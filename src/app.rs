@@ -34,6 +34,8 @@ pub enum AppEvent {
     HistoryPrev,
     /// Navigate to the next entry in the command history.
     HistoryNext,
+    /// Cancel the active task.
+    Interrupt,
 }
 
 #[derive(Debug)]
@@ -160,6 +162,13 @@ impl App {
         self.quit
     }
 
+    /// Returns whether the active task has been canceled.
+    /// TODO: delete this
+    #[cfg(test)]
+    pub fn task_canceled(&self) -> bool {
+        self.cancel.as_ref().is_none()
+    }
+
     /// Runs the main event loop.
     pub async fn run(&mut self) -> AnyResult<()> {
         self.terminal.enable_raw_mode()?;
@@ -214,6 +223,10 @@ impl App {
 
     /// Spawns an agent to handle the submitted prompt.
     fn submit_prompt(&mut self, prompt: &str) -> AnyResult<()> {
+        if let Some(cancel) = self.cancel.as_mut() {
+            cancel.cancel();
+        }
+
         let session_id = self.create_session()?;
         let item = Item::create(
             &mut self.conn,
@@ -284,6 +297,13 @@ impl App {
                 Ok(())
             }
             AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
+            AppEvent::Interrupt => {
+                if let Some(cancel) = &self.cancel {
+                    cancel.cancel();
+                }
+                self.cancel = None;
+                Ok(())
+            }
         };
         if let Err(e) = res {
             self.chat.handle_update(Update::ErrorMessage(&e.to_string()));

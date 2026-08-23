@@ -137,6 +137,7 @@ impl Component for CommandEditor {
                 }
                 None
             }
+            Some(AppEvent::Interrupt) => Some(AppEvent::Interrupt),
             _ => None,
         };
         self.sync_scroll_bar();

@@ -997,6 +997,8 @@ impl InputBox {
                 if start != end {
                     self.buffer_append(start, end);
                     self.splice(start, end, "");
+                } else {
+                    response = Some(AppEvent::Interrupt);
                 }
             }
             // Alt + char
