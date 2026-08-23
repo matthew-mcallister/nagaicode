@@ -28,5 +28,10 @@ race-free as possible.
 
 # Testing
 
-Both the terminal and network requests are mocked in testing. Artificial HTTP
-responses can be globally defined on a test-by-test basis.
+Terminal, network, and tool calls/shell commands are mocked in testing. All
+reads/writes/requests are recorded and artificial data is returned.
+
+(wip) A query system exists that allows high-level unit tests to probe deeply
+nested application state. Any object which implements Queryable is able to
+parse query URIs referencing and return a JSON representation of queried data
+pulled from the object or its descendants.

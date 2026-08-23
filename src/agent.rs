@@ -1,37 +1,42 @@
 use std::time::Duration;
 
+use diesel::SqliteConnection;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::AppEvent;
+use crate::request::DefaultClient;
 use crate::session::{Content, Item};
 
-pub fn spawn(
-    item: Item,
-    content: Content,
-    sender: UnboundedSender<AppEvent>,
-) -> (JoinHandle<()>, CancellationToken) {
-    let cancel = CancellationToken::new();
-    let handle = tokio::spawn(dummy_task(cancel.clone(), sender, item, content));
-    (handle, cancel)
+pub struct Agent {
+    pub item: Item,
+    pub content: Content,
+    pub sender: UnboundedSender<AppEvent>,
+    pub client: DefaultClient,
+    pub conn: SqliteConnection,
+    pub cancel: CancellationToken,
 }
 
-async fn dummy_task(
-    cancel: CancellationToken,
-    events: UnboundedSender<AppEvent>,
-    item: Item,
-    content: Content,
-) {
-    let start = std::time::Instant::now();
-    while start.elapsed() < std::time::Duration::from_secs(5) {
-        tokio::select! {
-            _ = cancel.cancelled() => return,
-            _ = sleep(Duration::from_millis(25)) => {}
+impl Agent {
+    pub async fn run(self) {
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_secs(5) {
+            tokio::select! {
+                _ = self.cancel.cancelled() => return,
+                _ = sleep(Duration::from_millis(25)) => {}
+            }
         }
+        let _ = self.sender.send(AppEvent::ContentCreated {
+            item: self.item,
+            content: self.content,
+        });
     }
-    let _ = events.send(AppEvent::ContentCreated { item, content });
+
+    pub fn spawn(self) -> JoinHandle<()> {
+        tokio::spawn(async { self.run().await })
+    }
 }
 
 #[cfg(test)]
@@ -51,8 +56,17 @@ mod tests {
         let content = Content::create(&mut conn, item.id, ContentType::Text, "hello")
             .expect("create content");
 
-        let (send, mut recv) = unbounded_channel();
-        let (task, cancel) = spawn(item, content, send);
+        let cancel = CancellationToken::new();
+        let (sender, mut recv) = unbounded_channel();
+        let agent = Agent {
+            item,
+            content,
+            sender,
+            client: DefaultClient::default(),
+            conn,
+            cancel: cancel.clone(),
+        };
+        let task = agent.spawn();
         cancel.cancel();
         task.await.unwrap();
         assert!(recv.try_recv().is_err());

@@ -14,9 +14,11 @@ use serde_json::Value;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::sync::CancellationToken;
 
+use crate::agent::Agent;
 use crate::command::Command;
 use crate::error::AnyResult;
 use crate::model::Model;
+use crate::request::DefaultClient;
 use crate::session::{Content, ContentType, Item, ItemType, Session};
 use crate::terminal::{DefaultTerminal, Terminal};
 use crate::tools::{DefaultToolServer, ToolServer};
@@ -51,6 +53,7 @@ pub struct App {
     quit: bool,
     // XXX replace most uses of &'static Theme with Arc<Theme> or Rc<Theme>
     theme: &'static Theme,
+    client: DefaultClient,
     conn: SqliteConnection,
     session: Option<Session>,
     tools: DefaultToolServer,
@@ -75,6 +78,7 @@ impl App {
             selected_model: None,
             quit: false,
             theme,
+            client: DefaultClient::default(),
             conn: crate::db::open()?,
             session: None,
             tools: DefaultToolServer::default(),
@@ -221,11 +225,17 @@ impl App {
         Ok(id)
     }
 
-    /// Spawns an agent to handle the submitted prompt.
-    fn submit_prompt(&mut self, prompt: &str) -> AnyResult<()> {
+    /// Cancels the active task.
+    fn cancel(&mut self) {
         if let Some(cancel) = self.cancel.as_mut() {
             cancel.cancel();
+            self.cancel = None;
         }
+    }
+
+    /// Spawns an agent to handle the submitted prompt.
+    fn submit_prompt(&mut self, prompt: &str) -> AnyResult<()> {
+        self.cancel();
 
         let session_id = self.create_session()?;
         let item = Item::create(
@@ -241,8 +251,20 @@ impl App {
             ContentType::Text,
             prompt,
         )?;
-        let (_, cancel) = crate::agent::spawn(item, content, self.send.clone());
+
+        let cancel = CancellationToken::new();
+        let agent = Agent {
+            item,
+            content,
+            sender: self.send.clone(),
+            client: self.client.clone(),
+            conn: crate::db::open()?,
+            cancel: cancel.clone(),
+        };
+
+        agent.spawn();
         self.cancel = Some(cancel);
+
         Ok(())
     }
 
