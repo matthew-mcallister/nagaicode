@@ -9,7 +9,8 @@ path = "src/main.rs"
 
 [dependencies]
 crossterm = { version = "0.28", features = ["event-stream"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 dirs = "5"
 diesel = { version = "2", features = ["sqlite", "chrono", "returning_clauses_for_sqlite_3_35"] }
 diesel_migrations = { version = "2", features = ["sqlite"] }
@@ -30,3 +31,5 @@ serde_json = "1"
 futures = "0.3"
 derive_more = { version = "1", features = ["from"] }
 fnv = "1.0.7"
+tokio-stream = "0.1.19"
+pin-project = "1.1.13"

@@ -137,7 +137,7 @@ impl Component for CommandEditor {
                 }
                 None
             }
-            None => None,
+            _ => None,
         };
         self.sync_scroll_bar();
         response

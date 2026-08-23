@@ -11,6 +11,8 @@ use crossterm::terminal::{
 use diesel::SqliteConnection;
 use futures::StreamExt;
 use serde_json::Value;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio_util::sync::CancellationToken;
 
 use crate::command::Command;
 use crate::error::AnyResult;
@@ -27,10 +29,17 @@ use crate::ui::styled_string::StyledString;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
     Command(String),
+    ContentCreated { item: Item, content: Content },
     /// Navigate to the previous entry in the command history.
     HistoryPrev,
     /// Navigate to the next entry in the command history.
     HistoryNext,
+}
+
+#[derive(Debug)]
+enum Poll {
+    Input(crossterm::event::Event),
+    Event(AppEvent),
 }
 
 pub struct App {
@@ -43,6 +52,11 @@ pub struct App {
     conn: SqliteConnection,
     session: Option<Session>,
     tools: DefaultToolServer,
+    // Channel for async events
+    send: UnboundedSender<AppEvent>,
+    recv: UnboundedReceiver<AppEvent>,
+    // Cancel token for interrupting agents/async tasks
+    cancel: Option<CancellationToken>,
 }
 
 impl App {
@@ -52,6 +66,7 @@ impl App {
         let (w, h) = terminal.size()?;
         let theme = &THEME_DARK;
         let chat = Chat::new(w, h, theme);
+        let (send, recv) = unbounded_channel();
         Ok(Self {
             terminal,
             chat,
@@ -61,6 +76,9 @@ impl App {
             conn: crate::db::open()?,
             session: None,
             tools: DefaultToolServer::default(),
+            send,
+            recv,
+            cancel: None,
         })
     }
 
@@ -149,12 +167,16 @@ impl App {
 
         while !self.quit {
             self.render()?;
-            let event = self.terminal
-                .events()
-                .next()
-                .await
-                .ok_or_else(|| std::io::Error::other("terminal stream closed"))??;
-            self.handle_input(event);
+            let poll = tokio::select! {
+                input = self.terminal.events().next() => {
+                    Poll::Input(input.ok_or_else(|| std::io::Error::other("terminal stream closed"))??)
+                }
+                event = self.recv.recv() => Poll::Event(event.expect("channel closed")),
+            };
+            match poll {
+                Poll::Input(event) => self.handle_input(event),
+                Poll::Event(event) => self.process_event(event),
+            }
         }
 
         execute!(self.terminal.stdout(), EnableLineWrap, LeaveAlternateScreen)?;
@@ -190,9 +212,8 @@ impl App {
         Ok(id)
     }
 
-    /// Commits a new user message to the session and spawns an agent to
-    /// respawn to it
-    fn submit_prompt(&mut self, prompt: &str) -> AnyResult<(Item, Content)> {
+    /// Spawns an agent to handle the submitted prompt.
+    fn submit_prompt(&mut self, prompt: &str) -> AnyResult<()> {
         let session_id = self.create_session()?;
         let item = Item::create(
             &mut self.conn,
@@ -207,7 +228,9 @@ impl App {
             ContentType::Text,
             prompt,
         )?;
-        Ok((item, content))
+        let (_, cancel) = crate::agent::spawn(item, content, self.send.clone());
+        self.cancel = Some(cancel);
+        Ok(())
     }
 
     // TODO eventually: execute these as an asynchronous and interruptable
@@ -247,8 +270,7 @@ impl App {
                 self.chat.handle_update(Update::CommandOutput(&output));
             }
         } else {
-            let (item, content) = self.submit_prompt(command)?;
-            self.chat.handle_update(Update::ContentCreated { item: &item, content: &content });
+            self.submit_prompt(command)?;
         }
 
         Ok(())
@@ -257,7 +279,10 @@ impl App {
     pub(crate) fn process_event(&mut self, event: AppEvent) {
         let res = match event {
             AppEvent::Command(cmd) => self.process_command(&cmd),
-            // Consumed by the StackedView; should never reach the App.
+            AppEvent::ContentCreated { item, content } => {
+                self.chat.handle_update(Update::ContentCreated { item: &item, content: &content });
+                Ok(())
+            }
             AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
         };
         if let Err(e) = res {

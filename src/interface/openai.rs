@@ -366,7 +366,7 @@ mod tests {
     }
 
     // Also tests get_models
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_list_models() {
         let mut client = DefaultClient::default();
         client.add_response(&format!("{BASE_URL}/models"), http_ok(r#"{"data":[{"id":"fake-model"}]}"#));
@@ -382,7 +382,7 @@ mod tests {
         assert_eq!(requests[0].url().as_str(), &format!("{BASE_URL}/models"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_generate() {
         let mut client = DefaultClient::default();
         client.add_response(&format!("{BASE_URL}/responses"), sse(default_events()));
@@ -457,7 +457,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_missing_usage() {
         let mut client = DefaultClient::default();
         client.add_response(
@@ -487,7 +487,7 @@ mod tests {
         assert_eq!(events, vec![InferenceEvent::Completed(ResponseCompleted { usage: None })]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_thinking_fields() {
         let mut client = DefaultClient::default();
         client.add_response(
@@ -534,7 +534,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_error() {
         let mut client = DefaultClient::default();
         let iface = make_iface(client.clone());

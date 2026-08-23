@@ -1,17 +1,12 @@
-use std::cell::Cell;
-use std::fs;
-use std::path::PathBuf;
-
-use diesel::connection::SimpleConnection;
-use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::MigrationHarness;
 
 use crate::error::AnyResult;
 
-thread_local! {
-    static DB_NUM: Cell<u64> = const { Cell::new(0) };
-}
+#[cfg(not(test))]
+pub use self::real::open;
+#[cfg(test)]
+pub use self::mock::{open, open_new, reset};
 
 fn run_migrations(conn: &mut SqliteConnection) -> AnyResult<()> {
     let migrations = diesel_migrations::FileBasedMigrations::find_migrations_directory()
@@ -21,64 +16,81 @@ fn run_migrations(conn: &mut SqliteConnection) -> AnyResult<()> {
     Ok(())
 }
 
-const APP_DIR_NAME: &str = "nagaicode";
-const DB_FILE_NAME: &str = "db.sqlite";
+#[cfg(not(test))]
+mod real {
+    use std::path::PathBuf;
 
-fn db_dir() -> AnyResult<PathBuf> {
-    let base = dirs::data_dir().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "could not determine the user data directory",
-        )
-    })?;
-    let dir = base.join(APP_DIR_NAME);
-    fs::create_dir_all(&dir)?;
-    Ok(dir)
+    use diesel::connection::SimpleConnection;
+    use diesel::{Connection, SqliteConnection};
+
+    use crate::error::AnyResult;
+    use super::run_migrations;
+
+    const APP_DIR_NAME: &str = "nagaicode";
+    const DB_FILE_NAME: &str = "db.sqlite";
+
+    pub fn db_dir() -> AnyResult<PathBuf> {
+        let base = dirs::data_dir().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "could not determine the user data directory",
+            )
+        })?;
+        let dir = base.join(APP_DIR_NAME);
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    pub fn open() -> AnyResult<SqliteConnection> {
+        let mut path = db_dir()?;
+        path.push(DB_FILE_NAME);
+
+        let mut conn = SqliteConnection::establish(path.to_str().unwrap())?;
+        conn.batch_execute(
+            "PRAGMA foreign_keys = ON;
+             PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA busy_timeout = 5000;",
+        )?;
+
+        run_migrations(&mut conn)?;
+
+        Ok(conn)
+    }
 }
 
-fn open_disk() -> AnyResult<SqliteConnection> {
-    let mut path = db_dir()?;
-    path.push(DB_FILE_NAME);
+#[cfg(test)]
+mod mock {
+    use std::cell::Cell;
 
-    let mut conn = SqliteConnection::establish(path.to_str().unwrap())?;
-    conn.batch_execute(
-        "PRAGMA foreign_keys = ON;
-         PRAGMA journal_mode = WAL;
-         PRAGMA synchronous = NORMAL;
-         PRAGMA busy_timeout = 5000;",
-    )?;
+    use diesel::connection::SimpleConnection;
+    use diesel::{Connection, SqliteConnection};
 
-    run_migrations(&mut conn)?;
+    use crate::error::AnyResult;
+    use super::run_migrations;
 
-    Ok(conn)
-}
+    thread_local! {
+        static DB_NUM: Cell<u64> = const { Cell::new(0) };
+    }
 
-/// Opens an in-memory database connection.
-pub fn open_in_memory() -> AnyResult<SqliteConnection> {
-    let db_name = format!("{:?}/{}", std::thread::current().id(), DB_NUM.get());
-    let uri = format!("file:{db_name}?mode=memory&cache=shared");
-    let mut conn = SqliteConnection::establish(&uri)?;
-    conn.batch_execute("PRAGMA foreign_keys = ON;")?;
-    run_migrations(&mut conn)?;
-    Ok(conn)
-}
+    /// Opens an in-memory database connection.
+    pub fn open() -> AnyResult<SqliteConnection> {
+        let db_name = format!("{:?}/{}", std::thread::current().id(), DB_NUM.get());
+        let uri = format!("file:{db_name}?mode=memory&cache=shared");
+        let mut conn = SqliteConnection::establish(&uri)?;
+        conn.batch_execute("PRAGMA foreign_keys = ON;")?;
+        run_migrations(&mut conn)?;
+        Ok(conn)
+    }
 
-/// Resets the in-memory database counter for the current thread.
-pub fn reset() {
-    DB_NUM.set(DB_NUM.get() + 1);
-}
+    /// Resets the in-memory database counter for the current thread.
+    pub fn reset() {
+        DB_NUM.set(DB_NUM.get() + 1);
+    }
 
-/// Opens a new in-memory database connection.
-pub fn open_new() -> AnyResult<SqliteConnection> {
-    reset();
-    open_in_memory()
-}
-
-/// Opens a database connection.
-pub fn open() -> AnyResult<SqliteConnection> {
-    if cfg!(test) {
-        open_in_memory()
-    } else {
-        open_disk()
+    /// Opens a new in-memory database connection.
+    pub fn open_new() -> AnyResult<SqliteConnection> {
+        reset();
+        open()
     }
 }
