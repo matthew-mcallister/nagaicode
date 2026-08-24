@@ -10,7 +10,7 @@ use crossterm::terminal::{
 };
 use diesel::SqliteConnection;
 use futures::StreamExt;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::sync::CancellationToken;
 
@@ -19,6 +19,7 @@ use crate::command::Command;
 use crate::error::AnyResult;
 use crate::model::Model;
 use crate::model::revalidate_models;
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::DefaultClient;
 use crate::session::{Content, ContentType, Item, ItemType, Session};
 use crate::terminal::{DefaultTerminal, Terminal};
@@ -361,6 +362,45 @@ impl App {
         };
         if let Err(e) = res {
             self.chat.handle_update(Update::ErrorMessage(&e.to_string()));
+        }
+    }
+}
+
+/// Exposed fields:
+/// - chat: Chat
+/// - selected_model: Model | null
+/// - db_url: string
+/// - session: Session | null
+impl DataQuery for App {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => {
+                let selected_model = match self.selected_model.as_ref() {
+                    Some(model) => model.query("/")?,
+                    None => Value::Null,
+                };
+                let session = match self.session.as_ref() {
+                    Some(session) => session.query("/")?,
+                    None => Value::Null,
+                };
+                Ok(QueryField::Value(json!({
+                    "chat": self.chat.query("/")?,
+                    "selected_model": selected_model,
+                    "db_url": self.db_url,
+                    "session": session,
+                })))
+            }
+            "chat" => Ok(QueryField::DataQuery(&self.chat)),
+            "selected_model" => match self.selected_model.as_ref() {
+                Some(model) => Ok(QueryField::DataQuery(model)),
+                None => Ok(QueryField::Value(json!(null))),
+            },
+            "db_url" => Ok(QueryField::Value(json!(self.db_url))),
+            "session" => match self.session.as_ref() {
+                Some(session) => Ok(QueryField::DataQuery(session)),
+                None => Ok(QueryField::Value(json!(null))),
+            },
+            _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
 }

@@ -134,3 +134,55 @@ fn test_app_process_command() {
     assert!(app.process_command("").is_ok());
     assert!(app.process_command("   ").is_ok());
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::interface::InterfaceId;
+    use crate::model::Model;
+    use crate::provider::Provider;
+    use crate::query::DataQuery;
+    use crate::ui::chat::Chat;
+    use crate::ui::style::THEME_DARK;
+    use super::*;
+
+    #[tokio::test]
+    async fn test_app_query() {
+        let mut app = App::new().unwrap();
+
+        // Primitive and unset fields.
+        let db_url = app.query("/db_url").unwrap();
+        assert!(db_url.as_str().unwrap().starts_with("file:"));
+        assert!(db_url.as_str().unwrap().contains("mode=memory"));
+        assert_eq!(app.query("/selected_model").unwrap(), json!(null));
+        assert_eq!(app.query("/session").unwrap(), json!(null));
+
+        // Nested query into chat.
+        let expected_chat = Chat::new(80, 24, &THEME_DARK).query("/").unwrap();
+        assert_eq!(app.query("/chat").unwrap(), expected_chat);
+        assert_eq!(app.query("/chat/stacked/h_padding").unwrap(), json!(2));
+        assert_eq!(app.query("/chat/stacked/v_padding").unwrap(), json!(1));
+        assert_eq!(app.query("/chat/stacked/inner/focus_state").unwrap(), json!("command_editor"));
+
+        assert_eq!(app.query("/").unwrap(), json!({
+            "chat": expected_chat,
+            "selected_model": null,
+            "db_url": db_url,
+            "session": null,
+        }));
+
+        // Processing a command creates a session.
+        app.process_command("hello").unwrap();
+        assert_eq!(app.query("/session/name").unwrap(), json!("Session"));
+        assert_eq!(
+            *app.query("/session").unwrap().get("id").unwrap(),
+            app.query("/session/id").unwrap(),
+        );
+
+        // Selecting a model exposes it as a nested query.
+        let provider = Provider::create(app.conn(), "test", InterfaceId::Openai, "key123", None).unwrap();
+        let model = Model::create(app.conn(), provider.id, "gpt-4").unwrap();
+        app.switch_model(model.clone());
+        assert_eq!(app.query("/selected_model/id").unwrap(), json!("gpt-4"));
+        assert_eq!(app.query("/selected_model").unwrap(), model.query("/").unwrap());
+    }
+}
