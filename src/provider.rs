@@ -4,9 +4,11 @@ use diesel::sqlite::SqliteConnection;
 
 use crate::error::AnyResult;
 use crate::interface::{Interface, InterfaceId};
+use crate::query::{DataQuery, QueryError, QueryField, datetime_to_json};
 use crate::request::DefaultClient;
 use crate::schema::provider;
 use crate::schema::provider::dsl;
+use serde_json::json;
 
 #[derive(Debug, Queryable, Selectable)]
 #[diesel(table_name = provider)]
@@ -93,11 +95,42 @@ impl Provider {
         Interface::from_provider(self, client)
     }
 
-    pub fn base_url_normalized(&self) -> Option<&str> {
+pub fn base_url_normalized(&self) -> Option<&str> {
         self.base_url
             .as_ref()
             .filter(|url| !url.is_empty())
             .map(|s| s.trim_end_matches('/'))
+    }
+}
+
+/// Exposed fields:
+/// - id: number
+/// - name: string
+/// - interface: string
+/// - base_url: string | null
+/// - created_at: string (ISO 8601)
+/// - updated_at: string (ISO 8601)
+///
+/// api_key is intentionally not exposed.
+impl DataQuery for Provider {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "id": self.id,
+                "name": self.name,
+                "interface": self.interface,
+                "base_url": self.base_url,
+                "created_at": datetime_to_json(self.created_at),
+                "updated_at": datetime_to_json(self.updated_at),
+            }))),
+            "id" => Ok(QueryField::Value(json!(self.id))),
+            "name" => Ok(QueryField::Value(json!(self.name))),
+            "interface" => Ok(QueryField::Value(json!(self.interface))),
+            "base_url" => Ok(QueryField::Value(json!(self.base_url))),
+            "created_at" => Ok(QueryField::Value(datetime_to_json(self.created_at))),
+            "updated_at" => Ok(QueryField::Value(datetime_to_json(self.updated_at))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
     }
 }
 
@@ -153,5 +186,35 @@ mod tests {
 
         let already_deleted = Provider::delete_by_name(&mut conn, "test").expect("delete failed");
         assert!(!already_deleted);
+    }
+
+    #[test]
+    fn test_provider_query() {
+        use serde_json::json;
+
+        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
+        let provider = Provider::create(
+            &mut conn,
+            "test",
+            InterfaceId::Openai,
+            "key123",
+            Some("https://example.test/v1"),
+        )
+        .expect("create failed");
+
+        assert_eq!(provider.query("/").unwrap(), json!({
+            "id": provider.id,
+            "name": provider.name,
+            "interface": provider.interface,
+            "base_url": provider.base_url,
+            "created_at": datetime_to_json(provider.created_at),
+            "updated_at": datetime_to_json(provider.updated_at),
+        }));
+        assert_eq!(provider.query("/id").unwrap(), json!(provider.id));
+        assert_eq!(provider.query("/name").unwrap(), json!(provider.name));
+        assert_eq!(provider.query("/interface").unwrap(), json!(provider.interface));
+        assert_eq!(provider.query("/base_url").unwrap(), json!(provider.base_url));
+        assert_eq!(provider.query("/created_at").unwrap(), datetime_to_json(provider.created_at));
+        assert_eq!(provider.query("/updated_at").unwrap(), datetime_to_json(provider.updated_at));
     }
 }

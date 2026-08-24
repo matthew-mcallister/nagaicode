@@ -7,9 +7,11 @@ use futures::future::join_all;
 use crate::error::{AnyError, AnyResult};
 use crate::interface::InterfaceModel;
 use crate::provider::Provider;
+use crate::query::{DataQuery, QueryError, QueryField, datetime_to_json};
 use crate::request::DefaultClient;
 use crate::schema::model;
 use crate::schema::model::dsl;
+use serde_json::json;
 
 /// Model from a provider. We fetch and cache these periodically.
 ///
@@ -109,6 +111,29 @@ impl Model {
             .values(&new_models)
             .execute(conn)?;
         Ok(())
+    }
+}
+
+/// Exposed fields:
+/// - provider_id: number
+/// - id: string
+/// - created_at: string (ISO 8601)
+/// - updated_at: string (ISO 8601)
+impl DataQuery for Model {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "provider_id": self.provider_id,
+                "id": self.id,
+                "created_at": datetime_to_json(self.created_at),
+                "updated_at": datetime_to_json(self.updated_at),
+            }))),
+            "provider_id" => Ok(QueryField::Value(json!(self.provider_id))),
+            "id" => Ok(QueryField::Value(json!(self.id))),
+            "created_at" => Ok(QueryField::Value(datetime_to_json(self.created_at))),
+            "updated_at" => Ok(QueryField::Value(datetime_to_json(self.updated_at))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
     }
 }
 
@@ -228,5 +253,25 @@ mod tests {
             models.is_empty(),
             "models should be cascade-deleted with their provider"
         );
+    }
+
+    #[test]
+    fn test_model_query() {
+        use serde_json::json;
+
+        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
+        let provider = seed_provider(&mut conn);
+        let model = Model::create(&mut conn, provider.id, "gpt-4").expect("create failed");
+
+        assert_eq!(model.query("/").unwrap(), json!({
+            "provider_id": model.provider_id,
+            "id": model.id,
+            "created_at": datetime_to_json(model.created_at),
+            "updated_at": datetime_to_json(model.updated_at),
+        }));
+        assert_eq!(model.query("/provider_id").unwrap(), json!(model.provider_id));
+        assert_eq!(model.query("/id").unwrap(), json!(model.id));
+        assert_eq!(model.query("/created_at").unwrap(), datetime_to_json(model.created_at));
+        assert_eq!(model.query("/updated_at").unwrap(), datetime_to_json(model.updated_at));
     }
 }

@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 
 use crate::arena::Id;
@@ -107,6 +108,8 @@ pub trait ToJson {
 impl<T> ToJson for T
     where Value: From<T>
 {
+    // TODO: Remove this blanket impl; it prevents ToJson from being
+    // implemented for NaiveDateTime.
     fn to_json(self) -> Value {
         Value::from(self)
     }
@@ -116,6 +119,12 @@ impl<T> ToJson for Id<T> {
     fn to_json(self) -> Value {
         json!([self.generation(), self.index()])
     }
+}
+
+/// Converts a datetime to an ISO 8601 string value. Helper until the blanket
+/// ToJson impl is removed and NaiveDateTime can implement ToJson directly.
+pub fn datetime_to_json(dt: NaiveDateTime) -> Value {
+    json!(dt.format("%Y-%m-%dT%H:%M:%S%.f").to_string())
 }
 
 impl ToJson for Color {
@@ -159,5 +168,14 @@ mod tests {
         assert_eq!(slice.query("/").unwrap(), expected);
         assert_eq!(slice.query("/0").unwrap(), slice[0].query("/").unwrap());
         assert_eq!(slice.query("/1").unwrap(), slice[1].query("/").unwrap());
+    }
+
+    #[test]
+    fn test_datetime_to_json() {
+        let dt = chrono::NaiveDate::from_ymd_opt(2015, 9, 18).unwrap().and_hms_opt(23, 56, 4).unwrap();
+        assert_eq!(datetime_to_json(dt), json!("2015-09-18T23:56:04"));
+
+        let with_millis = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_milli_opt(3, 4, 5, 600).unwrap();
+        assert_eq!(datetime_to_json(with_millis), json!("2024-01-02T03:04:05.600"));
     }
 }
