@@ -6,15 +6,14 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
-use crate::interface::{ChatMessage, ChatRole, InferenceEvent, InferenceParams};
+use crate::interface::{InferenceEvent, InferenceParams, build_history};
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
-use crate::session::{Chain, Content, ContentType, Item, ItemType};
+use crate::session::{Chain, Content, ContentType, Item, ItemType, Session};
 
 pub struct Agent {
-    pub prompt: Item,
-    pub content: Content,
+    pub session: Session,
     pub provider: Provider,
     pub model: Model,
     pub sender: UnboundedSender<AppEvent>,
@@ -32,8 +31,7 @@ pub struct Agent {
 impl Agent {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        prompt: Item,
-        content: Content,
+        session: Session,
         provider: Provider,
         model: Model,
         sender: UnboundedSender<AppEvent>,
@@ -42,8 +40,7 @@ impl Agent {
         cancel: CancellationToken,
     ) -> Self {
         Self {
-            prompt,
-            content,
+            session,
             provider,
             model,
             sender,
@@ -64,9 +61,10 @@ impl Agent {
         }
         let interface = self.provider.create_interface(&self.client)?;
 
-        let history = self.build_history();
+        let history = self.load_history()?;
+        let messages = build_history(&history, interface.supports_reasoning_input())?;
         let mut params = self.build_params();
-        params.input = &history;
+        params.input = &messages;
         let stream = interface.generate(params);
         tokio::pin!(stream);
 
@@ -105,11 +103,17 @@ impl Agent {
         }
     }
 
-    fn build_history(&self) -> Vec<ChatMessage<'_>> {
-        vec![ChatMessage {
-            role: ChatRole::User,
-            content: &self.content.value,
-        }]
+    /// Loads the session's (item, content) pairs sorted by item and content id.
+    fn load_history(&mut self) -> AnyResult<Vec<(Item, Content)>> {
+        let items = Item::list_by_session(&mut self.conn, self.session.id)?;
+        let mut pairs = Vec::new();
+        for item in items {
+            let contents = Content::list_by_item(&mut self.conn, item.id)?;
+            for content in contents {
+                pairs.push((item.clone(), content));
+            }
+        }
+        Ok(pairs)
     }
 
     fn handle_event(&mut self, event: InferenceEvent) -> AnyResult<Option<AppEvent>> {
@@ -172,7 +176,7 @@ impl Agent {
         }
         let chain = Chain::create(
             &mut self.conn,
-            self.prompt.session_id,
+            self.session.id,
             self.provider.id,
             &self.provider.name,
             &self.model.id,
@@ -189,7 +193,7 @@ impl Agent {
         let chain_id = self.ensure_chain()?;
         let item = Item::create(
             &mut self.conn,
-            self.prompt.session_id,
+            self.session.id,
             Some(chain_id),
             ItemType::Model,
             self.response_id.as_deref(),
@@ -207,7 +211,7 @@ mod tests {
     use crate::interface::InterfaceId;
     use crate::model::Model;
     use crate::provider::Provider;
-    use crate::session::{ContentType, ItemType, Session};
+    use crate::session::Session;
 
     use super::*;
 
@@ -215,10 +219,6 @@ mod tests {
     async fn test_spawn_cancels() {
         let mut conn = crate::db::open_new().unwrap();
         let session = Session::create(&mut conn, "Session").expect("create session");
-        let prompt = Item::create(&mut conn, session.id, None, ItemType::User, None)
-            .expect("create item");
-        let content = Content::create(&mut conn, prompt.id, ContentType::Text, "hello")
-            .expect("create content");
         let provider =
             Provider::create(&mut conn, "test", InterfaceId::Openai, "key123", None)
                 .expect("create provider");
@@ -227,8 +227,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let (sender, mut recv) = unbounded_channel();
         let agent = Agent::new(
-            prompt,
-            content,
+            session,
             provider,
             model,
             sender,

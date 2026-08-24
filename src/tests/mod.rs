@@ -270,6 +270,106 @@ async fn test_app_prompt_agent() {
     assert_eq!(chain.model_id, "gpt-4");
 }
 
+#[tokio::test]
+async fn test_agent_history() {
+    use crate::session::{Content, ContentType, Item, ItemType};
+
+    let mut app = App::new().unwrap();
+
+    let provider = Provider::create(
+        app.conn(),
+        "test",
+        InterfaceId::Openai,
+        "sk-test",
+        Some("https://example.test/v1"),
+    )
+    .expect("create provider");
+    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    app.switch_model(model);
+
+    let url = "https://example.test/v1/responses";
+
+    // First turn: the model streams thinking followed by its answer. Both are
+    // persisted to the session as separate contents.
+    app.client_mut().add_response(
+        url,
+        ResponseData::Sse(QueueStream::from(vec![
+            Ok(SseEvent::Open),
+            Ok(create_message_event(
+                r#"{"type":"response.created","response":{"id":"resp-1"}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.reasoning_text.delta","delta":"I should add."}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_text.delta","delta":"The answer is 2."}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.completed","response":{"id":"resp-1"}}"#,
+            )),
+            Ok(create_message_event("[DONE]")),
+        ])),
+    );
+
+    for c in "what is 1+1?".chars() {
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
+    app.await_task().await.expect("await first agent");
+    app.process_pending_events();
+
+    // The first model turn should have recorded one thought and one text
+    // content, in that order.
+    let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+    let items = Item::list_by_session(app.conn(), session_id).unwrap();
+    let model_item = items.iter().find(|i| i.ty().unwrap() == ItemType::Model).unwrap();
+    let contents = Content::list_by_item(app.conn(), model_item.id).unwrap();
+    assert_eq!(contents.len(), 2);
+    assert_eq!(contents[0].ty().unwrap(), ContentType::Thought);
+    assert_eq!(contents[0].value, "I should add.");
+    assert_eq!(contents[1].ty().unwrap(), ContentType::Text);
+    assert_eq!(contents[1].value, "The answer is 2.");
+
+    // Second turn: the request must include the full conversation history,
+    // with reasoning folded in where the interface supports it.
+    app.client_mut().add_response(
+        url,
+        ResponseData::Sse(QueueStream::from(vec![
+            Ok(SseEvent::Open),
+            Ok(create_message_event(
+                r#"{"type":"response.created","response":{"id":"resp-2"}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_text.delta","delta":"You're welcome!"}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.completed","response":{"id":"resp-2"}}"#,
+            )),
+            Ok(create_message_event("[DONE]")),
+        ])),
+    );
+
+    for c in "thanks!".chars() {
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
+    app.await_task().await.expect("await second task");
+    app.process_pending_events();
+
+    let requests = app.client_mut().get_requests();
+    assert_eq!(requests.len(), 2);
+    let body = request_body_value(&requests[1]);
+    assert_eq!(
+        body["input"],
+        json!([
+            {"role": "user", "content": "what is 1+1?"},
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "I should add."}]},
+            {"role": "assistant", "content": "The answer is 2."},
+            {"role": "user", "content": "thanks!"}
+        ])
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use crate::interface::InterfaceId;

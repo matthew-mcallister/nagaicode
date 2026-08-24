@@ -258,16 +258,15 @@ impl App {
         }
     }
 
-    /// Returns the ID of the current session, creating a new session if one
-    /// does not exist.
-    fn create_session(&mut self) -> AnyResult<i32> {
+    /// Returns the current session, creating a new session if one does not
+    /// exist.
+    fn create_session(&mut self) -> AnyResult<Session> {
         if let Some(session) = &self.session {
-            return Ok(session.id);
+            return Ok(session.clone());
         }
         let session = Session::create(&mut self.conn, "Session")?;
-        let id = session.id;
-        self.session = Some(session);
-        Ok(id)
+        self.session = Some(session.clone());
+        Ok(session)
     }
 
     /// Processes any events sent by the active task that are still pending.
@@ -301,10 +300,10 @@ impl App {
         let provider = Provider::get_by_id(&mut self.conn, model.provider_id)?
             .ok_or_else(|| format!("no provider found for model '{}'", model.id))?;
 
-        let session_id = self.create_session()?;
+        let session = self.create_session()?;
         let item = Item::create(
             &mut self.conn,
-            session_id,
+            session.id,
             None,
             ItemType::User,
             None,
@@ -323,8 +322,7 @@ impl App {
 
         let cancel = CancellationToken::new();
         let agent = Agent::new(
-            item,
-            content,
+            session,
             provider,
             model,
             self.send.clone(),

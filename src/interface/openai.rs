@@ -8,7 +8,7 @@ use serde::de::DeserializeOwned;
 use crate::request::{Client as _, Response as _};
 use crate::error::AnyResult;
 use crate::interface::{
-    ChatRole, InferenceEvent, InferenceParams, InterfaceModel, ReasoningEffort,
+    ChatMessage, InferenceEvent, InferenceParams, InterfaceModel, ReasoningEffort,
     ResponseCompleted, ResponseCreated, Usage,
 };
 use crate::request::DefaultClient;
@@ -109,15 +109,30 @@ struct RequestReasoning {
 }
 
 #[derive(Debug, Serialize)]
-struct InputMessage<'a> {
-    role: &'static str,
-    content: &'a str,
+#[serde(untagged)]
+enum InputItem<'a> {
+    Message {
+        role: &'static str,
+        content: &'a str,
+    },
+    Reasoning {
+        #[serde(rename = "type")]
+        r#type: &'static str,
+        summary: Vec<ReasoningSummary<'a>>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct ReasoningSummary<'a> {
+    #[serde(rename = "type")]
+    r#type: &'static str,
+    text: &'a str,
 }
 
 #[derive(Debug, Serialize)]
 struct CreateResponseRequest<'a> {
     model: &'a str,
-    input: Vec<InputMessage<'a>>,
+    input: Vec<InputItem<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     instructions: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,13 +148,22 @@ impl<'a> CreateResponseRequest<'a> {
             .input
             .iter()
             .map(|msg| {
-                let role = match msg.role {
-                    ChatRole::User => "user",
-                    ChatRole::Assistant => "assistant",
-                };
-                InputMessage {
-                    role,
-                    content: msg.content,
+                match msg {
+                    ChatMessage::Message { content } => InputItem::Message {
+                        role: "user",
+                        content,
+                    },
+                    ChatMessage::Response { content } => InputItem::Message {
+                        role: "assistant",
+                        content,
+                    },
+                    ChatMessage::Reasoning { content } => InputItem::Reasoning {
+                        r#type: "reasoning",
+                        summary: vec![ReasoningSummary {
+                            r#type: "summary_text",
+                            text: content,
+                        }],
+                    },
                 }
             })
             .collect();
@@ -413,18 +437,9 @@ mod tests {
             temperature: 0.75,
             reasoning_effort: Some(ReasoningEffort::Low),
             input: &[
-                ChatMessage {
-                    role: ChatRole::User,
-                    content: "Hello",
-                },
-                ChatMessage {
-                    role: ChatRole::Assistant,
-                    content: "Hi there!",
-                },
-                ChatMessage {
-                    role: ChatRole::User,
-                    content: "How are you?",
-                },
+                ChatMessage::Message { content: "Hello" },
+                ChatMessage::Response { content: "Hi there!" },
+                ChatMessage::Message { content: "How are you?" },
             ],
         };
 

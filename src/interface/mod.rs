@@ -9,6 +9,7 @@ use crate::error::AnyResult;
 use crate::interface::openai::OpenaiInterface;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
+use crate::session::{Content, ContentType, Item, ItemType};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum InterfaceId {
@@ -62,16 +63,46 @@ pub enum ReasoningEffort {
     Max,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ChatRole {
-    User,
-    Assistant,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ChatMessage<'a> {
+    /// A user prompt.
+    Message { content: &'a str },
+    /// A visible assistant response.
+    Response { content: &'a str },
+    /// Assistant reasoning ("thought") content.
+    Reasoning { content: &'a str },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChatMessage<'a> {
-    pub role: ChatRole,
-    pub content: &'a str,
+/// Builds the conversation history from a session's (item, content) pairs.
+///
+/// Text content is always included; reasoning ("thought") content is only
+/// included when `include_thoughts` is true.
+pub fn build_history<'a>(
+    pairs: &'a [(Item, Content)],
+    include_thoughts: bool,
+) -> AnyResult<Vec<ChatMessage<'a>>> {
+    let mut messages = Vec::with_capacity(pairs.len());
+    for (item, content) in pairs {
+        let is_thought = content.ty()? == ContentType::Thought;
+        if is_thought && !include_thoughts {
+            continue;
+        }
+        if is_thought {
+            messages.push(ChatMessage::Reasoning {
+                content: &content.value,
+            });
+            continue;
+        }
+        match item.ty()? {
+            ItemType::User => messages.push(ChatMessage::Message {
+                content: &content.value,
+            }),
+            ItemType::Model => messages.push(ChatMessage::Response {
+                content: &content.value,
+            }),
+        }
+    }
+    Ok(messages)
 }
 
 /// Parameters for inference.
@@ -164,6 +195,13 @@ impl Interface {
     ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<> {
         match self {
             Self::Openai(iface) => iface.generate(params),
+        }
+    }
+
+    /// Whether the interface accepts reasoning ("thought") content in its input.
+    pub fn supports_reasoning_input(&self) -> bool {
+        match self {
+            Self::Openai(_) => true,
         }
     }
 }
