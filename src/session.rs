@@ -3,7 +3,7 @@ use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 
 use crate::error::AnyResult;
-use crate::query::{DataQuery, QueryError, QueryField, datetime_to_json};
+use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::schema::{chain, content, item, session};
 use serde_json::json;
 use std::fmt;
@@ -119,13 +119,13 @@ impl DataQuery for Session {
             "" => Ok(QueryField::Value(json!({
                 "id": self.id,
                 "name": self.name,
-                "created_at": datetime_to_json(self.created_at),
-                "updated_at": datetime_to_json(self.updated_at),
+                "created_at": self.created_at.to_json(),
+                "updated_at": self.updated_at.to_json(),
             }))),
             "id" => Ok(QueryField::Value(json!(self.id))),
             "name" => Ok(QueryField::Value(json!(self.name))),
-            "created_at" => Ok(QueryField::Value(datetime_to_json(self.created_at))),
-            "updated_at" => Ok(QueryField::Value(datetime_to_json(self.updated_at))),
+            "created_at" => Ok(QueryField::Value(self.created_at.to_json())),
+            "updated_at" => Ok(QueryField::Value(self.updated_at.to_json())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -213,16 +213,16 @@ impl DataQuery for Chain {
                 "provider_id": self.provider_id,
                 "provider_name": self.provider_name,
                 "model_id": self.model_id,
-                "created_at": datetime_to_json(self.created_at),
-                "updated_at": datetime_to_json(self.updated_at),
+                "created_at": self.created_at.to_json(),
+                "updated_at": self.updated_at.to_json(),
             }))),
             "id" => Ok(QueryField::Value(json!(self.id))),
             "session_id" => Ok(QueryField::Value(json!(self.session_id))),
             "provider_id" => Ok(QueryField::Value(json!(self.provider_id))),
             "provider_name" => Ok(QueryField::Value(json!(self.provider_name))),
             "model_id" => Ok(QueryField::Value(json!(self.model_id))),
-            "created_at" => Ok(QueryField::Value(datetime_to_json(self.created_at))),
-            "updated_at" => Ok(QueryField::Value(datetime_to_json(self.updated_at))),
+            "created_at" => Ok(QueryField::Value(self.created_at.to_json())),
+            "updated_at" => Ok(QueryField::Value(self.updated_at.to_json())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -340,16 +340,16 @@ impl DataQuery for Item {
                 "chain_id": self.chain_id,
                 "ty": self.ty,
                 "response_id": self.response_id,
-                "created_at": datetime_to_json(self.created_at),
-                "updated_at": datetime_to_json(self.updated_at),
+                "created_at": self.created_at.to_json(),
+                "updated_at": self.updated_at.to_json(),
             }))),
             "id" => Ok(QueryField::Value(json!(self.id))),
             "session_id" => Ok(QueryField::Value(json!(self.session_id))),
             "chain_id" => Ok(QueryField::Value(json!(self.chain_id))),
             "ty" => Ok(QueryField::Value(json!(self.ty))),
             "response_id" => Ok(QueryField::Value(json!(self.response_id))),
-            "created_at" => Ok(QueryField::Value(datetime_to_json(self.created_at))),
-            "updated_at" => Ok(QueryField::Value(datetime_to_json(self.updated_at))),
+            "created_at" => Ok(QueryField::Value(self.created_at.to_json())),
+            "updated_at" => Ok(QueryField::Value(self.updated_at.to_json())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -451,15 +451,15 @@ impl DataQuery for Content {
                 "item_id": self.item_id,
                 "ty": self.ty,
                 "value": self.value,
-                "created_at": datetime_to_json(self.created_at),
-                "updated_at": datetime_to_json(self.updated_at),
+                "created_at": self.created_at.to_json(),
+                "updated_at": self.updated_at.to_json(),
             }))),
             "id" => Ok(QueryField::Value(json!(self.id))),
             "item_id" => Ok(QueryField::Value(json!(self.item_id))),
             "ty" => Ok(QueryField::Value(json!(self.ty))),
             "value" => Ok(QueryField::Value(json!(self.value))),
-            "created_at" => Ok(QueryField::Value(datetime_to_json(self.created_at))),
-            "updated_at" => Ok(QueryField::Value(datetime_to_json(self.updated_at))),
+            "created_at" => Ok(QueryField::Value(self.created_at.to_json())),
+            "updated_at" => Ok(QueryField::Value(self.updated_at.to_json())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -605,13 +605,13 @@ mod tests {
         assert_eq!(session.query("/").unwrap(), json!({
             "id": session.id,
             "name": session.name,
-            "created_at": datetime_to_json(session.created_at),
-            "updated_at": datetime_to_json(session.updated_at),
+            "created_at": session.created_at.to_json(),
+            "updated_at": session.updated_at.to_json(),
         }));
         assert_eq!(session.query("/id").unwrap(), json!(session.id));
         assert_eq!(session.query("/name").unwrap(), json!(session.name));
-        assert_eq!(session.query("/created_at").unwrap(), datetime_to_json(session.created_at));
-        assert_eq!(session.query("/updated_at").unwrap(), datetime_to_json(session.updated_at));
+        assert_eq!(session.query("/created_at").unwrap(), session.created_at.to_json());
+        assert_eq!(session.query("/updated_at").unwrap(), session.updated_at.to_json());
 
         let chain = Chain::create(&mut conn, session.id, 1, "openai", "gpt-4o").expect("create chain failed");
         assert_eq!(chain.query("/").unwrap(), json!({
@@ -620,8 +620,8 @@ mod tests {
             "provider_id": chain.provider_id,
             "provider_name": chain.provider_name,
             "model_id": chain.model_id,
-            "created_at": datetime_to_json(chain.created_at),
-            "updated_at": datetime_to_json(chain.updated_at),
+            "created_at": chain.created_at.to_json(),
+            "updated_at": chain.updated_at.to_json(),
         }));
         assert_eq!(chain.query("/provider_name").unwrap(), json!(chain.provider_name));
         assert_eq!(chain.query("/model_id").unwrap(), json!(chain.model_id));
@@ -634,8 +634,8 @@ mod tests {
             "chain_id": item.chain_id,
             "ty": item.ty,
             "response_id": item.response_id,
-            "created_at": datetime_to_json(item.created_at),
-            "updated_at": datetime_to_json(item.updated_at),
+            "created_at": item.created_at.to_json(),
+            "updated_at": item.updated_at.to_json(),
         }));
         assert_eq!(item.query("/chain_id").unwrap(), json!(item.chain_id));
         assert_eq!(item.query("/ty").unwrap(), json!(item.ty));
@@ -648,8 +648,8 @@ mod tests {
             "item_id": content.item_id,
             "ty": content.ty,
             "value": content.value,
-            "created_at": datetime_to_json(content.created_at),
-            "updated_at": datetime_to_json(content.updated_at),
+            "created_at": content.created_at.to_json(),
+            "updated_at": content.updated_at.to_json(),
         }));
         assert_eq!(content.query("/item_id").unwrap(), json!(content.item_id));
         assert_eq!(content.query("/ty").unwrap(), json!(content.ty));

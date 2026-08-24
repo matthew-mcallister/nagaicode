@@ -105,13 +105,33 @@ pub trait ToJson {
     fn to_json(self) -> Value;
 }
 
-impl<T> ToJson for T
-    where Value: From<T>
-{
-    // TODO: Remove this blanket impl; it prevents ToJson from being
-    // implemented for NaiveDateTime.
+macro_rules! impl_to_json_primitive {
+    ($($ty:ident $(<$($gen:ident)+>)?),*$(,)?) => {
+        $(
+            impl$(<$($gen)+: Into<Value>>)? ToJson for $ty $(<$($gen)+>)? {
+                fn to_json(self) -> Value {
+                    self.into()
+                }
+            }
+        )*
+    };
+}
+
+impl_to_json_primitive! {
+    bool,
+    i8, i16, i32, i64, isize,
+    u8, u16, u32, u64, usize,
+    f32, f64,
+    String,
+    Vec<T>,
+}
+
+impl<T: ToJson> ToJson for Option<T> {
     fn to_json(self) -> Value {
-        Value::from(self)
+        match self {
+            Some(value) => value.to_json(),
+            None => Value::Null,
+        }
     }
 }
 
@@ -121,10 +141,10 @@ impl<T> ToJson for Id<T> {
     }
 }
 
-/// Converts a datetime to an ISO 8601 string value. Helper until the blanket
-/// ToJson impl is removed and NaiveDateTime can implement ToJson directly.
-pub fn datetime_to_json(dt: NaiveDateTime) -> Value {
-    json!(dt.format("%Y-%m-%dT%H:%M:%S%.f").to_string())
+impl ToJson for NaiveDateTime {
+    fn to_json(self) -> Value {
+        json!(self.format("%Y-%m-%dT%H:%M:%S%.f").to_string())
+    }
 }
 
 impl ToJson for Color {
@@ -173,9 +193,22 @@ mod tests {
     #[test]
     fn test_datetime_to_json() {
         let dt = chrono::NaiveDate::from_ymd_opt(2015, 9, 18).unwrap().and_hms_opt(23, 56, 4).unwrap();
-        assert_eq!(datetime_to_json(dt), json!("2015-09-18T23:56:04"));
+        assert_eq!(dt.to_json(), json!("2015-09-18T23:56:04"));
 
         let with_millis = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_milli_opt(3, 4, 5, 600).unwrap();
-        assert_eq!(datetime_to_json(with_millis), json!("2024-01-02T03:04:05.600"));
+        assert_eq!(with_millis.to_json(), json!("2024-01-02T03:04:05.600"));
+    }
+
+    #[test]
+    fn test_primitive_to_json() {
+        assert_eq!(true.to_json(), json!(true));
+        assert_eq!(false.to_json(), json!(false));
+        assert_eq!(42i32.to_json(), json!(42));
+        assert_eq!(7u8.to_json(), json!(7));
+        assert_eq!(1.5f32.to_json(), json!(1.5));
+        assert_eq!("hello".to_owned().to_json(), json!("hello"));
+        assert_eq!(vec![1, 2, 3].to_json(), json!([1, 2, 3]));
+        assert_eq!(Some("x".to_owned()).to_json(), json!("x"));
+        assert_eq!(None::<i32>.to_json(), json!(null));
     }
 }

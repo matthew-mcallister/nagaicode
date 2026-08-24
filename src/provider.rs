@@ -4,7 +4,7 @@ use diesel::sqlite::SqliteConnection;
 
 use crate::error::AnyResult;
 use crate::interface::{Interface, InterfaceId};
-use crate::query::{DataQuery, QueryError, QueryField, datetime_to_json};
+use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::request::DefaultClient;
 use crate::schema::provider;
 use crate::schema::provider::dsl;
@@ -120,15 +120,15 @@ impl DataQuery for Provider {
                 "name": self.name,
                 "interface": self.interface,
                 "base_url": self.base_url,
-                "created_at": datetime_to_json(self.created_at),
-                "updated_at": datetime_to_json(self.updated_at),
+                "created_at": self.created_at.to_json(),
+                "updated_at": self.updated_at.to_json(),
             }))),
             "id" => Ok(QueryField::Value(json!(self.id))),
             "name" => Ok(QueryField::Value(json!(self.name))),
             "interface" => Ok(QueryField::Value(json!(self.interface))),
             "base_url" => Ok(QueryField::Value(json!(self.base_url))),
-            "created_at" => Ok(QueryField::Value(datetime_to_json(self.created_at))),
-            "updated_at" => Ok(QueryField::Value(datetime_to_json(self.updated_at))),
+            "created_at" => Ok(QueryField::Value(self.created_at.to_json())),
+            "updated_at" => Ok(QueryField::Value(self.updated_at.to_json())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -207,14 +207,14 @@ mod tests {
             "name": provider.name,
             "interface": provider.interface,
             "base_url": provider.base_url,
-            "created_at": datetime_to_json(provider.created_at),
-            "updated_at": datetime_to_json(provider.updated_at),
+            "created_at": provider.created_at.to_json(),
+            "updated_at": provider.updated_at.to_json(),
         }));
         assert_eq!(provider.query("/id").unwrap(), json!(provider.id));
         assert_eq!(provider.query("/name").unwrap(), json!(provider.name));
         assert_eq!(provider.query("/interface").unwrap(), json!(provider.interface));
         assert_eq!(provider.query("/base_url").unwrap(), json!(provider.base_url));
-        assert_eq!(provider.query("/created_at").unwrap(), datetime_to_json(provider.created_at));
-        assert_eq!(provider.query("/updated_at").unwrap(), datetime_to_json(provider.updated_at));
+        assert_eq!(provider.query("/created_at").unwrap(), provider.created_at.to_json());
+        assert_eq!(provider.query("/updated_at").unwrap(), provider.updated_at.to_json());
     }
 }
