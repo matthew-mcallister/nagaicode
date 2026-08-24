@@ -292,7 +292,7 @@ impl OpenaiInterface {
                     Event::Open => continue,
                     Event::Message(msg) => {
                         let trimmed = msg.data.trim();
-                        if trimmed.is_empty() {
+                        if trimmed.is_empty() || trimmed == "[DONE]" {
                             continue;
                         }
                         debug!("SSE event {}", trimmed);
@@ -360,6 +360,7 @@ mod tests {
             Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"Hello! "}"#)),
             Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"How can I help you today?"}"#)),
             Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-mock-1","usage":{"input_tokens":12,"output_tokens":18,"output_tokens_details":{"reasoning_tokens":7}}}}"#)),
+            Ok(create_message_event("[DONE]")),
         ]
     }
 
