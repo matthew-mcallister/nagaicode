@@ -342,6 +342,14 @@ impl Content {
         Ok(count > 0)
     }
 
+    pub fn update_value(conn: &mut SqliteConnection, id: i32, value: &str) -> AnyResult<()> {
+        use crate::schema::content::dsl;
+        diesel::update(dsl::content.filter(dsl::id.eq(id)))
+            .set(dsl::value.eq(value))
+            .execute(conn)?;
+        Ok(())
+    }
+
     pub fn ty(&self) -> AnyResult<ContentType> {
         Ok(ContentType::from_str(&self.ty)?)
     }

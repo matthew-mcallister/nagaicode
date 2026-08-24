@@ -158,12 +158,12 @@ impl Interface {
         }
     }
 
-    pub async fn generate<'a>(
+    pub fn generate(
         &self,
-        params: InferenceParams<'a>,
-    ) -> impl Stream<Item = AnyResult<InferenceEvent>> {
+        params: InferenceParams<'_>,
+    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<> {
         match self {
-            Self::Openai(iface) => iface.generate(params).await,
+            Self::Openai(iface) => iface.generate(params),
         }
     }
 }

@@ -13,7 +13,7 @@ use crate::interface::{
 use crate::request::DefaultClient;
 
 /// HTTP client wrapping a [`DefaultClient`] with auth and a base URL.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Client {
     base_url: String,
     api_key: String,
@@ -262,14 +262,16 @@ impl OpenaiInterface {
         Ok(parsed.data.into_iter().map(|m| InterfaceModel { id: m.id }).collect())
     }
 
-    pub async fn generate<'a>(
+    pub fn generate(
         &self,
-        params: InferenceParams<'a>,
-    ) -> impl Stream<Item = AnyResult<InferenceEvent>> {
-        let req_body = CreateResponseRequest::from_params(&params);
-        let event_stream_result = self.client.post_sse("/responses", &req_body);
+        params: InferenceParams<'_>,
+    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<> {
+        let req_body = serde_json::to_value(CreateResponseRequest::from_params(&params)).unwrap();
+        let client = self.client.clone();
 
         async_stream::try_stream! {
+            let event_stream_result = client.post_sse("/responses", &req_body);
+
             let event_source = event_stream_result?;
             futures::pin_mut!(event_source);
 
@@ -391,7 +393,7 @@ mod tests {
         let params = InferenceParams {
             model_id: "gpt-4o",
             system_prompt: "You are a helpful assistant.",
-            temperature: 0.7,
+            temperature: 0.75,
             reasoning_effort: Some(ReasoningEffort::Low),
             input: &[
                 ChatMessage {
@@ -409,7 +411,7 @@ mod tests {
             ],
         };
 
-        let stream = iface.generate(params).await;
+        let stream = iface.generate(params);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -443,7 +445,7 @@ mod tests {
 
         let body = request_body_value(&requests[0]);
         assert_eq!(body["model"], "gpt-4o");
-        assert_eq!(body["temperature"], 0.7);
+        assert_eq!(body["temperature"], 0.75);
         assert_eq!(body["reasoning"]["effort"], "low");
         assert_eq!(body["stream"], true);
         assert_eq!(body["instructions"], "You are a helpful assistant.");
@@ -476,7 +478,7 @@ mod tests {
             input: &[],
         };
 
-        let stream = iface.generate(params).await;
+        let stream = iface.generate(params);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -510,7 +512,7 @@ mod tests {
             input: &[],
         };
 
-        let stream = iface.generate(params).await;
+        let stream = iface.generate(params);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -567,7 +569,7 @@ mod tests {
                 input: &[],
             };
 
-            let stream = iface.generate(params).await;
+            let stream = iface.generate(params);
             let results: Vec<_> = stream.collect().await;
             assert_eq!(results.len(), 1);
             assert!(results[0].is_err());

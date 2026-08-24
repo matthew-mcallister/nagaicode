@@ -2,6 +2,9 @@ use crossterm::event::{Event, KeyCode, KeyEvent};
 use serde_json::json;
 
 use crate::app::{App, AppEvent};
+use crate::interface::InterfaceId;
+use crate::model::Model;
+use crate::provider::Provider;
 use crate::tools::ToolResult;
 use crate::tools::mock::ToolCall;
 use crate::ui::canvas::render_canvas;
@@ -54,6 +57,11 @@ fn test_app_e2e() {
 #[tokio::test]
 async fn test_app_interrupt() {
     let mut app = App::new().unwrap();
+
+    let provider = Provider::create(app.conn(), "test", InterfaceId::Openai, "key", None)
+        .expect("create provider");
+    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    app.switch_model(model);
 
     app.process_event(AppEvent::Interrupt);
     assert!(app.task_canceled());

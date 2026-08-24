@@ -19,6 +19,7 @@ use crate::command::Command;
 use crate::error::AnyResult;
 use crate::model::Model;
 use crate::model::revalidate_models;
+use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Content, ContentType, Item, ItemType, Session};
 use crate::terminal::{DefaultTerminal, Terminal};
@@ -33,12 +34,15 @@ use crate::ui::styled_string::StyledString;
 pub enum AppEvent {
     Command(String),
     ContentCreated { item: Item, content: Content },
+    ContentUpdated { item: Item, content: Content },
     /// Navigate to the previous entry in the command history.
     HistoryPrev,
     /// Navigate to the next entry in the command history.
     HistoryNext,
     /// Cancel the active task.
     Interrupt,
+    /// Report an error from a background task.
+    ErrorMessage(String),
 }
 
 #[derive(Debug)]
@@ -264,6 +268,10 @@ impl App {
     fn submit_prompt(&mut self, prompt: &str) -> AnyResult<()> {
         self.cancel();
 
+        let model = self.selected_model.clone().ok_or("no model selected")?;
+        let provider = Provider::get_by_id(&mut self.conn, model.provider_id)?
+            .ok_or_else(|| format!("no provider found for model '{}'", model.id))?;
+
         let session_id = self.create_session()?;
         let item = Item::create(
             &mut self.conn,
@@ -280,14 +288,16 @@ impl App {
         )?;
 
         let cancel = CancellationToken::new();
-        let agent = Agent {
+        let agent = Agent::new(
             item,
             content,
-            sender: self.send.clone(),
-            client: self.client.clone(),
-            conn: crate::db::open(&self.db_url)?,
-            cancel: cancel.clone(),
-        };
+            provider,
+            model,
+            self.send.clone(),
+            self.client.clone(),
+            crate::db::open(&self.db_url)?,
+            cancel.clone(),
+        );
 
         agent.spawn();
         self.cancel = Some(cancel);
@@ -345,12 +355,20 @@ impl App {
                 self.chat.handle_update(Update::ContentCreated { item: &item, content: &content });
                 Ok(())
             }
+            AppEvent::ContentUpdated { item, content } => {
+                self.chat.handle_update(Update::ContentUpdated { item: &item, content: &content });
+                Ok(())
+            }
             AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
             AppEvent::Interrupt => {
                 if let Some(cancel) = &self.cancel {
                     cancel.cancel();
                 }
                 self.cancel = None;
+                Ok(())
+            }
+            AppEvent::ErrorMessage(msg) => {
+                self.chat.handle_update(Update::ErrorMessage(&msg));
                 Ok(())
             }
         };
