@@ -1,4 +1,5 @@
 use futures::{Stream, StreamExt};
+use log::debug;
 use reqwest_eventsource::Event;
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
@@ -38,14 +39,19 @@ impl Client {
 
     /// Performs an authenticated GET and deserializes the JSON body.
     pub async fn get<T: DeserializeOwned>(&self, endpoint: &str) -> AnyResult<T> {
+        let url = format!("{}{}", self.base_url, endpoint);
         let request = self
             .builder
-            .get(format!("{}{}", self.base_url, endpoint))
+            .get(url.clone())
             .bearer_auth(&self.api_key)
             .build()?;
+        debug!("GET {}", request.url());
         let response = self.inner.execute(request).await?;
         let response = response.error_for_status()?;
-        Ok(response.json().await?)
+        let status = response.status();
+        let body = response.text().await?;
+        debug!("GET {url} -> {status} {body}");
+        Ok(serde_json::from_str::<T>(&body)?)
     }
 
     /// Performs an authenticated POST and returns the SSE event stream.
@@ -61,6 +67,12 @@ impl Client {
             .header("Content-Type", "application/json")
             .json(body)
             .build()?;
+        let request_body = request.body().and_then(|b| b.as_bytes()).unwrap_or(&[]);
+        debug!(
+            "POST {} {}",
+            request.url(),
+            String::from_utf8(request_body.to_vec())?,
+        );
         Ok(self.inner.stream(request))
     }
 }
@@ -281,6 +293,7 @@ impl OpenaiInterface {
                         if trimmed.is_empty() {
                             continue;
                         }
+                        debug!("SSE event {}", trimmed);
                         match serde_json::from_str::<ResponseStreamEvent>(&msg.data)? {
                             ResponseStreamEvent::Created { response } =>
                                 yield InferenceEvent::Created(ResponseCreated { id: response.id }),
