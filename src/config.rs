@@ -5,7 +5,7 @@ use crate::error::AnyResult;
 const APP_DIR_NAME: &str = "nagaicode";
 
 /// Returns the app config directory, creating it if necessary.
-pub fn config_dir() -> AnyResult<PathBuf> {
+pub fn data_dir() -> AnyResult<PathBuf> {
     let base = dirs::data_dir().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,

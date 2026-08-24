@@ -195,6 +195,7 @@ async fn test_app_prompt_agent() {
         Ok(create_message_event(
             r#"{"type":"response.completed","response":{"id":"resp-1","usage":{"input_tokens":12,"output_tokens":18,"output_tokens_details":{"reasoning_tokens":7}}}}"#,
         )),
+        Ok(create_message_event("[DONE]")),
     ];
     app.client_mut()
         .add_response(url, ResponseData::Sse(QueueStream::from(events)));

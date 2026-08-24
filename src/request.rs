@@ -89,6 +89,7 @@ pub mod test_client {
     use crate::error::AnyResult;
     use crate::testing::QueueStream;
     use super::Client;
+    use reqwest_eventsource::Error as SseError;
 
     #[derive(Clone, Debug)]
     pub struct Response {
@@ -221,7 +222,10 @@ pub mod test_client {
                 .get_mut(&url)
                 .and_then(VecDeque::pop_front);
             match data {
-                Some(ResponseData::Sse(stream)) => stream,
+                Some(ResponseData::Sse(mut stream)) => {
+                    stream.0.push_back(Err(SseError::StreamEnded.into()));
+                    stream
+                }
                 Some(ResponseData::Http(_)) => panic!("wrong response type url={url}"),
                 None => panic!("empty queue url={url}"),
             }
@@ -308,9 +312,13 @@ mod tests {
         );
         let stream = client.stream(build_request(Method::POST, stream_url));
         let collected: Vec<AnyResult<Event>> = stream.collect().await;
-        assert_eq!(collected.len(), 2);
+        assert_eq!(collected.len(), 3);
         assert!(matches!(collected[0], Ok(Event::Open)));
         assert_eq!(collected[1].as_ref().ok(), Some(&Event::Message(event)));
+        assert_eq!(
+            collected[2].as_ref().unwrap_err().to_string(),
+            "Stream ended",
+        );
 
         let requests = client.get_requests();
         assert_eq!(requests.len(), 2);

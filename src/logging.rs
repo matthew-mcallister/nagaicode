@@ -11,14 +11,14 @@ mod real {
     use env_logger::Target;
     use log::LevelFilter;
 
-    use crate::config::config_dir;
+    use crate::config::data_dir;
     use crate::error::AnyResult;
 
     const LOG_FILE_PREFIX: &str = "nagai";
 
     /// Returns the path of the log file for this run.
     pub fn log_file_path() -> AnyResult<String> {
-        let mut dir = config_dir()?;
+        let mut dir = data_dir()?;
         dir.push("log");
         std::fs::create_dir_all(&dir)?;
         let timestamp = Local::now().format("%Y-%m-%dT%H%M%S");

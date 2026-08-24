@@ -292,8 +292,11 @@ impl OpenaiInterface {
                     Event::Open => continue,
                     Event::Message(msg) => {
                         let trimmed = msg.data.trim();
-                        if trimmed.is_empty() || trimmed == "[DONE]" {
+                        if trimmed.is_empty() {
                             continue;
+                        }
+                        if trimmed == "[DONE]" {
+                            return;
                         }
                         debug!("SSE event {}", trimmed);
                         match serde_json::from_str::<ResponseStreamEvent>(&msg.data)? {
@@ -478,9 +481,12 @@ mod tests {
         let mut client = DefaultClient::default();
         client.add_response(
             &format!("{BASE_URL}/responses"),
-            sse(vec![Ok(create_message_event(
-                r#"{"type":"response.completed","response":{"id":"resp-custom-1"}}"#,
-            ))]),
+            sse(vec![
+                Ok(create_message_event(
+                    r#"{"type":"response.completed","response":{"id":"resp-custom-1"}}"#,
+                )),
+                Ok(create_message_event("[DONE]")),
+            ]),
         );
 
         let iface = make_iface(client);
@@ -514,6 +520,7 @@ mod tests {
                 Ok(create_message_event(r#"{"type":"response.reasoning_summary_text.delta","delta":"step 2"}"#)),
                 Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"done"}"#)),
                 Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-think-1"}}"#)),
+                Ok(create_message_event("[DONE]")),
             ]),
         );
 

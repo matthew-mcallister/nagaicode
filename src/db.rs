@@ -21,14 +21,14 @@ mod real {
     use diesel::connection::SimpleConnection;
     use diesel::{Connection, SqliteConnection};
 
-    use crate::config::config_dir;
+    use crate::config::data_dir;
     use crate::error::AnyResult;
     use super::run_migrations;
 
     const DB_FILE_NAME: &str = "db.sqlite";
 
     pub fn db_url() -> AnyResult<String> {
-        let mut path = config_dir()?;
+        let mut path = data_dir()?;
         path.push(DB_FILE_NAME);
         Ok(path.to_str().unwrap().to_string())
     }
