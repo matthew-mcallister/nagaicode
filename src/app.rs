@@ -12,6 +12,7 @@ use diesel::SqliteConnection;
 use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::Agent;
@@ -52,6 +53,13 @@ enum Poll {
     Event(AppEvent),
 }
 
+/// A running background agent task, bundling its cancellation token with the
+/// join handle used to await its completion.
+struct Task {
+    cancel: CancellationToken,
+    join: JoinHandle<()>,
+}
+
 pub struct App {
     terminal: DefaultTerminal,
     chat: Chat,
@@ -67,8 +75,8 @@ pub struct App {
     // Channel for async events
     send: UnboundedSender<AppEvent>,
     recv: UnboundedReceiver<AppEvent>,
-    // Cancel token for interrupting agents/async tasks
-    cancel: Option<CancellationToken>,
+    // Active background agent task
+    current_task: Option<Task>,
 }
 
 impl App {
@@ -93,7 +101,7 @@ impl App {
             tools: DefaultToolServer::default(),
             send,
             recv,
-            cancel: None,
+            current_task: None,
         })
     }
 
@@ -130,6 +138,11 @@ impl App {
     /// Returns a mutable reference to the tool server.
     pub fn tools_mut(&mut self) -> &mut DefaultToolServer {
         &mut self.tools
+    }
+
+    /// Returns a mutable reference to the HTTP client.
+    pub fn client_mut(&mut self) -> &mut DefaultClient {
+        &mut self.client
     }
 
     /// Creates a blank canvas matching the chat dimensions and theme.
@@ -184,7 +197,7 @@ impl App {
     /// TODO: delete this
     #[cfg(test)]
     pub fn task_canceled(&self) -> bool {
-        self.cancel.as_ref().is_none()
+        self.current_task.is_none()
     }
 
     /// Spawns a background task to revalidate stale model lists.
@@ -257,12 +270,27 @@ impl App {
         Ok(id)
     }
 
+    /// Processes any events sent by the active task that are still pending.
+    pub fn process_pending_events(&mut self) {
+        while let Ok(event) = self.recv.try_recv() {
+            self.process_event(event);
+        }
+    }
+
     /// Cancels the active task.
     fn cancel(&mut self) {
-        if let Some(cancel) = self.cancel.as_mut() {
-            cancel.cancel();
-            self.cancel = None;
+        if let Some(task) = self.current_task.as_mut() {
+            task.cancel.cancel();
+            self.current_task = None;
         }
+    }
+
+    /// Awaits completion of the active task, if any.
+    pub async fn await_task(&mut self) -> AnyResult<()> {
+        if let Some(task) = self.current_task.take() {
+            task.join.await?;
+        }
+        Ok(())
     }
 
     /// Spawns an agent to handle the submitted prompt.
@@ -305,8 +333,8 @@ impl App {
             cancel.clone(),
         );
 
-        agent.spawn();
-        self.cancel = Some(cancel);
+        let join = agent.spawn();
+        self.current_task = Some(Task { cancel, join });
 
         Ok(())
     }
@@ -367,10 +395,11 @@ impl App {
             }
             AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
             AppEvent::Interrupt => {
-                if let Some(cancel) = &self.cancel {
-                    cancel.cancel();
+                if let Some(task) = &self.current_task {
+                    task.cancel.cancel();
                 }
-                self.cancel = None;
+                self.current_task = None;
+                self.process_pending_events();
                 Ok(())
             }
             AppEvent::ErrorMessage(msg) => {
