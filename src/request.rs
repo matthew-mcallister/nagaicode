@@ -20,6 +20,9 @@ pub trait Response: Sized {
     fn headers(&self) -> &HeaderMap;
 
     #[allow(async_fn_in_trait)]
+    async fn text(self) -> AnyResult<String>;
+
+    #[allow(async_fn_in_trait)]
     async fn json<T: DeserializeOwned>(self) -> AnyResult<T>;
 
     fn error_for_status(self) -> AnyResult<Self>;
@@ -32,6 +35,10 @@ impl Response for reqwest::Response {
 
     fn headers(&self) -> &HeaderMap {
         self.headers()
+    }
+
+    async fn text(self) -> AnyResult<String> {
+        Ok(self.text().await?)
     }
 
     async fn json<T: DeserializeOwned>(self) -> AnyResult<T> {
@@ -97,6 +104,10 @@ pub mod test_client {
 
         fn headers(&self) -> &HeaderMap {
             &self.headers
+        }
+
+        async fn text(self) -> AnyResult<String> {
+            Ok(self.body.clone())
         }
 
         async fn json<T: serde::de::DeserializeOwned>(self) -> AnyResult<T> {

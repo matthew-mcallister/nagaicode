@@ -18,31 +18,17 @@ fn run_migrations(conn: &mut SqliteConnection) -> AnyResult<()> {
 
 #[cfg(not(test))]
 mod real {
-    use std::path::PathBuf;
-
     use diesel::connection::SimpleConnection;
     use diesel::{Connection, SqliteConnection};
 
+    use crate::config::config_dir;
     use crate::error::AnyResult;
     use super::run_migrations;
 
-    const APP_DIR_NAME: &str = "nagaicode";
     const DB_FILE_NAME: &str = "db.sqlite";
 
-    pub fn db_dir() -> AnyResult<PathBuf> {
-        let base = dirs::data_dir().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "could not determine the user data directory",
-            )
-        })?;
-        let dir = base.join(APP_DIR_NAME);
-        std::fs::create_dir_all(&dir)?;
-        Ok(dir)
-    }
-
     pub fn db_url() -> AnyResult<String> {
-        let mut path = db_dir()?;
+        let mut path = config_dir()?;
         path.push(DB_FILE_NAME);
         Ok(path.to_str().unwrap().to_string())
     }
