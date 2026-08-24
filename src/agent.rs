@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
-use crate::interface::{InferenceEvent, InferenceParams};
+use crate::interface::{ChatMessage, ChatRole, InferenceEvent, InferenceParams};
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
@@ -64,7 +64,10 @@ impl Agent {
         }
         let interface = self.provider.create_interface(&self.client)?;
 
-        let stream = interface.generate(Self::build_params(&self.model.id));
+        let history = self.build_history();
+        let mut params = self.build_params();
+        params.input = &history;
+        let stream = interface.generate(params);
         tokio::pin!(stream);
 
         loop {
@@ -92,14 +95,21 @@ impl Agent {
         })
     }
 
-    fn build_params<'a>(model_id: &'a str) -> InferenceParams<'a> {
+    fn build_params(&self) -> InferenceParams<'_> {
         InferenceParams {
-            model_id,
+            model_id: &self.model.id,
             system_prompt: "",
             temperature: 0.7,
             reasoning_effort: None,
             input: &[],
         }
+    }
+
+    fn build_history(&self) -> Vec<ChatMessage<'_>> {
+        vec![ChatMessage {
+            role: ChatRole::User,
+            content: &self.content.value,
+        }]
     }
 
     fn handle_event(&mut self, event: InferenceEvent) -> AnyResult<Option<AppEvent>> {

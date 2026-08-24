@@ -287,6 +287,11 @@ impl App {
             prompt,
         )?;
 
+        let _ = self.send.send(AppEvent::ContentCreated {
+            item: item.clone(),
+            content: content.clone(),
+        });
+
         let cancel = CancellationToken::new();
         let agent = Agent::new(
             item,
