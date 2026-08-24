@@ -33,3 +33,4 @@ derive_more = { version = "1", features = ["from"] }
 fnv = "1.0.7"
 tokio-stream = "0.1.19"
 pin-project = "1.1.13"
+url = "2.5.8"

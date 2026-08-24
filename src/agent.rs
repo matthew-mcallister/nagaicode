@@ -215,9 +215,9 @@ mod tests {
     async fn test_spawn_cancels() {
         let mut conn = crate::db::open_new().unwrap();
         let session = Session::create(&mut conn, "Session").expect("create session");
-        let item = Item::create(&mut conn, session.id, None, ItemType::User, None)
+        let prompt = Item::create(&mut conn, session.id, None, ItemType::User, None)
             .expect("create item");
-        let content = Content::create(&mut conn, item.id, ContentType::Text, "hello")
+        let content = Content::create(&mut conn, prompt.id, ContentType::Text, "hello")
             .expect("create content");
         let provider =
             Provider::create(&mut conn, "test", InterfaceId::Openai, "key123", None)
@@ -227,7 +227,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let (sender, mut recv) = unbounded_channel();
         let agent = Agent::new(
-            item,
+            prompt,
             content,
             provider,
             model,

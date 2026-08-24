@@ -1,6 +1,8 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
+use serde_json::{Value, json};
 
 use crate::app::AppEvent;
+use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::session::{Content, Item};
 use crate::ui::canvas::Canvas;
 use crate::ui::style::Theme;
@@ -15,6 +17,16 @@ pub enum FocusState {
     History,
     #[default]
     CommandEditor,
+}
+
+/// Exposes the focus state as a string: `"history"` or `"command_editor"`.
+impl ToJson for FocusState {
+    fn to_json(self) -> Value {
+        match self {
+            FocusState::History => json!("history"),
+            FocusState::CommandEditor => json!("command_editor"),
+        }
+    }
 }
 
 /// Stacks components vertically. The command editor is anchored to the bottom
@@ -205,5 +217,56 @@ impl Component for StackedView {
         }
         self.input.handle_update(());
         self.resize();
+    }
+}
+
+/// Exposed fields:
+/// - width: number
+/// - height: number
+/// - focus_state: string
+/// - history: HistoryView
+/// - input: CommandEditor
+impl DataQuery for StackedView {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "width": self.width,
+                "height": self.height,
+                "focus_state": self.focus_state.to_json(),
+                "history": self.history.query("/")?,
+                "input": self.input.query("/")?,
+            }))),
+            "width" => Ok(QueryField::Value(json!(self.width))),
+            "height" => Ok(QueryField::Value(json!(self.height))),
+            "focus_state" => Ok(QueryField::Value(self.focus_state.to_json())),
+            "history" => Ok(QueryField::DataQuery(&self.history)),
+            "input" => Ok(QueryField::DataQuery(&self.input)),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::style::THEME_DARK;
+    use serde_json::json;
+
+    #[test]
+    fn test_query() {
+        let stacked = StackedView::new(80, 24, 8, &THEME_DARK);
+        let expected = json!({
+            "width": 80,
+            "height": 24,
+            "focus_state": "command_editor",
+            "history": stacked.history.query("/").unwrap(),
+            "input": stacked.input.query("/").unwrap(),
+        });
+        assert_eq!(stacked.query("/").unwrap(), expected);
+        assert_eq!(stacked.query("/width").unwrap(), json!(80));
+        assert_eq!(stacked.query("/height").unwrap(), json!(24));
+        assert_eq!(stacked.query("/focus_state").unwrap(), json!("command_editor"));
+        assert_eq!(stacked.query("/history").unwrap(), stacked.history.query("/").unwrap());
+        assert_eq!(stacked.query("/input").unwrap(), stacked.input.query("/").unwrap());
     }
 }

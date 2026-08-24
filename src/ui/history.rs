@@ -3,8 +3,10 @@
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use fnv::FnvHashMap;
+use serde_json::{Value, json};
 
 use crate::arena::{Arena, Id};
+use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::session::{Content, ContentType, Item, ItemType};
 use crate::ui::canvas::Canvas;
 use crate::ui::markdown::{MarkdownResult, ResumePoint};
@@ -245,6 +247,27 @@ pub enum HistoryItemType {
     CommandOutput,
 }
 
+impl HistoryItemType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HistoryItemType::Help => "help",
+            HistoryItemType::Error => "error",
+            HistoryItemType::User => "user",
+            HistoryItemType::Thought => "thought",
+            HistoryItemType::Response => "response",
+            HistoryItemType::CommandPrompt => "command_prompt",
+            HistoryItemType::CommandOutput => "command_output",
+        }
+    }
+}
+
+/// Exposes the item type as a string, matching `as_str()`.
+impl ToJson for HistoryItemType {
+    fn to_json(self) -> Value {
+        self.as_str().into()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HistoryItem {
     content: String,
@@ -390,6 +413,41 @@ impl HistoryItem {
     }
 }
 
+/// Exposed fields:
+///
+/// - content: string
+/// - ty: string
+/// - resume_point:
+///   - offset: number
+///   - row: number
+/// - content_id: number | null
+/// - first_row: id
+/// - last_row: id
+/// - num_rows: number
+impl DataQuery for HistoryItem {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "content": self.content,
+                "ty": self.ty.as_str(),
+                "resume_point": self.resume_point.query("/")?,
+                "content_id": self.content_id,
+                "first_row": self.first_row.to_json(),
+                "last_row": self.last_row.to_json(),
+                "num_rows": self.num_rows,
+            }))),
+            "content" => Ok(QueryField::Value(json!(self.content))),
+            "ty" => Ok(QueryField::Value(json!(self.ty.as_str()))),
+            "resume_point" => Ok(QueryField::DataQuery(&self.resume_point)),
+            "content_id" => Ok(QueryField::Value(json!(self.content_id))),
+            "first_row" => Ok(QueryField::Value(self.first_row.to_json())),
+            "last_row" => Ok(QueryField::Value(self.last_row.to_json())),
+            "num_rows" => Ok(QueryField::Value(json!(self.num_rows))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct History {
     item: Arena<HistoryItem>,
@@ -444,6 +502,17 @@ impl History {
     pub fn num_rows(&self) -> usize {
         // Subtract header node
         self.rows.len() - 1
+    }
+
+    fn item_ids(&self) -> Vec<Id<HistoryItem>> {
+        let mut items: Vec<Id<HistoryItem>> = Vec::new();
+        for (_, row) in self.iter_range(self.head, self.last_row()) {
+            let item = row.item;
+            if items.last() != Some(&item) {
+                items.push(item);
+            }
+        }
+        items
     }
 
     fn first_row(&self) -> Id<HistoryRow> {
@@ -741,6 +810,54 @@ impl Component for History {
     }
 }
 
+fn by_content_id_json(map: &FnvHashMap<i32, Id<HistoryItem>>) -> Value {
+    map.iter()
+        .map(|(k, id)| (k.to_string(), (*id).to_json()))
+        .collect()
+}
+
+/// Exposed fields:
+/// - num_rows: number
+/// - items: HistoryItem[] (in linked-list order)
+/// - width: number
+/// - max_height: number
+/// - head: id
+/// - viewport_top: id
+/// - viewport_top_pos: number
+/// - viewport_bottom: id
+/// - viewport_bottom_pos: number
+/// - by_content_id: Map<string, id>
+// rows is intentionally not exposed as of yet
+impl DataQuery for History {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "num_rows": self.num_rows(),
+                "items": HistoryItemsData { history: self }.query("/")?,
+                "width": self.width,
+                "max_height": self.max_height,
+                "head": self.head.to_json(),
+                "viewport_top": self.viewport_top.to_json(),
+                "viewport_top_pos": self.viewport_top_pos,
+                "viewport_bottom": self.viewport_bottom.to_json(),
+                "viewport_bottom_pos": self.viewport_bottom_pos,
+                "by_content_id": by_content_id_json(&self.by_content_id),
+            }))),
+            "num_rows" => Ok(QueryField::Value(json!(self.num_rows()))),
+            "items" => Ok(QueryField::Boxed(Box::new(HistoryItemsData { history: self }))),
+            "width" => Ok(QueryField::Value(json!(self.width))),
+            "max_height" => Ok(QueryField::Value(json!(self.max_height))),
+            "head" => Ok(QueryField::Value(self.head.to_json())),
+            "viewport_top" => Ok(QueryField::Value(self.viewport_top.to_json())),
+            "viewport_top_pos" => Ok(QueryField::Value(json!(self.viewport_top_pos))),
+            "viewport_bottom" => Ok(QueryField::Value(self.viewport_bottom.to_json())),
+            "viewport_bottom_pos" => Ok(QueryField::Value(json!(self.viewport_bottom_pos))),
+            "by_content_id" => Ok(QueryField::Value(by_content_id_json(&self.by_content_id))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct HistoryRowIter<'i> {
     rows: &'i Arena<HistoryRow>,
@@ -778,6 +895,34 @@ impl<'i> DoubleEndedIterator for HistoryRowIter<'i> {
 
 impl<'i> std::iter::FusedIterator for HistoryRowIter<'i> {}
 
+/// Helper which implements DataQuery for `History.items`. It can fetch a
+/// single item or all items at once by iteration.
+#[derive(Debug)]
+struct HistoryItemsData<'a> {
+    history: &'a History,
+}
+
+impl<'h> DataQuery for HistoryItemsData<'h> {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        let items = self.history.item_ids();
+        if field.is_empty() {
+            let arr: Vec<Value> = items
+                .iter()
+                .map(|id| self.history.item[*id].query("/"))
+                .collect::<Result<_, _>>()?;
+            Ok(QueryField::Value(arr.into()))
+        } else {
+            let index: usize = field
+                .parse()
+                .map_err(|_| QueryError::InvalidField(field.to_string()))?;
+            let id = items
+                .get(index)
+                .ok_or_else(|| QueryError::InvalidField(field.to_string()))?;
+            Ok(QueryField::DataQuery(&self.history.item[*id]))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -785,6 +930,7 @@ mod tests {
     use crate::ui::canvas::render_canvas;
     use crate::ui::style::THEME_DARK;
     use crate::ui::style::testing::SetItalic;
+    use serde_json::json;
 
     fn history(width: usize, max_height: usize) -> History {
         History::new(width, max_height, &THEME_DARK)
@@ -1062,5 +1208,63 @@ mod tests {
         whole.add_item(HistoryItemType::Response, full.into());
 
         assert_eq!(render_draw(&incremental), render_draw(&whole));
+    }
+
+    #[test]
+    fn test_history_item_query() {
+        let item = HistoryItem {
+            content: "hello".into(),
+            ty: HistoryItemType::Response,
+            resume_point: ResumePoint { offset: 0, row: 0 },
+            content_id: None,
+            first_row: Id::null(),
+            last_row: Id::null(),
+            num_rows: 0,
+        };
+        let expected = json!({
+            "content": "hello",
+            "ty": "response",
+            "resume_point": item.resume_point.query("/").unwrap(),
+            "content_id": null,
+            "first_row": item.first_row.to_json(),
+            "last_row": item.last_row.to_json(),
+            "num_rows": 0,
+        });
+        assert_eq!(item.query("/").unwrap(), expected);
+        assert_eq!(item.query("/content").unwrap(), json!("hello"));
+        assert_eq!(item.query("/ty").unwrap(), json!("response"));
+        assert_eq!(item.query("/resume_point").unwrap(), item.resume_point.query("/").unwrap());
+        assert_eq!(item.query("/content_id").unwrap(), json!(null));
+        assert_eq!(item.query("/first_row").unwrap(), item.first_row.to_json());
+        assert_eq!(item.query("/last_row").unwrap(), item.last_row.to_json());
+        assert_eq!(item.query("/num_rows").unwrap(), json!(0));
+    }
+
+    #[test]
+    fn test_history_query() {
+        let history = history(20, 5);
+        let expected = json!({
+            "num_rows": 0,
+            "items": [],
+            "width": 20,
+            "max_height": 5,
+            "head": history.head.to_json(),
+            "viewport_top": history.viewport_top.to_json(),
+            "viewport_top_pos": 0,
+            "viewport_bottom": history.viewport_bottom.to_json(),
+            "viewport_bottom_pos": 0,
+            "by_content_id": {},
+        });
+        assert_eq!(history.query("/").unwrap(), expected);
+        assert_eq!(history.query("/num_rows").unwrap(), json!(0));
+        assert_eq!(history.query("/items").unwrap(), json!([]));
+        assert_eq!(history.query("/width").unwrap(), json!(20));
+        assert_eq!(history.query("/max_height").unwrap(), json!(5));
+        assert_eq!(history.query("/head").unwrap(), history.head.to_json());
+        assert_eq!(history.query("/viewport_top").unwrap(), history.viewport_top.to_json());
+        assert_eq!(history.query("/viewport_top_pos").unwrap(), json!(0));
+        assert_eq!(history.query("/viewport_bottom").unwrap(), history.viewport_bottom.to_json());
+        assert_eq!(history.query("/viewport_bottom_pos").unwrap(), json!(0));
+        assert_eq!(history.query("/by_content_id").unwrap(), json!({}));
     }
 }

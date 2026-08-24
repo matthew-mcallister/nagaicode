@@ -1,7 +1,9 @@
 use crossterm::event::Event;
 use dedent::dedent;
+use serde_json::json;
 
 use crate::app::AppEvent;
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::session::{Content, Item};
 use crate::ui::canvas::Canvas;
 use crate::ui::padded::Padded;
@@ -118,5 +120,36 @@ impl Component for Chat {
         if let Ok(child_update) = stacked_view::Update::try_from(update) {
             self.stacked.handle_update(child_update);
         }
+    }
+}
+
+/// Exposed fields:
+/// - stacked: Padded<StackedView>
+impl DataQuery for Chat {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "stacked": self.stacked.query("/")?,
+            }))),
+            "stacked" => Ok(QueryField::DataQuery(&self.stacked)),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::style::THEME_DARK;
+    use serde_json::json;
+
+    #[test]
+    fn test_query() {
+        let chat = Chat::new(80, 24, &THEME_DARK);
+        let expected = json!({
+            "stacked": chat.stacked.query("/").unwrap(),
+        });
+        assert_eq!(chat.query("/").unwrap(), expected);
+        assert_eq!(chat.query("/stacked").unwrap(), chat.stacked.query("/").unwrap());
     }
 }

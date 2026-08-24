@@ -1,9 +1,11 @@
 // TODO: select mode, disables all horizontal padding
 
-use crossterm::style::Color;
+use serde_json::json;
 
-use crate::ui::canvas::Canvas;
+use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::ui::Component;
+use crate::ui::canvas::Canvas;
+use crate::ui::style::Color;
 
 /// Adds padding around a UI component. Also styles the background.
 #[derive(Debug)]
@@ -103,5 +105,61 @@ impl<C: Component> Component for Padded<C> {
 
     fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
         self.inner.handle_update(update)
+    }
+}
+
+/// Exposed fields:
+/// - h_padding: number
+/// - v_padding: number
+/// - background_color: color | null
+/// - inner: C
+impl<C: DataQuery> DataQuery for Padded<C> {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => {
+                let background_color = match self.background_color {
+                    Some(c) => c.to_json(),
+                    None => json!(null),
+                };
+                Ok(QueryField::Value(json!({
+                    "h_padding": self.h_padding,
+                    "v_padding": self.v_padding,
+                    "background_color": background_color,
+                    "inner": self.inner.query("/")?,
+                })))
+            }
+            "h_padding" => Ok(QueryField::Value(json!(self.h_padding))),
+            "v_padding" => Ok(QueryField::Value(json!(self.v_padding))),
+            "background_color" => Ok(QueryField::Value(match self.background_color {
+                Some(c) => c.to_json(),
+                None => json!(null),
+            })),
+            "inner" => Ok(QueryField::DataQuery(&self.inner)),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::scroll_bar::ScrollBar;
+    use crate::ui::style::THEME_DARK;
+    use serde_json::json;
+
+    #[test]
+    fn test_query() {
+        let padded = Padded::new(ScrollBar::new(&THEME_DARK), 2, 1, Some(Color::White));
+        let expected = json!({
+            "h_padding": 2,
+            "v_padding": 1,
+            "background_color": "white",
+            "inner": padded.inner.query("/").unwrap(),
+        });
+        assert_eq!(padded.query("/").unwrap(), expected);
+        assert_eq!(padded.query("/h_padding").unwrap(), json!(2));
+        assert_eq!(padded.query("/v_padding").unwrap(), json!(1));
+        assert_eq!(padded.query("/background_color").unwrap(), json!("white"));
+        assert_eq!(padded.query("/inner").unwrap(), padded.inner.query("/").unwrap());
     }
 }

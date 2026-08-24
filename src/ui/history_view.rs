@@ -1,7 +1,9 @@
 // FIXME: scroll bar should be hidden when history fits entirely onto screen
 
 use crossterm::event::Event;
+use serde_json::json;
 
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::session::{Content, Item};
 use crate::ui::canvas::Canvas;
 use crate::ui::history::{self, History};
@@ -118,5 +120,41 @@ impl Component for HistoryView {
         }
         self.scroll_bar.handle_update(());
         self.sync_scroll_bar();
+    }
+}
+
+/// Exposed fields:
+/// - history: History
+/// - scroll_bar: ScrollBar
+impl DataQuery for HistoryView {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "history": self.history.query("/")?,
+                "scroll_bar": self.scroll_bar.query("/")?,
+            }))),
+            "history" => Ok(QueryField::DataQuery(&self.history)),
+            "scroll_bar" => Ok(QueryField::DataQuery(&self.scroll_bar)),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::style::THEME_DARK;
+    use serde_json::json;
+
+    #[test]
+    fn test_query() {
+        let view = HistoryView::new(20, 5, &THEME_DARK);
+        let expected = json!({
+            "history": view.history.query("/").unwrap(),
+            "scroll_bar": view.scroll_bar.query("/").unwrap(),
+        });
+        assert_eq!(view.query("/").unwrap(), expected);
+        assert_eq!(view.query("/history").unwrap(), view.history.query("/").unwrap());
+        assert_eq!(view.query("/scroll_bar").unwrap(), view.scroll_bar.query("/").unwrap());
     }
 }

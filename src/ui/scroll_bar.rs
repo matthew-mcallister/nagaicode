@@ -4,7 +4,9 @@
 // TODO: Make scroll bar full width and switch to 1/8th row increment using
 // box shadow drawing chars and reversed colors.
 use crossterm::event::Event;
+use serde_json::json;
 
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::ui::canvas::Canvas;
 use crate::ui::style::Theme;
 use crate::ui::Component;
@@ -148,6 +150,35 @@ impl Component for ScrollBar {
     }
 }
 
+/// Exposed fields:
+/// - height: number
+/// - width: number
+/// - num_rows: number
+/// - top: number
+/// - bottom: number
+/// - focused: bool
+impl DataQuery for ScrollBar {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "height": self.height,
+                "width": self.width,
+                "num_rows": self.num_rows,
+                "top": self.top,
+                "bottom": self.bottom,
+                "focused": self.focused,
+            }))),
+            "height" => Ok(QueryField::Value(json!(self.height))),
+            "width" => Ok(QueryField::Value(json!(self.width))),
+            "num_rows" => Ok(QueryField::Value(json!(self.num_rows))),
+            "top" => Ok(QueryField::Value(json!(self.top))),
+            "bottom" => Ok(QueryField::Value(json!(self.bottom))),
+            "focused" => Ok(QueryField::Value(json!(self.focused))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::Command;
@@ -156,6 +187,7 @@ mod tests {
     use super::*;
     use crate::ui::style::{THEME_DARK, TextStyle};
     use crate::ui::styled_string::StyledString;
+    use serde_json::json;
 
     fn bar(height: usize, width: usize, num_rows: usize, top: usize, bottom: usize) -> ScrollBar {
         let mut bar = ScrollBar::new(&THEME_DARK);
@@ -184,7 +216,7 @@ mod tests {
     fn style_prefix(style: TextStyle) -> String {
         let mut out = String::new();
         let mut content: ContentStyle = style.into();
-        content.background_color = Some(THEME_DARK.bg_base);
+        content.background_color = Some(THEME_DARK.bg_base.into());
         SetStyle(content).write_ansi(&mut out).unwrap();
         out
     }
@@ -289,5 +321,25 @@ mod tests {
         bar.set_num_rows(8);
         bar.set_viewport(2, 5);
         assert_eq!(bar.scroll_bar_range(), (1, 3));
+    }
+
+    #[test]
+    fn test_query() {
+        let bar = ScrollBar::new(&THEME_DARK);
+        let expected = json!({
+            "height": 0,
+            "width": 0,
+            "num_rows": 0,
+            "top": 0,
+            "bottom": 0,
+            "focused": false,
+        });
+        assert_eq!(bar.query("/").unwrap(), expected);
+        assert_eq!(bar.query("/height").unwrap(), json!(0));
+        assert_eq!(bar.query("/width").unwrap(), json!(0));
+        assert_eq!(bar.query("/num_rows").unwrap(), json!(0));
+        assert_eq!(bar.query("/top").unwrap(), json!(0));
+        assert_eq!(bar.query("/bottom").unwrap(), json!(0));
+        assert_eq!(bar.query("/focused").unwrap(), json!(false));
     }
 }

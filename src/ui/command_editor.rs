@@ -1,6 +1,8 @@
 use crossterm::event::Event;
+use serde_json::json;
 
 use crate::app::AppEvent;
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::ui::canvas::Canvas;
 use crate::ui::input_box::InputBox;
 use crate::ui::padded::Padded;
@@ -149,6 +151,32 @@ impl Component for CommandEditor {
     }
 }
 
+/// Exposed fields:
+/// - input: Padded<InputBox>
+/// - scroll_bar: ScrollBar
+/// - command_history: string[]
+/// - command_history_pos: number
+/// - buffered_command: string
+impl DataQuery for CommandEditor {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "input": self.input.query("/")?,
+                "scroll_bar": self.scroll_bar.query("/")?,
+                "command_history": self.command_history,
+                "command_history_pos": self.command_history_pos,
+                "buffered_command": self.buffered_command,
+            }))),
+            "input" => Ok(QueryField::DataQuery(&self.input)),
+            "scroll_bar" => Ok(QueryField::DataQuery(&self.scroll_bar)),
+            "command_history" => Ok(QueryField::Value(json!(self.command_history))),
+            "command_history_pos" => Ok(QueryField::Value(json!(self.command_history_pos))),
+            "buffered_command" => Ok(QueryField::Value(json!(self.buffered_command))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::Command;
@@ -157,6 +185,7 @@ mod tests {
     use super::*;
     use crate::ui::style::{Style, THEME_DARK, UpdateStyle};
     use crate::ui::styled_string::StyledString;
+    use serde_json::json;
 
     fn render(editor: &CommandEditor) -> String {
         let mut rows: Vec<StyledString> = (0..editor.height())
@@ -176,7 +205,7 @@ mod tests {
     fn input_prefix() -> String {
         let mut out = String::new();
         let mut content: ContentStyle = THEME_DARK.text_base.into();
-        content.background_color = Some(THEME_DARK.bg_input_box);
+        content.background_color = Some(THEME_DARK.bg_input_box.into());
         SetStyle(content).write_ansi(&mut out).unwrap();
         out
     }
@@ -250,5 +279,23 @@ mod tests {
 
         editor.set_width(12);
         assert_eq!(editor.width(), 12);
+    }
+
+    #[test]
+    fn test_query() {
+        let editor = CommandEditor::new(10, 5, &THEME_DARK);
+        let expected = json!({
+            "input": editor.input.query("/").unwrap(),
+            "scroll_bar": editor.scroll_bar.query("/").unwrap(),
+            "command_history": [],
+            "command_history_pos": 0,
+            "buffered_command": "",
+        });
+        assert_eq!(editor.query("/").unwrap(), expected);
+        assert_eq!(editor.query("/input").unwrap(), editor.input.query("/").unwrap());
+        assert_eq!(editor.query("/scroll_bar").unwrap(), editor.scroll_bar.query("/").unwrap());
+        assert_eq!(editor.query("/command_history").unwrap(), json!([]));
+        assert_eq!(editor.query("/command_history_pos").unwrap(), json!(0));
+        assert_eq!(editor.query("/buffered_command").unwrap(), json!(""));
     }
 }

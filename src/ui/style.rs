@@ -2,11 +2,60 @@
 
 use crossterm::Command;
 use crossterm::style::{
-    Attribute, Attributes, Color, ContentStyle, SetAttribute, SetBackgroundColor, SetForegroundColor, SetStyle
+    Attribute, Attributes, Color as CrosstermColor, ContentStyle, SetAttribute, SetBackgroundColor,
+    SetForegroundColor, SetStyle,
 };
 
 pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb { r, g, b }
+}
+
+/// Port of Color from crossterm
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
+pub enum Color {
+    Black,
+    DarkGrey,
+    Red,
+    DarkRed,
+    Green,
+    DarkGreen,
+    Yellow,
+    DarkYellow,
+    Blue,
+    DarkBlue,
+    Magenta,
+    DarkMagenta,
+    Cyan,
+    DarkCyan,
+    White,
+    Grey,
+    Rgb { r: u8, g: u8, b: u8 },
+    AnsiValue(u8),
+}
+
+impl From<Color> for CrosstermColor {
+    fn from(value: Color) -> Self {
+        match value {
+            Color::Black => CrosstermColor::Black,
+            Color::DarkGrey => CrosstermColor::DarkGrey,
+            Color::Red => CrosstermColor::Red,
+            Color::DarkRed => CrosstermColor::DarkRed,
+            Color::Green => CrosstermColor::Green,
+            Color::DarkGreen => CrosstermColor::DarkGreen,
+            Color::Yellow => CrosstermColor::Yellow,
+            Color::DarkYellow => CrosstermColor::DarkYellow,
+            Color::Blue => CrosstermColor::Blue,
+            Color::DarkBlue => CrosstermColor::DarkBlue,
+            Color::Magenta => CrosstermColor::Magenta,
+            Color::DarkMagenta => CrosstermColor::DarkMagenta,
+            Color::Cyan => CrosstermColor::Cyan,
+            Color::DarkCyan => CrosstermColor::DarkCyan,
+            Color::White => CrosstermColor::White,
+            Color::Grey => CrosstermColor::Grey,
+            Color::Rgb { r, g, b } => CrosstermColor::Rgb { r, g , b },
+            Color::AnsiValue(v) => CrosstermColor::AnsiValue(v),
+        }
+    }
 }
 
 macro_rules! text_style {
@@ -46,7 +95,7 @@ impl From<TextStyle> for ContentStyle {
             attributes.unset(Attribute::NotCrossedOut);
         }
         Self {
-            foreground_color: Some(value.fg_color),
+            foreground_color: Some(value.fg_color.into()),
             background_color: None,
             underline_color: None,
             attributes,
@@ -95,7 +144,7 @@ pub struct Style {
 impl From<Style> for ContentStyle {
     fn from(value: Style) -> Self {
         let mut style: ContentStyle = value.text.into();
-        style.background_color = Some(value.bg_color);
+        style.background_color = Some(value.bg_color.into());
         style
     }
 }
@@ -156,7 +205,7 @@ impl Command for UpdateStyle {
 
         let (old, new) = (old_style.text, new_style.text);
         if old.fg_color != new.fg_color {
-            SetForegroundColor(new.fg_color).write_ansi(f)?;
+            SetForegroundColor(new.fg_color.into()).write_ansi(f)?;
         }
         if old.bold != new.bold {
             SetAttribute(if new.bold {
@@ -183,7 +232,7 @@ impl Command for UpdateStyle {
             .write_ansi(f)?;
         }
         if old_style.bg_color != new_style.bg_color {
-            SetBackgroundColor(new_style.bg_color).write_ansi(f)?;
+            SetBackgroundColor(new_style.bg_color.into()).write_ansi(f)?;
         }
 
         Ok(())

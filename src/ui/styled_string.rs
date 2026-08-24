@@ -1,7 +1,7 @@
 use crossterm::Command;
-use crossterm::style::{Color, Print, SetStyle};
+use crossterm::style::{Print, SetStyle};
 
-use crate::ui::style::{Style, TextStyle, UpdateStyle};
+use crate::ui::style::{Color, Style, TextStyle, UpdateStyle};
 use crate::ui::text::SPACES;
 
 /// Saved state for backtracking

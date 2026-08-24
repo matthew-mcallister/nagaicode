@@ -8,7 +8,8 @@ use std::num::NonZeroU64;
 pub struct Id<T>(NonZeroU64, PhantomData<T>);
 
 impl<T> Id<T> {
-    fn new(index: u32, generation: u32) -> Self {
+    /// Constructs an ID from index and generation.
+    pub fn new(index: u32, generation: u32) -> Self {
         Id(NonZeroU64::new(((generation as u64) << 32) | (index as u64)).unwrap(), PhantomData)
     }
 
@@ -19,11 +20,13 @@ impl<T> Id<T> {
         Self::new(u32::MAX, 0)
     }
 
-    fn index(self) -> u32 {
+    /// Returns the index pointed to by the ID.
+    pub fn index(self) -> u32 {
         u64::from(self.0) as u32
     }
 
-    fn generation(self) -> u32 {
+    /// Returns the arena slot generation referenced by the ID.
+    pub fn generation(self) -> u32 {
         (u64::from(self.0) >> 32) as u32
     }
 }
