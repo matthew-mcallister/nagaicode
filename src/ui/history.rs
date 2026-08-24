@@ -21,14 +21,14 @@ pub(crate) fn render_help(
     content: &str,
 ) -> Vec<StyledString> {
     content.lines().flat_map(|line|
-        wrap_line(width - 6, line)
+        wrap_line(width - 4, line)
             .into_iter()
             .map(|row| {
                 let style = Style::new(theme.text_subtle, theme.bg_base);
                 let mut s = StyledString::new(style, width + 4);
-                s.push("  ▐ ", 4);
+                s.push("▐ ", 2);
                 s.set_text(theme.text_quote);
-                s.push(&row.to_padded_string(width - 6), width - 6);
+                s.push(&row.to_padded_string(width - 4), width - 4);
                 s.push("  ", 2);
                 s
             })
@@ -41,14 +41,14 @@ pub(crate) fn render_error(
     content: &str,
 ) -> Vec<StyledString> {
     content.lines().flat_map(|line|
-        wrap_line(width - 6, line)
+        wrap_line(width - 4, line)
             .into_iter()
             .map(|row| {
                 let style = Style::new(theme.text_error, theme.bg_base);
                 let mut s = StyledString::new(style, width + 4);
-                s.push("  ▐ ", 4);
+                s.push("▐ ", 2);
                 s.set_text(theme.text_subtle);
-                s.push(&row.to_padded_string(width - 6), width - 6);
+                s.push(&row.to_padded_string(width - 4), width - 4);
                 s.push("  ", 2);
                 s
             })
@@ -972,7 +972,7 @@ mod tests {
 
         assert_eq!(
             render_draw(&h),
-            format!("{help_style}  ▐ {italic}hello   \n{base_style}            "),
+            format!("{help_style}▐ {italic}hello     \n{base_style}            "),
         );
 
         let mut h = history(12, 2);
@@ -980,10 +980,10 @@ mod tests {
         assert_eq!(h.num_rows(), 3);
         assert_eq!(h.height(), 2);
 
-        assert_eq!(render_draw(&h), format!("{help_style}  ▐ {italic}two     \n{base_style}            "));
+        assert_eq!(render_draw(&h), format!("{help_style}▐ {italic}two       \n{base_style}            "));
 
         h.scroll_up(1);
-        assert_eq!(render_draw(&h), format!("{help_style}  ▐ {italic}one     \n{help_style}  ▐ {italic}two     "));
+        assert_eq!(render_draw(&h), format!("{help_style}▐ {italic}one       \n{help_style}▐ {italic}two       "));
 
         h.set_width(14);
         assert_eq!(h.width(), 14);
@@ -1014,9 +1014,9 @@ mod tests {
             render_canvas(&mut lines[..])
         }
 
-        assert_eq!(render("hello", 14), format!("{help_style}  ▐ {italic}hello     "));
-        assert_eq!(render("foo\nbar", 12), format!("{help_style}  ▐ {italic}foo     \n{help_style}  ▐ {italic}bar     "));
-        assert_eq!(render("hello world", 12), format!("{help_style}  ▐ {italic}hello   \n{help_style}  ▐ {italic}world   "));
+        assert_eq!(render("hello", 14), format!("{help_style}▐ {italic}hello       "));
+        assert_eq!(render("foo\nbar", 12), format!("{help_style}▐ {italic}foo       \n{help_style}▐ {italic}bar       "));
+        assert_eq!(render("hello world", 12), format!("{help_style}▐ {italic}hello     \n{help_style}▐ {italic}world     "));
         assert_eq!(render("", 8), "");
     }
 
@@ -1034,9 +1034,9 @@ mod tests {
             render_canvas(&mut lines[..])
         }
 
-        assert_eq!(render("hello", 12), format!("{error_style}  ▐ {transition}hello   "));
-        assert_eq!(render("foo\nbar", 12), format!("{error_style}  ▐ {transition}foo     \n{error_style}  ▐ {transition}bar     "));
-        assert_eq!(render("hello world", 12), format!("{error_style}  ▐ {transition}hello   \n{error_style}  ▐ {transition}world   "));
+        assert_eq!(render("hello", 12), format!("{error_style}▐ {transition}hello     "));
+        assert_eq!(render("foo\nbar", 12), format!("{error_style}▐ {transition}foo       \n{error_style}▐ {transition}bar       "));
+        assert_eq!(render("hello world", 12), format!("{error_style}▐ {transition}hello     \n{error_style}▐ {transition}world     "));
         assert_eq!(render("", 8), "");
     }
 
