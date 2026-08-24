@@ -2,6 +2,7 @@
 // underflow and broken layout
 // FIXME: probably should escape the actual escape char if it appears in source
 use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Text};
+use serde_json::json;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::query::{DataQuery, QueryError, QueryField};
@@ -582,8 +583,16 @@ pub struct ResumePoint {
 /// - offset: number
 /// - row: number
 impl DataQuery for ResumePoint {
-    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
-        todo!()
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "offset": self.offset,
+                "row": self.row,
+            }))),
+            "offset" => Ok(QueryField::Value(json!(self.offset))),
+            "row" => Ok(QueryField::Value(json!(self.row))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
     }
 }
 
@@ -946,5 +955,20 @@ mod test_paragraph {
                 row: 4,
             }
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_query() {
+        let rp = ResumePoint { offset: 1, row: 2 };
+        let expected = json!({ "offset": 1, "row": 2 });
+        assert_eq!(rp.query("/").unwrap(), expected);
+        assert_eq!(rp.query("/offset").unwrap(), json!(1));
+        assert_eq!(rp.query("/row").unwrap(), json!(2));
     }
 }

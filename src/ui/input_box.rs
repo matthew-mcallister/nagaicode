@@ -1233,7 +1233,9 @@ impl<'i> std::iter::FusedIterator for InputGraphemeIter<'i> {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::ToJson;
     use crate::ui::text::truncate_line;
+    use serde_json::json;
 
     const SAMPLE: &str = r"Is it for fear to wet a widow's eye,
 That thou consum'st thy self in single life?
@@ -2092,5 +2094,41 @@ That on himself such murd'rous shame commits.
         assert_eq!(input.get_text(), "\n");
         assert_eq!(input.buffer, "first line\nsecond line");
         check_positions(&input);
+    }
+
+    #[test]
+    fn test_query() {
+        let input = InputBox::new(20, 8);
+        let expected = json!({
+            "width": 20,
+            "max_height": 8,
+            "num_rows": 1,
+            "num_lines": 1,
+            "text": "\n",
+            "head": input.head.to_json(),
+            "viewport_top": input.viewport_top.to_json(),
+            "viewport_top_pos": 0,
+            "viewport_bottom": input.viewport_bottom.to_json(),
+            "viewport_bottom_pos": 0,
+            "cursor_row": input.cursor_row.to_json(),
+            "cursor_col": 0,
+            "buffer": "",
+            "overwrite_buffer": false,
+        });
+        assert_eq!(input.query("/").unwrap(), expected);
+        assert_eq!(input.query("/width").unwrap(), json!(20));
+        assert_eq!(input.query("/max_height").unwrap(), json!(8));
+        assert_eq!(input.query("/num_rows").unwrap(), json!(1));
+        assert_eq!(input.query("/num_lines").unwrap(), json!(1));
+        assert_eq!(input.query("/text").unwrap(), json!("\n"));
+        assert_eq!(input.query("/head").unwrap(), input.head.to_json());
+        assert_eq!(input.query("/viewport_top").unwrap(), input.viewport_top.to_json());
+        assert_eq!(input.query("/viewport_top_pos").unwrap(), json!(0));
+        assert_eq!(input.query("/viewport_bottom").unwrap(), input.viewport_bottom.to_json());
+        assert_eq!(input.query("/viewport_bottom_pos").unwrap(), json!(0));
+        assert_eq!(input.query("/cursor_row").unwrap(), input.cursor_row.to_json());
+        assert_eq!(input.query("/cursor_col").unwrap(), json!(0));
+        assert_eq!(input.query("/buffer").unwrap(), json!(""));
+        assert_eq!(input.query("/overwrite_buffer").unwrap(), json!(false));
     }
 }

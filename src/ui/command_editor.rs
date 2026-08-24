@@ -170,6 +170,7 @@ mod tests {
     use super::*;
     use crate::ui::style::{Style, THEME_DARK, UpdateStyle};
     use crate::ui::styled_string::StyledString;
+    use serde_json::json;
 
     fn render(editor: &CommandEditor) -> String {
         let mut rows: Vec<StyledString> = (0..editor.height())
@@ -263,5 +264,23 @@ mod tests {
 
         editor.set_width(12);
         assert_eq!(editor.width(), 12);
+    }
+
+    #[test]
+    fn test_query() {
+        let editor = CommandEditor::new(10, 5, &THEME_DARK);
+        let expected = json!({
+            "input": editor.input.query("/").unwrap(),
+            "scroll_bar": editor.scroll_bar.query("/").unwrap(),
+            "command_history": [],
+            "command_history_pos": 0,
+            "buffered_command": "",
+        });
+        assert_eq!(editor.query("/").unwrap(), expected);
+        assert_eq!(editor.query("/input").unwrap(), editor.input.query("/").unwrap());
+        assert_eq!(editor.query("/scroll_bar").unwrap(), editor.scroll_bar.query("/").unwrap());
+        assert_eq!(editor.query("/command_history").unwrap(), json!([]));
+        assert_eq!(editor.query("/command_history_pos").unwrap(), json!(0));
+        assert_eq!(editor.query("/buffered_command").unwrap(), json!(""));
     }
 }

@@ -129,3 +129,20 @@ impl DataQuery for Chat {
         todo!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::style::THEME_DARK;
+    use serde_json::json;
+
+    #[test]
+    fn test_query() {
+        let chat = Chat::new(80, 24, &THEME_DARK);
+        let expected = json!({
+            "stacked": chat.stacked.query("/").unwrap(),
+        });
+        assert_eq!(chat.query("/").unwrap(), expected);
+        assert_eq!(chat.query("/stacked").unwrap(), chat.stacked.query("/").unwrap());
+    }
+}

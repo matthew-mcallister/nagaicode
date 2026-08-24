@@ -130,3 +130,22 @@ impl DataQuery for HistoryView {
         todo!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::style::THEME_DARK;
+    use serde_json::json;
+
+    #[test]
+    fn test_query() {
+        let view = HistoryView::new(20, 5, &THEME_DARK);
+        let expected = json!({
+            "history": view.history.query("/").unwrap(),
+            "scroll_bar": view.scroll_bar.query("/").unwrap(),
+        });
+        assert_eq!(view.query("/").unwrap(), expected);
+        assert_eq!(view.query("/history").unwrap(), view.history.query("/").unwrap());
+        assert_eq!(view.query("/scroll_bar").unwrap(), view.scroll_bar.query("/").unwrap());
+    }
+}

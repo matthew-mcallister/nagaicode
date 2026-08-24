@@ -228,3 +228,28 @@ impl DataQuery for StackedView {
         todo!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::style::THEME_DARK;
+    use serde_json::json;
+
+    #[test]
+    fn test_query() {
+        let stacked = StackedView::new(80, 24, 8, &THEME_DARK);
+        let expected = json!({
+            "width": 80,
+            "height": 24,
+            "focus_state": "command_editor",
+            "history": stacked.history.query("/").unwrap(),
+            "input": stacked.input.query("/").unwrap(),
+        });
+        assert_eq!(stacked.query("/").unwrap(), expected);
+        assert_eq!(stacked.query("/width").unwrap(), json!(80));
+        assert_eq!(stacked.query("/height").unwrap(), json!(24));
+        assert_eq!(stacked.query("/focus_state").unwrap(), json!("command_editor"));
+        assert_eq!(stacked.query("/history").unwrap(), stacked.history.query("/").unwrap());
+        assert_eq!(stacked.query("/input").unwrap(), stacked.input.query("/").unwrap());
+    }
+}

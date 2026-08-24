@@ -77,8 +77,22 @@ pub trait DataQuery {
 impl<T> DataQuery for &[T]
     where T: DataQuery
 {
-    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
-        todo!()
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        if field.is_empty() {
+            let arr: Vec<Value> = self
+                .iter()
+                .map(|t| t.query("/"))
+                .collect::<Result<_, _>>()?;
+            Ok(QueryField::Value(arr.into()))
+        } else {
+            let index: usize = field
+                .parse()
+                .map_err(|_| QueryError::InvalidField(field.to_string()))?;
+            let item = self
+                .get(index)
+                .ok_or_else(|| QueryError::InvalidField(field.to_string()))?;
+            Ok(QueryField::DataQuery(item))
+        }
     }
 }
 
@@ -124,5 +138,24 @@ impl ToJson for Color {
             Color::Rgb { r, g, b } => json!([r, g, b]),
             Color::AnsiValue(v) => v.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::markdown::ResumePoint;
+
+    #[test]
+    fn test_slice_query() {
+        let data = [
+            ResumePoint { offset: 1, row: 2 },
+            ResumePoint { offset: 3, row: 4 },
+        ];
+        let slice: &[ResumePoint] = &data;
+        let expected = json!([slice[0].query("/").unwrap(), slice[1].query("/").unwrap()]);
+        assert_eq!(slice.query("/").unwrap(), expected);
+        assert_eq!(slice.query("/0").unwrap(), slice[0].query("/").unwrap());
+        assert_eq!(slice.query("/1").unwrap(), slice[1].query("/").unwrap());
     }
 }

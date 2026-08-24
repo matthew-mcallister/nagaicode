@@ -836,6 +836,19 @@ impl<'i> DoubleEndedIterator for HistoryRowIter<'i> {
 
 impl<'i> std::iter::FusedIterator for HistoryRowIter<'i> {}
 
+/// Helper which implements DataQuery for `History.items`. It can fetch a
+/// single item or all items at once by iteration.
+#[derive(Debug)]
+struct HistoryItemsData<'a> {
+    history: &'a History,
+}
+
+impl<'h> DataQuery for HistoryItemsData<'h> {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        todo!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -843,6 +856,7 @@ mod tests {
     use crate::ui::canvas::render_canvas;
     use crate::ui::style::THEME_DARK;
     use crate::ui::style::testing::SetItalic;
+    use serde_json::json;
 
     fn history(width: usize, max_height: usize) -> History {
         History::new(width, max_height, &THEME_DARK)
@@ -1120,5 +1134,63 @@ mod tests {
         whole.add_item(HistoryItemType::Response, full.into());
 
         assert_eq!(render_draw(&incremental), render_draw(&whole));
+    }
+
+    #[test]
+    fn test_history_item_query() {
+        let item = HistoryItem {
+            content: "hello".into(),
+            ty: HistoryItemType::Response,
+            resume_point: ResumePoint { offset: 0, row: 0 },
+            content_id: None,
+            first_row: Id::null(),
+            last_row: Id::null(),
+            num_rows: 0,
+        };
+        let expected = json!({
+            "content": "hello",
+            "ty": "response",
+            "resume_point": item.resume_point.query("/").unwrap(),
+            "content_id": null,
+            "first_row": item.first_row.to_json(),
+            "last_row": item.last_row.to_json(),
+            "num_rows": 0,
+        });
+        assert_eq!(item.query("/").unwrap(), expected);
+        assert_eq!(item.query("/content").unwrap(), json!("hello"));
+        assert_eq!(item.query("/ty").unwrap(), json!("response"));
+        assert_eq!(item.query("/resume_point").unwrap(), item.resume_point.query("/").unwrap());
+        assert_eq!(item.query("/content_id").unwrap(), json!(null));
+        assert_eq!(item.query("/first_row").unwrap(), item.first_row.to_json());
+        assert_eq!(item.query("/last_row").unwrap(), item.last_row.to_json());
+        assert_eq!(item.query("/num_rows").unwrap(), json!(0));
+    }
+
+    #[test]
+    fn test_history_query() {
+        let history = history(20, 5);
+        let expected = json!({
+            "num_rows": 0,
+            "items": [],
+            "width": 20,
+            "max_height": 5,
+            "head": history.head.to_json(),
+            "viewport_top": history.viewport_top.to_json(),
+            "viewport_top_pos": 0,
+            "viewport_bottom": history.viewport_bottom.to_json(),
+            "viewport_bottom_pos": 0,
+            "by_content_id": {},
+        });
+        assert_eq!(history.query("/").unwrap(), expected);
+        assert_eq!(history.query("/num_rows").unwrap(), json!(0));
+        assert_eq!(history.query("/items").unwrap(), json!([]));
+        assert_eq!(history.query("/width").unwrap(), json!(20));
+        assert_eq!(history.query("/max_height").unwrap(), json!(5));
+        assert_eq!(history.query("/head").unwrap(), history.head.to_json());
+        assert_eq!(history.query("/viewport_top").unwrap(), history.viewport_top.to_json());
+        assert_eq!(history.query("/viewport_top_pos").unwrap(), json!(0));
+        assert_eq!(history.query("/viewport_bottom").unwrap(), history.viewport_bottom.to_json());
+        assert_eq!(history.query("/viewport_bottom_pos").unwrap(), json!(0));
+        assert_eq!(history.query("/by_content_id").unwrap(), json!({}));
     }
 }
