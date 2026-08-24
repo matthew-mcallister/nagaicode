@@ -4,6 +4,7 @@
 use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Text};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::ui::style::{Style, TextStyle, Theme};
 use crate::ui::styled_string::{SavePoint, StyledString};
 use crate::ui::text::{Row, SPACES, TAB_WIDTH, wrap_line, wrap_line_naive};
@@ -575,6 +576,15 @@ pub struct ResumePoint {
     pub offset: usize,
     /// Row in rendered output
     pub row: usize,
+}
+
+/// Exposed fields:
+/// - offset: number
+/// - row: number
+impl DataQuery for ResumePoint {
+    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
+        todo!()
+    }
 }
 
 /// Output of Markdown rendering runction

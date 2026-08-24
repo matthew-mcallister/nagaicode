@@ -8,7 +8,9 @@
   - `src/agent.rs`: LLM agents
   - `src/app.rs`: main entrypoint
   - `src/tools.rs`: tool server
-  - `src/interface/mod.rs`: inference API interface
+  - `src/query.rs`: debug query trait
+  - `src/interface/`
+    - `src/interface/mod.rs`: inference API interface
   - `src/ui/`
     - `src/ui/component.rs`: UI component trait
 
@@ -49,10 +51,10 @@ possible.
 Terminal, network, and tool calls/shell commands are mocked in testing. All
 reads/writes/requests are recorded and artificial data is returned.
 
-(wip, not implemented yet) A query system exists that allows high-level unit
-tests to probe deeply nested application state. Any object which implements
-Queryable is able to parse query URIs referencing and return a JSON
-representation of queried data pulled from the object or its descendants.
+A query system exists that allows high-level unit tests to probe deeply nested
+application state. Any object which implements DataQuery is able to parse query
+URIs referencing and return a JSON representation of queried data pulled from
+the object or its descendants.
 
 # Arenas
 

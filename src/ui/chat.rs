@@ -2,6 +2,7 @@ use crossterm::event::Event;
 use dedent::dedent;
 
 use crate::app::AppEvent;
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::session::{Content, Item};
 use crate::ui::canvas::Canvas;
 use crate::ui::padded::Padded;
@@ -118,5 +119,13 @@ impl Component for Chat {
         if let Ok(child_update) = stacked_view::Update::try_from(update) {
             self.stacked.handle_update(child_update);
         }
+    }
+}
+
+/// Exposed fields:
+/// - stacked: Padded<StackedView>
+impl DataQuery for Chat {
+    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
+        todo!()
     }
 }

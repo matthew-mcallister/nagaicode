@@ -3,8 +3,10 @@
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use fnv::FnvHashMap;
+use serde_json::Value;
 
 use crate::arena::{Arena, Id};
+use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::session::{Content, ContentType, Item, ItemType};
 use crate::ui::canvas::Canvas;
 use crate::ui::markdown::{MarkdownResult, ResumePoint};
@@ -245,6 +247,27 @@ pub enum HistoryItemType {
     CommandOutput,
 }
 
+impl HistoryItemType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HistoryItemType::Help => "help",
+            HistoryItemType::Error => "error",
+            HistoryItemType::User => "user",
+            HistoryItemType::Thought => "thought",
+            HistoryItemType::Response => "response",
+            HistoryItemType::CommandPrompt => "command_prompt",
+            HistoryItemType::CommandOutput => "command_output",
+        }
+    }
+}
+
+/// Exposes the item type as a string, matching `as_str()`.
+impl ToJson for HistoryItemType {
+    fn to_json(self) -> Value {
+        todo!()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HistoryItem {
     content: String,
@@ -387,6 +410,23 @@ impl HistoryItem {
         self.last_row = rows[next].prev;
         self.num_rows = len;
         self.resume_point = resume_point;
+    }
+}
+
+/// Exposed fields:
+///
+/// - content: string
+/// - ty: string
+/// - resume_point:
+///   - offset: number
+///   - row: number
+/// - content_id: number | null
+/// - first_row: id
+/// - last_row: id
+/// - num_rows: number
+impl DataQuery for HistoryItem {
+    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
+        todo!()
     }
 }
 
@@ -738,6 +778,24 @@ impl Component for History {
             Update::CommandPrompt(content) => self.add_item(HistoryItemType::CommandPrompt, content.into()),
             Update::CommandOutput(content) => self.add_item(HistoryItemType::CommandOutput, content.into()),
         }
+    }
+}
+
+/// Exposed fields:
+/// - num_rows: number
+/// - items: HistoryItem[] (in linked-list order)
+/// - width: number
+/// - max_height: number
+/// - head: id
+/// - viewport_top: id
+/// - viewport_top_pos: number
+/// - viewport_bottom: id
+/// - viewport_bottom_pos: number
+/// - by_content_id: Map<string, id>
+// rows is intentionally not exposed as of yet
+impl DataQuery for History {
+    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
+        todo!()
     }
 }
 

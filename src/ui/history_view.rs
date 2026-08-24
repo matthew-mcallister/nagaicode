@@ -2,6 +2,7 @@
 
 use crossterm::event::Event;
 
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::session::{Content, Item};
 use crate::ui::canvas::Canvas;
 use crate::ui::history::{self, History};
@@ -118,5 +119,14 @@ impl Component for HistoryView {
         }
         self.scroll_bar.handle_update(());
         self.sync_scroll_bar();
+    }
+}
+
+/// Exposed fields:
+/// - history: History
+/// - scroll_bar: ScrollBar
+impl DataQuery for HistoryView {
+    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
+        todo!()
     }
 }

@@ -1,9 +1,9 @@
 // TODO: select mode, disables all horizontal padding
 
-use crossterm::style::Color;
-
-use crate::ui::canvas::Canvas;
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::ui::Component;
+use crate::ui::canvas::Canvas;
+use crate::ui::style::Color;
 
 /// Adds padding around a UI component. Also styles the background.
 #[derive(Debug)]
@@ -103,5 +103,16 @@ impl<C: Component> Component for Padded<C> {
 
     fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
         self.inner.handle_update(update)
+    }
+}
+
+/// Exposed fields:
+/// - h_padding: number
+/// - v_padding: number
+/// - background_color: color | null
+/// - inner: C
+impl<C> DataQuery for Padded<C> {
+    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
+        todo!()
     }
 }

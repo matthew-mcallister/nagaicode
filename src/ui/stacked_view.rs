@@ -1,6 +1,8 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
+use serde_json::Value;
 
 use crate::app::AppEvent;
+use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::session::{Content, Item};
 use crate::ui::canvas::Canvas;
 use crate::ui::style::Theme;
@@ -15,6 +17,13 @@ pub enum FocusState {
     History,
     #[default]
     CommandEditor,
+}
+
+/// Exposes the focus state as a string: `"history"` or `"command_editor"`.
+impl ToJson for FocusState {
+    fn to_json(self) -> Value {
+        todo!()
+    }
 }
 
 /// Stacks components vertically. The command editor is anchored to the bottom
@@ -205,5 +214,17 @@ impl Component for StackedView {
         }
         self.input.handle_update(());
         self.resize();
+    }
+}
+
+/// Exposed fields:
+/// - width: number
+/// - height: number
+/// - focus_state: string
+/// - history: HistoryView
+/// - input: CommandEditor
+impl DataQuery for StackedView {
+    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
+        todo!()
     }
 }

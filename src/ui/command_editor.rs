@@ -1,6 +1,7 @@
 use crossterm::event::Event;
 
 use crate::app::AppEvent;
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::ui::canvas::Canvas;
 use crate::ui::input_box::InputBox;
 use crate::ui::padded::Padded;
@@ -149,6 +150,18 @@ impl Component for CommandEditor {
     }
 }
 
+/// Exposed fields:
+/// - input: Padded<InputBox>
+/// - scroll_bar: ScrollBar
+/// - command_history: string[]
+/// - command_history_pos: number
+/// - buffered_command: string
+impl DataQuery for CommandEditor {
+    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
+        todo!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::Command;
@@ -176,7 +189,7 @@ mod tests {
     fn input_prefix() -> String {
         let mut out = String::new();
         let mut content: ContentStyle = THEME_DARK.text_base.into();
-        content.background_color = Some(THEME_DARK.bg_input_box);
+        content.background_color = Some(THEME_DARK.bg_input_box.into());
         SetStyle(content).write_ansi(&mut out).unwrap();
         out
     }

@@ -5,6 +5,7 @@
 // box shadow drawing chars and reversed colors.
 use crossterm::event::Event;
 
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::ui::canvas::Canvas;
 use crate::ui::style::Theme;
 use crate::ui::Component;
@@ -148,6 +149,19 @@ impl Component for ScrollBar {
     }
 }
 
+/// Exposed fields:
+/// - height: number
+/// - width: number
+/// - num_rows: number
+/// - top: number
+/// - bottom: number
+/// - focused: bool
+impl DataQuery for ScrollBar {
+    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
+        todo!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::Command;
@@ -184,7 +198,7 @@ mod tests {
     fn style_prefix(style: TextStyle) -> String {
         let mut out = String::new();
         let mut content: ContentStyle = style.into();
-        content.background_color = Some(THEME_DARK.bg_base);
+        content.background_color = Some(THEME_DARK.bg_base.into());
         SetStyle(content).write_ansi(&mut out).unwrap();
         out
     }

@@ -13,6 +13,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::AppEvent;
 use crate::arena::{Arena, Id};
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::ui::canvas::Canvas;
 use crate::ui::text::{Row, SPACES, strip_cr, wrap_line};
 use crate::ui::Component;
@@ -1108,6 +1109,27 @@ impl Component for InputBox {
     }
 
     fn handle_update<'a>(&mut self, _update: Self::Update<'a>) {
+    }
+}
+
+/// Exposed fields:
+/// - width: number
+/// - max_height: number
+/// - num_rows: number
+/// - num_lines: number
+/// - text: string
+/// - head: id
+/// - viewport_top: id
+/// - viewport_top_pos: number
+/// - viewport_bottom: id
+/// - viewport_bottom_pos: number
+/// - cursor_row: id
+/// - cursor_col: number
+/// - buffer: string
+/// - overwrite_buffer: bool
+impl DataQuery for InputBox {
+    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
+        todo!()
     }
 }
 

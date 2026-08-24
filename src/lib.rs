@@ -8,6 +8,7 @@ pub mod interface;
 pub mod ui;
 pub mod model;
 pub mod provider;
+pub mod query;
 pub mod request;
 pub mod schema;
 pub mod session;
