@@ -11,7 +11,7 @@ use crate::request::DefaultClient;
 use crate::session::{Content, Item};
 
 pub struct Agent {
-    pub item: Item,
+    pub prompt: Item,
     pub content: Content,
     pub sender: UnboundedSender<AppEvent>,
     pub client: DefaultClient,
@@ -29,7 +29,7 @@ impl Agent {
             }
         }
         let _ = self.sender.send(AppEvent::ContentCreated {
-            item: self.item,
+            item: self.prompt,
             content: self.content,
         });
     }
@@ -51,15 +51,15 @@ mod tests {
     async fn test_spawn_cancels() {
         let mut conn = crate::db::open_new().unwrap();
         let session = Session::create(&mut conn, "Session").expect("create session");
-        let item = Item::create(&mut conn, session.id, None, ItemType::User, None)
+        let prompt = Item::create(&mut conn, session.id, None, ItemType::User, None)
             .expect("create item");
-        let content = Content::create(&mut conn, item.id, ContentType::Text, "hello")
+        let content = Content::create(&mut conn, prompt.id, ContentType::Text, "hello")
             .expect("create content");
 
         let cancel = CancellationToken::new();
         let (sender, mut recv) = unbounded_channel();
         let agent = Agent {
-            item,
+            prompt,
             content,
             sender,
             client: DefaultClient::default(),

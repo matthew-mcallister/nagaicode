@@ -1,5 +1,6 @@
 use crossterm::event::Event;
 use dedent::dedent;
+use serde_json::json;
 
 use crate::app::AppEvent;
 use crate::query::{DataQuery, QueryError, QueryField};
@@ -125,8 +126,14 @@ impl Component for Chat {
 /// Exposed fields:
 /// - stacked: Padded<StackedView>
 impl DataQuery for Chat {
-    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
-        todo!()
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "stacked": self.stacked.query("/")?,
+            }))),
+            "stacked" => Ok(QueryField::DataQuery(&self.stacked)),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
     }
 }
 

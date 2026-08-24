@@ -10,10 +10,11 @@
 
 use compact_str::CompactString;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use serde_json::json;
 
 use crate::app::AppEvent;
 use crate::arena::{Arena, Id};
-use crate::query::{DataQuery, QueryError, QueryField};
+use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::ui::canvas::Canvas;
 use crate::ui::text::{Row, SPACES, strip_cr, wrap_line};
 use crate::ui::Component;
@@ -1128,8 +1129,40 @@ impl Component for InputBox {
 /// - buffer: string
 /// - overwrite_buffer: bool
 impl DataQuery for InputBox {
-    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
-        todo!()
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "width": self.width,
+                "max_height": self.max_height,
+                "num_rows": self.num_rows(),
+                "num_lines": self.num_lines(),
+                "text": self.get_text(),
+                "head": self.head.to_json(),
+                "viewport_top": self.viewport_top.to_json(),
+                "viewport_top_pos": self.viewport_top_pos,
+                "viewport_bottom": self.viewport_bottom.to_json(),
+                "viewport_bottom_pos": self.viewport_bottom_pos,
+                "cursor_row": self.cursor_row.to_json(),
+                "cursor_col": self.cursor_col,
+                "buffer": self.buffer,
+                "overwrite_buffer": self.overwrite_buffer,
+            }))),
+            "width" => Ok(QueryField::Value(json!(self.width))),
+            "max_height" => Ok(QueryField::Value(json!(self.max_height))),
+            "num_rows" => Ok(QueryField::Value(json!(self.num_rows()))),
+            "num_lines" => Ok(QueryField::Value(json!(self.num_lines()))),
+            "text" => Ok(QueryField::Value(json!(self.get_text()))),
+            "head" => Ok(QueryField::Value(self.head.to_json())),
+            "viewport_top" => Ok(QueryField::Value(self.viewport_top.to_json())),
+            "viewport_top_pos" => Ok(QueryField::Value(json!(self.viewport_top_pos))),
+            "viewport_bottom" => Ok(QueryField::Value(self.viewport_bottom.to_json())),
+            "viewport_bottom_pos" => Ok(QueryField::Value(json!(self.viewport_bottom_pos))),
+            "cursor_row" => Ok(QueryField::Value(self.cursor_row.to_json())),
+            "cursor_col" => Ok(QueryField::Value(json!(self.cursor_col))),
+            "buffer" => Ok(QueryField::Value(json!(self.buffer))),
+            "overwrite_buffer" => Ok(QueryField::Value(json!(self.overwrite_buffer))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::app::AppEvent;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
@@ -22,7 +22,10 @@ pub enum FocusState {
 /// Exposes the focus state as a string: `"history"` or `"command_editor"`.
 impl ToJson for FocusState {
     fn to_json(self) -> Value {
-        todo!()
+        match self {
+            FocusState::History => json!("history"),
+            FocusState::CommandEditor => json!("command_editor"),
+        }
     }
 }
 
@@ -224,8 +227,22 @@ impl Component for StackedView {
 /// - history: HistoryView
 /// - input: CommandEditor
 impl DataQuery for StackedView {
-    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
-        todo!()
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "width": self.width,
+                "height": self.height,
+                "focus_state": self.focus_state.to_json(),
+                "history": self.history.query("/")?,
+                "input": self.input.query("/")?,
+            }))),
+            "width" => Ok(QueryField::Value(json!(self.width))),
+            "height" => Ok(QueryField::Value(json!(self.height))),
+            "focus_state" => Ok(QueryField::Value(self.focus_state.to_json())),
+            "history" => Ok(QueryField::DataQuery(&self.history)),
+            "input" => Ok(QueryField::DataQuery(&self.input)),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
     }
 }
 

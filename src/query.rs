@@ -20,7 +20,8 @@ impl std::fmt::Display for QueryError {
 /// Helper type for working with paths.
 pub enum QueryField<'a> {
     Value(Value),
-    DataQuery(&'a dyn DataQuery)
+    DataQuery(&'a dyn DataQuery),
+    Boxed(Box<dyn DataQuery + 'a>),
 }
 
 /// Helper method for working with paths. Returns `(head, tail)`, where head
@@ -66,6 +67,7 @@ pub trait DataQuery {
         match field {
             QueryField::Value(value) => Ok(value),
             QueryField::DataQuery(child) => child.query(tail.unwrap_or("")),
+            QueryField::Boxed(field) => field.query(tail.unwrap_or("")),
         }
     }
 }

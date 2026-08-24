@@ -1,6 +1,7 @@
 // FIXME: scroll bar should be hidden when history fits entirely onto screen
 
 use crossterm::event::Event;
+use serde_json::json;
 
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::session::{Content, Item};
@@ -126,8 +127,16 @@ impl Component for HistoryView {
 /// - history: History
 /// - scroll_bar: ScrollBar
 impl DataQuery for HistoryView {
-    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
-        todo!()
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "history": self.history.query("/")?,
+                "scroll_bar": self.scroll_bar.query("/")?,
+            }))),
+            "history" => Ok(QueryField::DataQuery(&self.history)),
+            "scroll_bar" => Ok(QueryField::DataQuery(&self.scroll_bar)),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
     }
 }
 

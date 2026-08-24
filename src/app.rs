@@ -33,6 +33,7 @@ use crate::ui::styled_string::StyledString;
 pub enum AppEvent {
     Command(String),
     ContentCreated { item: Item, content: Content },
+    ContentUpdated { item: Item, content: Content },
     /// Navigate to the previous entry in the command history.
     HistoryPrev,
     /// Navigate to the next entry in the command history.
@@ -281,7 +282,7 @@ impl App {
 
         let cancel = CancellationToken::new();
         let agent = Agent {
-            item,
+            prompt: item,
             content,
             sender: self.send.clone(),
             client: self.client.clone(),
@@ -345,6 +346,10 @@ impl App {
                 self.chat.handle_update(Update::ContentCreated { item: &item, content: &content });
                 Ok(())
             }
+            AppEvent::ContentUpdated { item, content } => {
+                self.chat.handle_update(Update::ContentUpdated { item: &item, content: &content });
+                Ok(())
+            },
             AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
             AppEvent::Interrupt => {
                 if let Some(cancel) = &self.cancel {

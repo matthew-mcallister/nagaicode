@@ -1,4 +1,5 @@
 use crossterm::event::Event;
+use serde_json::json;
 
 use crate::app::AppEvent;
 use crate::query::{DataQuery, QueryError, QueryField};
@@ -157,8 +158,22 @@ impl Component for CommandEditor {
 /// - command_history_pos: number
 /// - buffered_command: string
 impl DataQuery for CommandEditor {
-    fn query_field<'a>(&'a self, _field: &str) -> Result<QueryField<'a>, QueryError> {
-        todo!()
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "input": self.input.query("/")?,
+                "scroll_bar": self.scroll_bar.query("/")?,
+                "command_history": self.command_history,
+                "command_history_pos": self.command_history_pos,
+                "buffered_command": self.buffered_command,
+            }))),
+            "input" => Ok(QueryField::DataQuery(&self.input)),
+            "scroll_bar" => Ok(QueryField::DataQuery(&self.scroll_bar)),
+            "command_history" => Ok(QueryField::Value(json!(self.command_history))),
+            "command_history_pos" => Ok(QueryField::Value(json!(self.command_history_pos))),
+            "buffered_command" => Ok(QueryField::Value(json!(self.buffered_command))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
     }
 }
 
