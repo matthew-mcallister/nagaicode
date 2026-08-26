@@ -257,6 +257,7 @@ pub struct Theme {
     pub text_code: TextStyle,
     pub text_math: TextStyle,
     pub text_error: TextStyle,
+    pub text_thought: TextStyle,
     pub text_scroll_bar_track: TextStyle,
     pub text_scroll_bar_focused: TextStyle,
     pub text_scroll_bar_unfocused: TextStyle,
@@ -289,6 +290,9 @@ const RED_400: Color = rgb(248, 113, 113);
 
 const SKY_400: Color = rgb(56, 189, 248);
 
+const EMERALD_400: Color = rgb(52, 211, 153);
+const EMERALD_600: Color = rgb(5, 150, 105);
+
 /// Only available theme for now
 pub const THEME_DARK: Theme = Theme {
     text_base: text_style! { fg_color: WHITE },
@@ -298,6 +302,7 @@ pub const THEME_DARK: Theme = Theme {
     text_code: text_style! { fg_color: YELLOW_200 },
     text_math: text_style! { fg_color: YELLOW_200, italic: true },
     text_error: text_style! { fg_color: RED_400 },
+    text_thought: text_style! { fg_color: EMERALD_400 },
     text_scroll_bar_track: text_style! { fg_color: GREY_950 },
     text_scroll_bar_focused: text_style! { fg_color: SKY_400 },
     text_scroll_bar_unfocused: text_style! { fg_color: GREY_600 },

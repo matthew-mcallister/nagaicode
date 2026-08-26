@@ -103,7 +103,28 @@ pub(crate) fn render_markdown(
     result
 }
 
-fn render_command_prompt(theme: &'static Theme, width: usize, content: &str) -> Vec<StyledString> {
+pub(crate) fn render_thought(
+    theme: &'static Theme,
+    width: usize,
+    content: &str,
+) -> MarkdownResult {
+    let bar_style = Style::new(theme.text_thought, theme.bg_base);
+    let mut result = crate::ui::markdown::render_markdown(theme, width - 4, content);
+    for row in result.rows.iter_mut() {
+        let mut padded = StyledString::new(bar_style, width + 4);
+        padded.push("▐ ", 2);
+        padded.push_styled(row);
+        padded.pad_to_width(width);
+        *row = padded;
+    }
+    result
+}
+
+fn render_command_prompt(
+    theme: &'static Theme,
+    width: usize,
+    content: &str,
+) -> Vec<StyledString> {
     let style = Style::new(theme.text_base, theme.bg_base);
     content
         .lines()
@@ -142,26 +163,15 @@ fn render(
     content: &str,
 ) -> (Vec<StyledString>, ResumePoint) {
     match ty {
-        HistoryItemType::Help => (
-            render_help(theme, width, content),
-            ResumePoint { offset: 0, row: 0 },
-        ),
-        HistoryItemType::Error => (
-            render_error(theme, width, content),
-            ResumePoint { offset: 0, row: 0 },
-        ),
-        HistoryItemType::User => (
-            render_prompt(theme, width, content),
-            ResumePoint { offset: 0, row: 0 },
-        ),
-        HistoryItemType::CommandPrompt => (
-            render_command_prompt(theme, width, content),
-            ResumePoint { offset: 0, row: 0 },
-        ),
-        HistoryItemType::CommandOutput => (
-            render_command_output(theme, width, content),
-            ResumePoint { offset: 0, row: 0 },
-        ),
+        HistoryItemType::Help => (render_help(theme, width, content), ResumePoint { offset: 0, row: 0 }),
+        HistoryItemType::Error => (render_error(theme, width, content), ResumePoint { offset: 0, row: 0 }),
+        HistoryItemType::User => (render_prompt(theme, width, content), ResumePoint { offset: 0, row: 0 }),
+        HistoryItemType::CommandPrompt => (render_command_prompt(theme, width, content), ResumePoint { offset: 0, row: 0 }),
+        HistoryItemType::CommandOutput => (render_command_output(theme, width, content), ResumePoint { offset: 0, row: 0 }),
+        HistoryItemType::Thought => {
+            let result = render_thought(theme, width, content);
+            (result.rows, result.resume_point)
+        }
         _ => {
             let result = render_markdown(theme, width, content);
             (result.rows, result.resume_point)
@@ -1074,6 +1084,26 @@ mod tests {
         assert_eq!(render("hello", 12), format!("{error_style}▐ {transition}hello     "));
         assert_eq!(render("foo\nbar", 12), format!("{error_style}▐ {transition}foo       \n{error_style}▐ {transition}bar       "));
         assert_eq!(render("hello world", 12), format!("{error_style}▐ {transition}hello     \n{error_style}▐ {transition}world     "));
+        assert_eq!(render("", 8), "");
+    }
+
+    #[test]
+    fn test_render_thought() {
+        use crate::ui::style::UpdateStyle;
+
+        let theme = &THEME_DARK;
+        let base_style = theme.base_style();
+        let thought_style = Style::new(theme.text_thought, theme.bg_base);
+        let transition = UpdateStyle(thought_style, base_style);
+
+        fn render(content: &str, width: usize) -> String {
+            let mut lines = super::render_thought(&THEME_DARK, width, content).rows;
+            render_canvas(&mut lines[..])
+        }
+
+        assert_eq!(render("hello", 14), format!("{thought_style}▐ {transition}hello       "));
+        assert_eq!(render("foo\nbar", 12), format!("{thought_style}▐ {transition}foo bar   "));
+        assert_eq!(render("hello world", 12), format!("{thought_style}▐ {transition}hello     \n{thought_style}▐ {transition}world     "));
         assert_eq!(render("", 8), "");
     }
 
