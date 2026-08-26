@@ -5,7 +5,6 @@ use std::error::Error;
 use dedent::dedent;
 use diesel::QueryDsl;
 use diesel::RunQueryDsl;
-use diesel::SqliteConnection;
 use diesel::expression_methods::ExpressionMethods;
 
 use crate::app::App;
@@ -307,14 +306,14 @@ pub fn parse_command(text: &str) -> Result<Command, Box<dyn Error + Send + Sync>
 }
 
 pub fn run_provider_command(
-    conn: &mut SqliteConnection,
+    app: &mut App,
     command: ProviderCommand,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     match command {
         ProviderCommand::Ls => {
             let providers: Vec<Provider> = dsl::provider
                 .order(dsl::name.asc())
-                .load(conn)?;
+                .load(app.conn())?;
             if providers.is_empty() {
                 return Ok("No providers configured.".into());
             }
@@ -334,12 +333,13 @@ pub fn run_provider_command(
             base_url,
         } => {
             let base_url_ref = base_url.as_deref();
-            Provider::create(conn, &name, interface, &api_key, base_url_ref)?;
+            Provider::create(app.conn(), &name, interface, &api_key, base_url_ref)?;
             Ok(format!("Created provider \"{name}\""))
         }
         ProviderCommand::Rm(name) => {
-            let deleted = Provider::delete_by_name(conn, &name)?;
+            let deleted = Provider::delete_by_name(app.conn(), &name)?;
             if deleted {
+                app.on_provider_deleted(&name)?;
                 Ok(format!("Deleted provider \"{name}\""))
             } else {
                 Err(format!("no provider named '{name}' found").into())
@@ -356,10 +356,9 @@ pub fn run_model_command(
         ModelCommand::Ls => {
             use crate::schema::model::dsl as model_dsl;
 
-            let current = app
+            let selected = app
                 .selected_model()
-                .map(|m| m.id.clone())
-                .unwrap_or_default();
+                .map(|(sp, sm)| (sp.id, sm.id.clone()));
             let rows: Vec<(Provider, Model)> = dsl::provider
                 .inner_join(model_dsl::model)
                 .order((dsl::id, model_dsl::id))
@@ -369,7 +368,9 @@ pub fn run_model_command(
             }
             let mut out = String::new();
             for (p, m) in rows {
-                let marker = if m.id == current { "* " } else { "  " };
+                let selected_here =
+                    matches!(&selected, Some((spid, smid)) if *spid == p.id && *smid == m.id);
+                let marker = if selected_here { "* " } else { "  " };
                 out.push_str(&format!("{:<20} {}{}\n", p.name, marker, m.id));
             }
             Ok(out)
@@ -381,7 +382,7 @@ pub fn run_model_command(
                 .ok_or_else(|| {
                     format!("No model '{provider}:{model}''")
                 })?;
-            app.switch_model(m);
+            app.switch_model(p, m)?;
             Ok(format!("Using '{provider}:{model}'"))
         }
     }

@@ -83,7 +83,7 @@ async fn test_app_interrupt() {
     let provider = Provider::create(app.conn(), "test", InterfaceId::Openai, "key", None)
         .expect("create provider");
     let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
-    app.switch_model(model);
+    app.switch_model(provider, model).unwrap();
 
     app.process_event(AppEvent::Interrupt);
     assert_eq!(app.query("/current_task").unwrap(), json!(false));
@@ -132,6 +132,74 @@ async fn test_app_task_complete() {
     app.cancel();
     app.process_pending_events();
     assert_eq!(app.query("current_task").unwrap(), json!(false));
+}
+
+#[test]
+fn test_app_persists_selected_model() {
+    use crate::settings::{ModelRef, Settings};
+
+    let mut app = App::new().unwrap();
+
+    let provider = Provider::create(app.conn(), "test", InterfaceId::Openai, "key", None)
+        .expect("create provider");
+    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+
+    let reloaded = Settings::open(app.db_url()).expect("open settings");
+    assert_eq!(reloaded.current_model(), None);
+
+    app.switch_model(provider, model.clone()).unwrap();
+    let expected = ModelRef {
+        provider: "test".to_string(),
+        model: "gpt-4".to_string(),
+    };
+    assert_eq!(
+        app.selected_model().map(|(_, m)| m.id.as_str()),
+        Some("gpt-4")
+    );
+    assert_eq!(app.selected_model().map(|(p, _)| p.name.as_str()), Some("test"));
+    let reloaded = Settings::open(app.db_url()).expect("reopen settings");
+    assert_eq!(reloaded.current_model(), Some(&expected));
+}
+
+#[test]
+fn test_app_provider_rm_resets_selected_model() {
+    use crate::settings::{ModelRef, Settings};
+
+    let mut app = App::new().unwrap();
+
+    let provider = Provider::create(app.conn(), "test", InterfaceId::Openai, "key", None)
+        .expect("create provider");
+    let _other = Provider::create(app.conn(), "other", InterfaceId::Openai, "key", None)
+        .expect("create provider");
+    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+
+    // Deleting an unrelated provider leaves the selection alone.
+    app.switch_model(provider, model.clone()).unwrap();
+    app.process_command("/provider rm other").unwrap();
+    assert!(app.selected_model().is_some());
+    let reloaded = Settings::open(app.db_url()).expect("reopen settings");
+    assert_eq!(
+        reloaded.current_model(),
+        Some(&ModelRef {
+            provider: "test".to_string(),
+            model: "gpt-4".to_string()
+        })
+    );
+
+    // Deleting the selected provider clears the selection and the setting.
+    app.process_command("/provider rm test").unwrap();
+    assert!(app.selected_model().is_none());
+    let reloaded = Settings::open(app.db_url()).expect("reopen settings");
+    assert_eq!(reloaded.current_model(), None);
+
+    // After a fresh start on a db where the provider was removed elsewhere,
+    // a stale persisted ref resolves to no selection.
+    let provider2 =
+        Provider::create(app.conn(), "test2", InterfaceId::Openai, "key", None).unwrap();
+    let model2 = Model::create(app.conn(), provider2.id, "gpt-5").unwrap();
+    app.switch_model(provider2, model2).unwrap();
+    Provider::delete_by_name(app.conn(), "test2").expect("delete failed");
+    assert_eq!(app.selected_model().map(|(_, m)| m.id.as_str()), Some("gpt-5"));
 }
 
 #[test]
@@ -214,7 +282,7 @@ async fn test_app_prompt_agent() {
     )
     .expect("create provider");
     let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
-    app.switch_model(model);
+    app.switch_model(provider.clone(), model).unwrap();
 
     let url = "https://example.test/v1/responses";
     let events: Vec<AnyResult<SseEvent>> = vec![
@@ -363,7 +431,7 @@ async fn test_agent_stream_without_item_events() {
     )
     .expect("create provider");
     let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
-    app.switch_model(model);
+    app.switch_model(provider, model).unwrap();
 
     let url = "https://example.test/v1/responses";
 
@@ -436,7 +504,7 @@ async fn test_agent_history() {
     )
     .expect("create provider");
     let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
-    app.switch_model(model);
+    app.switch_model(provider, model).unwrap();
 
     let url = "https://example.test/v1/responses";
 
@@ -582,7 +650,7 @@ async fn test_app_query() {
     let provider =
         Provider::create(app.conn(), "test", InterfaceId::Openai, "key123", None).unwrap();
     let model = Model::create(app.conn(), provider.id, "gpt-4").unwrap();
-    app.switch_model(model.clone());
+    app.switch_model(provider.clone(), model.clone()).unwrap();
     assert_eq!(app.query("/selected_model/id").unwrap(), json!("gpt-4"));
     assert_eq!(
         app.query("/selected_model").unwrap(),

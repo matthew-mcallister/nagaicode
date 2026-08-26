@@ -24,6 +24,7 @@ use crate::provider::Provider;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::DefaultClient;
 use crate::session::{Item, ItemType, NewItem, Session, Turn, TurnType};
+use crate::settings::{ModelRef, Settings};
 use crate::terminal::{DefaultTerminal, Terminal};
 use crate::tools::{DefaultToolServer, ToolServer};
 use crate::ui::Component;
@@ -69,13 +70,14 @@ struct Task {
 pub struct App {
     terminal: DefaultTerminal,
     chat: Chat,
-    selected_model: Option<Model>,
+    selected_model: Option<(Provider, Model)>,
     quit: bool,
     // XXX replace most uses of &'static Theme with Arc<Theme> or Rc<Theme>
     theme: &'static Theme,
     client: DefaultClient,
     conn: SqliteConnection,
     db_url: String,
+    settings: Settings,
     session: Option<Session>,
     tools: DefaultToolServer,
     // Channel for async events
@@ -94,15 +96,22 @@ impl App {
         let chat = Chat::new(w, h, theme);
         let (send, recv) = unbounded_channel();
         let db_url = crate::db::db_url()?;
+        let mut conn = crate::db::open(&db_url)?;
+        let settings = Settings::open(&db_url)?;
+        let selected_model = settings
+            .current_model()
+            .and_then(|r| r.resolve(&mut conn).ok())
+            .flatten();
         Ok(Self {
             terminal,
             chat,
-            selected_model: None,
+            selected_model,
             quit: false,
             theme,
             client: DefaultClient::default(),
-            conn: crate::db::open(&db_url)?,
+            conn,
             db_url,
+            settings,
             session: None,
             tools: DefaultToolServer::default(),
             send,
@@ -111,14 +120,38 @@ impl App {
         })
     }
 
-    /// Returns the currently selected model, if any.
-    pub fn selected_model(&self) -> Option<&Model> {
+    /// Returns the currently selected provider and model, if any.
+    pub fn selected_model(&self) -> Option<&(Provider, Model)> {
         self.selected_model.as_ref()
     }
 
-    /// Switches the selected model.
-    pub fn switch_model(&mut self, model: Model) {
-        self.selected_model = Some(model);
+    /// Returns the database URL.
+    pub fn db_url(&self) -> &str {
+        &self.db_url
+    }
+
+    /// Switches the selected model and persists the choice across runs.
+    pub fn switch_model(&mut self, provider: Provider, model: Model) -> AnyResult<()> {
+        self.settings.set_current_model(Some(ModelRef {
+            provider: provider.name.clone(),
+            model: model.id.clone(),
+        }))?;
+        self.selected_model = Some((provider, model));
+        Ok(())
+    }
+
+    /// Clears the selected model if it belonged to a deleted provider.
+    pub fn on_provider_deleted(&mut self, provider_name: &str) -> AnyResult<()> {
+        let deleted_selected = match &self.selected_model {
+            Some((provider, _)) => provider.name == provider_name,
+            None => false,
+        };
+        if !deleted_selected {
+            return Ok(());
+        }
+        self.settings.set_current_model(None)?;
+        self.selected_model = None;
+        Ok(())
     }
 
     /// Returns a reference to the terminal.
@@ -255,7 +288,7 @@ impl App {
             Err(e) => return Ok(e.to_string()),
         };
         match command {
-            Command::Provider(cmd) => crate::command::run_provider_command(&mut self.conn, cmd),
+            Command::Provider(cmd) => crate::command::run_provider_command(self, cmd),
             Command::Model(cmd) => crate::command::run_model_command(self, cmd),
             Command::Quit => {
                 self.quit = true;
@@ -314,9 +347,7 @@ impl App {
     fn submit_prompt(&mut self, prompt: &str) -> AnyResult<()> {
         self.cancel();
 
-        let model = self.selected_model.clone().ok_or("no model selected")?;
-        let provider = Provider::get_by_id(&mut self.conn, model.provider_id)?
-            .ok_or_else(|| format!("no provider found for model '{}'", model.id))?;
+        let (provider, model) = self.selected_model.clone().ok_or("no model selected")?;
 
         let session = self.create_session()?;
         let turn = Turn::create(&mut self.conn, session.id, TurnType::User, None, None, None)?;
@@ -443,7 +474,7 @@ impl DataQuery for App {
         match field {
             "" => {
                 let selected_model = match self.selected_model.as_ref() {
-                    Some(model) => model.query("/")?,
+                    Some((_, model)) => model.query("/")?,
                     None => Value::Null,
                 };
                 let session = match self.session.as_ref() {
@@ -460,7 +491,7 @@ impl DataQuery for App {
             }
             "chat" => Ok(QueryField::DataQuery(&self.chat)),
             "selected_model" => match self.selected_model.as_ref() {
-                Some(model) => Ok(QueryField::DataQuery(model)),
+                Some((_, model)) => Ok(QueryField::DataQuery(model)),
                 None => Ok(QueryField::Value(json!(null))),
             },
             "db_url" => Ok(QueryField::Value(json!(self.db_url))),

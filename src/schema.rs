@@ -63,6 +63,15 @@ diesel::table! {
 }
 
 diesel::table! {
+    setting (key) {
+        key -> Text,
+        value -> Text,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     session (id) {
         id -> Integer,
         name -> Text,
@@ -99,5 +108,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     provider,
     response,
     session,
+    setting,
     turn,
 );

@@ -10,7 +10,7 @@ use crate::schema::provider;
 use crate::schema::provider::dsl;
 use serde_json::json;
 
-#[derive(Debug, Queryable, Selectable)]
+#[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = provider)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct Provider {
