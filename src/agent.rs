@@ -95,6 +95,7 @@ impl Agent {
             if let Err(e) = self.run().await {
                 let _ = sender.send(AppEvent::ErrorMessage(e.to_string()));
             }
+            let _ = sender.send(AppEvent::TaskComplete);
         })
     }
 
@@ -299,6 +300,6 @@ mod tests {
         let task = agent.spawn();
         cancel.cancel();
         task.await.unwrap();
-        assert!(recv.try_recv().is_err());
+        assert_eq!(recv.try_recv().unwrap(), AppEvent::TaskComplete);
     }
 }

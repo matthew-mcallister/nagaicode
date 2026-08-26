@@ -86,13 +86,34 @@ async fn test_app_interrupt() {
     app.switch_model(model);
 
     app.process_event(AppEvent::Interrupt);
-    assert!(app.task_canceled());
+    assert_eq!(app.query("/current_task").unwrap(), json!(false));
 
     app.process_command("hello").unwrap();
-    assert!(!app.task_canceled());
+    assert_eq!(app.query("/current_task").unwrap(), json!(true));
 
     app.process_event(AppEvent::Interrupt);
-    assert!(app.task_canceled());
+    assert_eq!(app.query("/current_task").unwrap(), json!(false));
+}
+
+#[tokio::test]
+async fn test_app_task_complete() {
+    let mut app = App::new().unwrap();
+
+    // Completing a task clears it once completion events are processed.
+    let dummy = app.spawn_dummy_task();
+    assert_eq!(app.query("current_task").unwrap(), json!(true));
+    dummy.complete();
+    app.await_task().await.expect("await dummy task");
+    app.process_pending_events();
+    assert_eq!(app.query("current_task").unwrap(), json!(false));
+
+    // Canceling a task clears it immediately, and its late completion event
+    // is absorbed when pending events are processed.
+    let _dummy = app.spawn_dummy_task();
+    assert_eq!(app.query("current_task").unwrap(), json!(true));
+    app.cancel();
+    app.process_pending_events();
+    assert_eq!(app.query("current_task").unwrap(), json!(false));
 }
 
 #[test]
@@ -516,6 +537,7 @@ async fn test_app_query() {
     assert!(db_url.as_str().unwrap().contains("mode=memory"));
     assert_eq!(app.query("/selected_model").unwrap(), json!(null));
     assert_eq!(app.query("/session").unwrap(), json!(null));
+    assert_eq!(app.query("/current_task").unwrap(), json!(false));
 
     // Nested query into chat.
     let expected_chat = Chat::new(80, 24, &THEME_DARK).query("/").unwrap();
@@ -534,6 +556,7 @@ async fn test_app_query() {
             "selected_model": null,
             "db_url": db_url,
             "session": null,
+            "current_task": false,
         })
     );
 

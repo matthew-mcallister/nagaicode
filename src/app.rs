@@ -47,6 +47,8 @@ pub enum AppEvent {
     HistoryNext,
     /// Cancel the active task.
     Interrupt,
+    /// The active task has completed.
+    TaskComplete,
     /// Report an error from a background task.
     ErrorMessage(String),
 }
@@ -197,13 +199,6 @@ impl App {
         self.quit
     }
 
-    /// Returns whether the active task has been canceled.
-    /// TODO: delete this
-    #[cfg(test)]
-    pub fn task_canceled(&self) -> bool {
-        self.current_task.is_none()
-    }
-
     /// Spawns a background task to revalidate stale model lists.
     fn spawn_revalidate_models(&self) {
         let db_url = self.db_url.clone();
@@ -288,7 +283,7 @@ impl App {
     }
 
     /// Cancels the active task.
-    fn cancel(&mut self) {
+    pub fn cancel(&mut self) {
         if let Some(task) = self.current_task.as_mut() {
             task.cancel.cancel();
             self.current_task = None;
@@ -301,6 +296,18 @@ impl App {
             task.join.await?;
         }
         Ok(())
+    }
+
+    /// Spawns a dummy task tracked as the current task, for testing.
+    #[cfg(test)]
+    pub(crate) fn spawn_dummy_task(&mut self) -> crate::testing::DummyTask {
+        let task = crate::testing::DummyTask::new();
+        let join = task.spawn(self.send.clone());
+        self.current_task = Some(Task {
+            cancel: task.token().clone(),
+            join,
+        });
+        task
     }
 
     /// Spawns an agent to handle the submitted prompt.
@@ -414,6 +421,10 @@ impl App {
                 self.chat.handle_update(Update::ErrorMessage(&msg));
                 Ok(())
             }
+            AppEvent::TaskComplete => {
+                self.current_task = None;
+                Ok(())
+            }
         };
         if let Err(e) = res {
             self.chat
@@ -444,6 +455,7 @@ impl DataQuery for App {
                     "selected_model": selected_model,
                     "db_url": self.db_url,
                     "session": session,
+                    "current_task": self.current_task.is_some(),
                 })))
             }
             "chat" => Ok(QueryField::DataQuery(&self.chat)),
@@ -456,6 +468,7 @@ impl DataQuery for App {
                 Some(session) => Ok(QueryField::DataQuery(session)),
                 None => Ok(QueryField::Value(json!(null))),
             },
+            "current_task" => Ok(QueryField::Value(json!(self.current_task.is_some()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
