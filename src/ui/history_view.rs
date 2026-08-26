@@ -4,12 +4,12 @@ use crossterm::event::Event;
 use serde_json::json;
 
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::session::{Content, Item};
+use crate::session::Item;
+use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::history::{self, History};
 use crate::ui::scroll_bar::ScrollBar;
 use crate::ui::style::Theme;
-use crate::ui::Component;
 
 /// Chat history view, wrapper around History
 #[derive(Debug)]
@@ -42,15 +42,16 @@ impl HistoryView {
     fn sync_scroll_bar(&mut self) {
         let history = &self.history;
         self.scroll_bar.set_num_rows(history.num_rows());
-        self.scroll_bar.set_viewport(history.viewport_top_pos(), history.viewport_bottom_pos());
+        self.scroll_bar
+            .set_viewport(history.viewport_top_pos(), history.viewport_bottom_pos());
         self.scroll_bar.set_height(history.height());
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
-    ContentCreated { item: &'a Item, content: &'a Content },
-    ContentUpdated { item: &'a Item, content: &'a Content },
+    ItemCreated { item: &'a Item },
+    ItemUpdated { item: &'a Item },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -62,8 +63,8 @@ impl<'a> TryFrom<Update<'a>> for history::Update<'a> {
 
     fn try_from(update: Update<'a>) -> Result<Self, Self::Error> {
         match update {
-            Update::ContentCreated { item, content } => Ok(history::Update::ContentCreated { item, content }),
-            Update::ContentUpdated { item, content } => Ok(history::Update::ContentUpdated { item, content }),
+            Update::ItemCreated { item } => Ok(history::Update::ItemCreated { item }),
+            Update::ItemUpdated { item } => Ok(history::Update::ItemUpdated { item }),
             Update::HelpMessage(content) => Ok(history::Update::HelpMessage(content)),
             Update::ErrorMessage(content) => Ok(history::Update::ErrorMessage(content)),
             Update::CommandPrompt(content) => Ok(history::Update::CommandPrompt(content)),
@@ -154,7 +155,13 @@ mod tests {
             "scroll_bar": view.scroll_bar.query("/").unwrap(),
         });
         assert_eq!(view.query("/").unwrap(), expected);
-        assert_eq!(view.query("/history").unwrap(), view.history.query("/").unwrap());
-        assert_eq!(view.query("/scroll_bar").unwrap(), view.scroll_bar.query("/").unwrap());
+        assert_eq!(
+            view.query("/history").unwrap(),
+            view.history.query("/").unwrap()
+        );
+        assert_eq!(
+            view.query("/scroll_bar").unwrap(),
+            view.scroll_bar.query("/").unwrap()
+        );
     }
 }

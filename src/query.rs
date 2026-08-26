@@ -8,12 +8,14 @@ use crate::ui::style::Color;
 #[derive(Debug, Clone)]
 pub enum QueryError {
     InvalidField(String),
+    DataError(String),
 }
 
 impl std::fmt::Display for QueryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             QueryError::InvalidField(name) => write!(f, "invalid field name: {name}"),
+            QueryError::DataError(msg) => write!(f, "data error: {msg}"),
         }
     }
 }

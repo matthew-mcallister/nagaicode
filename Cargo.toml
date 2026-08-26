@@ -12,7 +12,7 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 dirs = "5"
-diesel = { version = "2", features = ["sqlite", "chrono", "returning_clauses_for_sqlite_3_35"] }
+diesel = { version = "2", features = ["sqlite", "chrono", "serde_json", "returning_clauses_for_sqlite_3_35"] }
 diesel_migrations = { version = "2", features = ["sqlite"] }
 chrono = "0.4"
 libsqlite3-sys = { version = "0.31", features = ["bundled"] }
