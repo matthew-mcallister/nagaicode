@@ -150,7 +150,6 @@ impl DataQuery for Session {
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct Turn {
     pub id: i32,
-    #[diesel(column_name = "type_")]
     pub ty: String,
     pub session_id: i32,
     pub provider_id: Option<i32>,
@@ -172,7 +171,7 @@ pub struct NewTurn<'a> {
 impl<'a> diesel::insertable::Insertable<turn::table> for NewTurn<'a> {
     type Values = <(
         Option<diesel::dsl::Eq<turn::session_id, i32>>,
-        Option<diesel::dsl::Eq<turn::type_, String>>,
+        Option<diesel::dsl::Eq<turn::ty, String>>,
         Option<diesel::dsl::Eq<turn::provider_id, i32>>,
         Option<diesel::dsl::Eq<turn::provider_name, &'a str>>,
         Option<diesel::dsl::Eq<turn::model_id, &'a str>>,
@@ -181,7 +180,7 @@ impl<'a> diesel::insertable::Insertable<turn::table> for NewTurn<'a> {
     fn values(self) -> Self::Values {
         diesel::insertable::Insertable::<turn::table>::values((
             Some(turn::session_id.eq(self.session_id)),
-            Some(turn::type_.eq(self.ty.to_string())),
+            Some(turn::ty.eq(self.ty.to_string())),
             self.provider_id.map(|x| turn::provider_id.eq(x)),
             self.provider_name.map(|x| turn::provider_name.eq(x)),
             self.model_id.map(|x| turn::model_id.eq(x)),
@@ -441,7 +440,6 @@ pub struct Item {
     pub turn_id: i32,
     pub response_id: Option<i32>,
     pub provider_id: Option<i32>,
-    #[diesel(column_name = "type_")]
     pub ty: String,
     pub upstream_id: Option<String>,
     pub upstream_type: Option<String>,
@@ -474,7 +472,7 @@ impl<'a> diesel::insertable::Insertable<item::table> for NewItem<'a> {
         Option<diesel::dsl::Eq<item::turn_id, i32>>,
         Option<diesel::dsl::Eq<item::response_id, i32>>,
         Option<diesel::dsl::Eq<item::provider_id, i32>>,
-        Option<diesel::dsl::Eq<item::type_, String>>,
+        Option<diesel::dsl::Eq<item::ty, String>>,
         Option<diesel::dsl::Eq<item::upstream_id, &'a str>>,
         Option<diesel::dsl::Eq<item::upstream_type, &'a str>>,
         Option<diesel::dsl::Eq<item::upstream_call_id, &'a str>>,
@@ -487,7 +485,7 @@ impl<'a> diesel::insertable::Insertable<item::table> for NewItem<'a> {
             Some(item::turn_id.eq(self.turn_id)),
             self.response_id.map(|x| item::response_id.eq(x)),
             self.provider_id.map(|x| item::provider_id.eq(x)),
-            Some(item::type_.eq(self.ty.to_string())),
+            Some(item::ty.eq(self.ty.to_string())),
             self.upstream_id.map(|x| item::upstream_id.eq(x)),
             self.upstream_type.map(|x| item::upstream_type.eq(x)),
             self.upstream_call_id.map(|x| item::upstream_call_id.eq(x)),
