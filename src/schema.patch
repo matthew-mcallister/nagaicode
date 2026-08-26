@@ -1,0 +1,22 @@
+@@ -15,8 +15,8 @@
+         text -> Nullable<Text>,
+         summary -> Nullable<Text>,
+         encrypted_text -> Nullable<Text>,
+-        json -> Nullable<Text>,
+-        raw_data -> Nullable<Text>,
++        json -> Nullable<Json>,
++        raw_data -> Nullable<Json>,
+         created_at -> Timestamp,
+         updated_at -> Timestamp,
+     }
+@@ -55,8 +55,8 @@
+         output_tokens -> Nullable<BigInt>,
+         reasoning_tokens -> Nullable<BigInt>,
+         total_tokens -> Nullable<BigInt>,
+-        raw_request -> Nullable<Text>,
+-        raw_response -> Nullable<Text>,
++        raw_request -> Nullable<Json>,
++        raw_response -> Nullable<Json>,
+         created_at -> Timestamp,
+         updated_at -> Timestamp,
+     }

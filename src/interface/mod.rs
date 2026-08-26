@@ -5,11 +5,13 @@ use std::str::FromStr;
 
 use futures::Stream;
 
+use serde_json::Value;
+
 use crate::error::AnyResult;
 use crate::interface::openai::OpenaiInterface;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
-use crate::session::{Content, ContentType, Item, ItemType};
+use crate::session::{Item, ItemType};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum InterfaceId {
@@ -73,33 +75,36 @@ pub enum ChatMessage<'a> {
     Reasoning { content: &'a str },
 }
 
-/// Builds the conversation history from a session's (item, content) pairs.
+/// Builds the conversation history from a session's items.
 ///
-/// Text content is always included; reasoning ("thought") content is only
-/// included when `include_thoughts` is true.
+/// Text items are always included; reasoning items are only included when
+/// `include_reasoning` is true, preferring the summary over the raw text.
 pub fn build_history<'a>(
-    pairs: &'a [(Item, Content)],
-    include_thoughts: bool,
+    items: &'a [Item],
+    include_reasoning: bool,
 ) -> AnyResult<Vec<ChatMessage<'a>>> {
-    let mut messages = Vec::with_capacity(pairs.len());
-    for (item, content) in pairs {
-        let is_thought = content.ty()? == ContentType::Thought;
-        if is_thought && !include_thoughts {
-            continue;
-        }
-        if is_thought {
-            messages.push(ChatMessage::Reasoning {
-                content: &content.value,
-            });
-            continue;
-        }
+    let mut messages = Vec::with_capacity(items.len());
+    for item in items {
         match item.ty()? {
-            ItemType::User => messages.push(ChatMessage::Message {
-                content: &content.value,
-            }),
-            ItemType::Model => messages.push(ChatMessage::Response {
-                content: &content.value,
-            }),
+            ItemType::UserText => {
+                if let Some(text) = item.text.as_deref() {
+                    messages.push(ChatMessage::Message { content: text });
+                }
+            }
+            ItemType::ResponseText => {
+                if let Some(text) = item.text.as_deref() {
+                    messages.push(ChatMessage::Response { content: text });
+                }
+            }
+            ItemType::Reasoning => {
+                if !include_reasoning {
+                    continue;
+                }
+                let content = item.summary.as_deref().or(item.text.as_deref());
+                if let Some(content) = content {
+                    messages.push(ChatMessage::Reasoning { content });
+                }
+            }
         }
     }
     Ok(messages)
@@ -121,30 +126,70 @@ pub struct InferenceParams<'a> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResponseCreated {
     pub id: String,
+    pub status: String,
 }
 
 /// Token usage
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Usage {
     pub input_tokens: u64,
-    /// Total output tokens (reasoning included)
+    pub cached_input_tokens: u64,
     pub output_tokens: u64,
     pub reasoning_tokens: u64,
+    pub total_tokens: u64,
+}
+
+/// An output item, emitted when an output item is added to or completed in
+/// the response.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutputItemEvent {
+    /// Position of the item in the response's output array. Add, delta, and
+    /// done events for the same item share this index.
+    pub output_index: i64,
+    /// Upstream item id, e.g. "msg_...", "rs_...".
+    pub id: String,
+    /// Upstream item type, e.g. "message", "reasoning", "function_call".
+    pub ty: String,
+    /// Full raw JSON of the output item.
+    pub raw: Value,
+}
+
+/// An incremental text update for an output item.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ItemDelta {
+    /// Position of the item in the response's output array.
+    pub output_index: i64,
+    pub delta: String,
 }
 
 /// Data returned by API after response is finished streaming.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ResponseCompleted {
+    pub status: String,
     pub usage: Option<Usage>,
+    pub raw_response: Value,
+}
+
+/// Data returned by API when a response fails.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResponseFailed {
+    pub status: String,
+    pub error_message: String,
+    pub usage: Option<Usage>,
+    pub raw_response: Value,
 }
 
 /// An event yielded when streaming an inference response.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum InferenceEvent {
     Created(ResponseCreated),
-    ThinkingDelta(String),
-    OutputDelta(String),
+    OutputItemAdded(OutputItemEvent),
+    OutputItemDone(OutputItemEvent),
+    ReasoningTextDelta(ItemDelta),
+    ReasoningSummaryDelta(ItemDelta),
+    OutputTextDelta(ItemDelta),
     Completed(ResponseCompleted),
+    Failed(ResponseFailed),
 }
 
 /// Wraps around an inference API.
@@ -163,16 +208,15 @@ impl Interface {
     pub fn from_provider(provider: &Provider, client: &DefaultClient) -> AnyResult<Self> {
         let id: InterfaceId = provider.interface.parse()?;
         Ok(match id {
-            InterfaceId::Openai
-            | InterfaceId::Openrouter
-            | InterfaceId::Deepseek => {
+            InterfaceId::Openai | InterfaceId::Openrouter | InterfaceId::Deepseek => {
                 let fallback_url = match id {
                     InterfaceId::Openai => "https://api.openai.com/v1",
                     InterfaceId::Openrouter => "https://openrouter.ai/api/v1",
                     InterfaceId::Deepseek => "https://api.deepseek.com",
                 };
                 Self::from(OpenaiInterface::new(
-                    provider.base_url_normalized()
+                    provider
+                        .base_url_normalized()
                         .unwrap_or(fallback_url)
                         .to_owned(),
                     provider.api_key.clone(),

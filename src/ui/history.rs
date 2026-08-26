@@ -7,23 +7,19 @@ use serde_json::{Value, json};
 
 use crate::arena::{Arena, Id};
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
-use crate::session::{Content, ContentType, Item, ItemType};
+use crate::session::{Item, ItemType};
+use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::markdown::{MarkdownResult, ResumePoint};
 use crate::ui::style::{Style, Theme};
 use crate::ui::styled_string::StyledString;
-use crate::ui::text::{wrap_line, wrap_line_naive, SPACES};
-use crate::ui::Component;
+use crate::ui::text::{SPACES, wrap_line, wrap_line_naive};
 
-pub(crate) fn render_help(
-    theme: &'static Theme,
-    width: usize,
-    content: &str,
-) -> Vec<StyledString> {
-    content.lines().flat_map(|line|
-        wrap_line(width - 6, line)
-            .into_iter()
-            .map(|row| {
+pub(crate) fn render_help(theme: &'static Theme, width: usize, content: &str) -> Vec<StyledString> {
+    content
+        .lines()
+        .flat_map(|line| {
+            wrap_line(width - 6, line).into_iter().map(|row| {
                 let style = Style::new(theme.text_subtle, theme.bg_base);
                 let mut s = StyledString::new(style, width + 4);
                 s.push("  ▐ ", 4);
@@ -32,7 +28,8 @@ pub(crate) fn render_help(
                 s.push("  ", 2);
                 s
             })
-    ).collect()
+        })
+        .collect()
 }
 
 pub(crate) fn render_error(
@@ -40,10 +37,10 @@ pub(crate) fn render_error(
     width: usize,
     content: &str,
 ) -> Vec<StyledString> {
-    content.lines().flat_map(|line|
-        wrap_line(width - 6, line)
-            .into_iter()
-            .map(|row| {
+    content
+        .lines()
+        .flat_map(|line| {
+            wrap_line(width - 6, line).into_iter().map(|row| {
                 let style = Style::new(theme.text_error, theme.bg_base);
                 let mut s = StyledString::new(style, width + 4);
                 s.push("  ▐ ", 4);
@@ -52,7 +49,8 @@ pub(crate) fn render_error(
                 s.push("  ", 2);
                 s
             })
-    ).collect()
+        })
+        .collect()
 }
 
 pub(crate) fn render_prompt(
@@ -72,17 +70,15 @@ pub(crate) fn render_prompt(
     };
 
     let mut rows = vec![make_padding()];
-    rows.extend(content.lines().flat_map(|line|
-        wrap_line(width - 4, line)
-            .into_iter()
-            .map(|row| {
-                let mut s = StyledString::new(style, width + 4);
-                s.push("  ", 2);
-                s.push(&row.to_padded_string(width - 4), width - 4);
-                s.push("  ", 2);
-                s
-            })
-    ));
+    rows.extend(content.lines().flat_map(|line| {
+        wrap_line(width - 4, line).into_iter().map(|row| {
+            let mut s = StyledString::new(style, width + 4);
+            s.push("  ", 2);
+            s.push(&row.to_padded_string(width - 4), width - 4);
+            s.push("  ", 2);
+            s
+        })
+    }));
     rows.push(make_padding());
     rows
 }
@@ -103,42 +99,36 @@ pub(crate) fn render_markdown(
     result
 }
 
-fn render_command_prompt(
-    theme: &'static Theme,
-    width: usize,
-    content: &str,
-) -> Vec<StyledString> {
+fn render_command_prompt(theme: &'static Theme, width: usize, content: &str) -> Vec<StyledString> {
     let style = Style::new(theme.text_base, theme.bg_base);
-    content.lines().flat_map(|line|
-        wrap_line_naive(width - 4, line)
-            .into_iter()
-            .map(|row| {
+    content
+        .lines()
+        .flat_map(|line| {
+            wrap_line_naive(width - 4, line).into_iter().map(|row| {
                 let mut s = StyledString::new(style, width + 4);
                 s.push("  ", 2);
                 s.push(&row.to_padded_string(width - 4), width - 4);
                 s.push("  ", 2);
                 s
             })
-    ).collect()
+        })
+        .collect()
 }
 
-fn render_command_output(
-    theme: &'static Theme,
-    width: usize,
-    content: &str,
-) -> Vec<StyledString> {
+fn render_command_output(theme: &'static Theme, width: usize, content: &str) -> Vec<StyledString> {
     let style = Style::new(theme.text_subtle, theme.bg_base);
-    content.lines().flat_map(|line|
-        wrap_line_naive(width - 4, line)
-            .into_iter()
-            .map(|row| {
+    content
+        .lines()
+        .flat_map(|line| {
+            wrap_line_naive(width - 4, line).into_iter().map(|row| {
                 let mut s = StyledString::new(style, width + 4);
                 s.push("  ", 2);
                 s.push(&row.to_padded_string(width - 4), width - 4);
                 s.push("  ", 2);
                 s
             })
-    ).collect()
+        })
+        .collect()
 }
 
 fn render(
@@ -148,11 +138,26 @@ fn render(
     content: &str,
 ) -> (Vec<StyledString>, ResumePoint) {
     match ty {
-        HistoryItemType::Help => (render_help(theme, width, content), ResumePoint { offset: 0, row: 0 }),
-        HistoryItemType::Error => (render_error(theme, width, content), ResumePoint { offset: 0, row: 0 }),
-        HistoryItemType::User => (render_prompt(theme, width, content), ResumePoint { offset: 0, row: 0 }),
-        HistoryItemType::CommandPrompt => (render_command_prompt(theme, width, content), ResumePoint { offset: 0, row: 0 }),
-        HistoryItemType::CommandOutput => (render_command_output(theme, width, content), ResumePoint { offset: 0, row: 0 }),
+        HistoryItemType::Help => (
+            render_help(theme, width, content),
+            ResumePoint { offset: 0, row: 0 },
+        ),
+        HistoryItemType::Error => (
+            render_error(theme, width, content),
+            ResumePoint { offset: 0, row: 0 },
+        ),
+        HistoryItemType::User => (
+            render_prompt(theme, width, content),
+            ResumePoint { offset: 0, row: 0 },
+        ),
+        HistoryItemType::CommandPrompt => (
+            render_command_prompt(theme, width, content),
+            ResumePoint { offset: 0, row: 0 },
+        ),
+        HistoryItemType::CommandOutput => (
+            render_command_output(theme, width, content),
+            ResumePoint { offset: 0, row: 0 },
+        ),
         _ => {
             let result = render_markdown(theme, width, content);
             (result.rows, result.resume_point)
@@ -160,12 +165,21 @@ fn render(
     }
 }
 
-fn get_content_type(item: &Item, content: &Content) -> HistoryItemType {
-    match (item.ty().unwrap(), content.ty().unwrap()) {
-        (ItemType::User, _) => HistoryItemType::User,
-        (ItemType::Model, ContentType::Thought) => HistoryItemType::Thought,
-        (ItemType::Model, ContentType::Text) => HistoryItemType::Response,
+fn get_item_type(item: &Item) -> HistoryItemType {
+    match item.ty().unwrap() {
+        ItemType::UserText => HistoryItemType::User,
+        ItemType::ResponseText => HistoryItemType::Response,
+        ItemType::Reasoning => HistoryItemType::Thought,
     }
+}
+
+/// Returns the text to display for an item, preferring the raw text over the
+/// summary for reasoning items.
+fn item_text(item: &Item) -> &str {
+    item.text
+        .as_deref()
+        .or(item.summary.as_deref())
+        .unwrap_or("")
 }
 
 #[derive(Debug)]
@@ -273,7 +287,7 @@ pub struct HistoryItem {
     content: String,
     ty: HistoryItemType,
     resume_point: ResumePoint,
-    content_id: Option<i32>,
+    item_id: Option<i32>,
     first_row: Id<HistoryRow>,
     last_row: Id<HistoryRow>,
     num_rows: usize,
@@ -288,11 +302,20 @@ impl HistoryItem {
         width: usize,
         ty: HistoryItemType,
         content: String,
-        content_id: Option<i32>,
+        item_id: Option<i32>,
     ) -> Id<Self> {
         let (rendered, resume_point) = render(theme, width, ty, &content);
         Self::from_rendered(
-            theme, items, rows, prev, width, ty, content, content_id, resume_point, rendered,
+            theme,
+            items,
+            rows,
+            prev,
+            width,
+            ty,
+            content,
+            item_id,
+            resume_point,
+            rendered,
         )
     }
 
@@ -304,7 +327,7 @@ impl HistoryItem {
         width: usize,
         ty: HistoryItemType,
         content: String,
-        content_id: Option<i32>,
+        item_id: Option<i32>,
         resume_point: ResumePoint,
         mut rendered: Vec<StyledString>,
     ) -> Id<Self> {
@@ -314,7 +337,7 @@ impl HistoryItem {
             content,
             ty,
             resume_point,
-            content_id,
+            item_id,
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 0,
@@ -420,7 +443,7 @@ impl HistoryItem {
 /// - resume_point:
 ///   - offset: number
 ///   - row: number
-/// - content_id: number | null
+/// - item_id: number | null
 /// - first_row: id
 /// - last_row: id
 /// - num_rows: number
@@ -431,7 +454,7 @@ impl DataQuery for HistoryItem {
                 "content": self.content,
                 "ty": self.ty.as_str(),
                 "resume_point": self.resume_point.query("/")?,
-                "content_id": self.content_id,
+                "item_id": self.item_id,
                 "first_row": self.first_row.to_json(),
                 "last_row": self.last_row.to_json(),
                 "num_rows": self.num_rows,
@@ -439,7 +462,7 @@ impl DataQuery for HistoryItem {
             "content" => Ok(QueryField::Value(json!(self.content))),
             "ty" => Ok(QueryField::Value(json!(self.ty.as_str()))),
             "resume_point" => Ok(QueryField::DataQuery(&self.resume_point)),
-            "content_id" => Ok(QueryField::Value(json!(self.content_id))),
+            "item_id" => Ok(QueryField::Value(json!(self.item_id))),
             "first_row" => Ok(QueryField::Value(self.first_row.to_json())),
             "last_row" => Ok(QueryField::Value(self.last_row.to_json())),
             "num_rows" => Ok(QueryField::Value(json!(self.num_rows))),
@@ -464,9 +487,9 @@ pub struct History {
     viewport_bottom: Id<HistoryRow>,
     /// Absolute row index of `viewport_bottom`
     viewport_bottom_pos: usize,
-    /// Maps a `Content` id to the history item rendering it, so that
-    /// `ContentUpdated` events can locate and rerender the right item.
-    by_content_id: FnvHashMap<i32, Id<HistoryItem>>,
+    /// Maps an `Item` id to the history item rendering it, so that
+    /// `ItemUpdated` events can locate and rerender the right item.
+    by_item_id: FnvHashMap<i32, Id<HistoryItem>>,
 }
 
 impl History {
@@ -495,7 +518,7 @@ impl History {
             viewport_bottom: head,
             viewport_top_pos: 0,
             viewport_bottom_pos: 0,
-            by_content_id: FnvHashMap::default(),
+            by_item_id: FnvHashMap::default(),
         }
     }
 
@@ -625,12 +648,12 @@ impl History {
         let saved: Vec<(HistoryItemType, String, Option<i32>)> = self
             .item
             .iter()
-            .map(|(_, item)| (item.ty, item.content.clone(), item.content_id))
+            .map(|(_, item)| (item.ty, item.content.clone(), item.item_id))
             .collect();
 
         self.item.clear();
         self.rows.clear();
-        self.by_content_id.clear();
+        self.by_item_id.clear();
 
         let head = self.rows.insert(HistoryRow {
             item: Id::null(),
@@ -646,7 +669,7 @@ impl History {
         self.viewport_top_pos = 0;
         self.viewport_bottom_pos = 0;
 
-        for (ty, content, content_id) in saved {
+        for (ty, content, item_id) in saved {
             let prev = self.last_row();
             let id = HistoryItem::new(
                 self.theme,
@@ -656,10 +679,10 @@ impl History {
                 width,
                 ty,
                 content,
-                content_id,
+                item_id,
             );
-            if let Some(cid) = content_id {
-                self.by_content_id.insert(cid, id);
+            if let Some(id2) = item_id {
+                self.by_item_id.insert(id2, id);
             }
             self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
         }
@@ -681,14 +704,14 @@ impl History {
         self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
 
-    /// Creates (or updates) a content item
-    fn on_content_created(&mut self, item: &Item, content: &Content) {
-        if self.by_content_id.contains_key(&content.id) {
-            self.on_content_updated(item, content);
+    /// Creates (or updates) an item
+    fn on_item_created(&mut self, item: &Item) {
+        if self.by_item_id.contains_key(&item.id) {
+            self.on_item_updated(item);
             return;
         }
 
-        let ty = get_content_type(item, content);
+        let ty = get_item_type(item);
         let prev = self.last_row();
         let id = HistoryItem::new(
             self.theme,
@@ -697,22 +720,22 @@ impl History {
             prev,
             self.width,
             ty,
-            content.value.clone(),
-            Some(content.id),
+            item_text(item).to_string(),
+            Some(item.id),
         );
-        self.by_content_id.insert(content.id, id);
+        self.by_item_id.insert(item.id, id);
         self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
 
-    /// Does an incremental rerender for an updated content item
-    fn on_content_updated(&mut self, item: &Item, content: &Content) {
-        if let Some(&item_id) = self.by_content_id.get(&content.id) {
+    /// Does an incremental rerender for an updated item
+    fn on_item_updated(&mut self, item: &Item) {
+        if let Some(&item_id) = self.by_item_id.get(&item.id) {
             let theme = self.theme;
             let width = self.width;
-            self.item[item_id].update(theme, &mut self.rows, width, &content.value);
+            self.item[item_id].update(theme, &mut self.rows, width, item_text(item));
             self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
         } else {
-            self.on_content_created(item, content);
+            self.on_item_created(item);
         }
     }
 
@@ -736,8 +759,8 @@ impl History {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
-    ContentCreated { item: &'a Item, content: &'a Content },
-    ContentUpdated { item: &'a Item, content: &'a Content },
+    ItemCreated { item: &'a Item },
+    ItemUpdated { item: &'a Item },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -782,7 +805,9 @@ impl Component for History {
     }
 
     fn handle_input(&mut self, event: Event) -> Self::Event {
-        let KeyEvent { code, modifiers, .. } = match event {
+        let KeyEvent {
+            code, modifiers, ..
+        } = match event {
             Event::Key(key) => key,
             _ => return,
         };
@@ -791,7 +816,9 @@ impl Component for History {
             (KeyCode::Up, _) => self.scroll_up(1),
             (KeyCode::Down, _) => self.scroll_down(1),
             (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => self.scroll_up(self.height() / 2),
-            (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => self.scroll_down(self.height() / 2),
+            (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => {
+                self.scroll_down(self.height() / 2)
+            }
             (KeyCode::Home, _) => self.set_viewport_top_at(self.first_row(), 0),
             (KeyCode::End, _) => self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1),
             _ => {}
@@ -800,17 +827,21 @@ impl Component for History {
 
     fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
         match update {
-            Update::ContentCreated { item, content } => self.on_content_created(&item, &content),
-            Update::ContentUpdated { item, content } => self.on_content_updated(&item, &content),
+            Update::ItemCreated { item } => self.on_item_created(&item),
+            Update::ItemUpdated { item } => self.on_item_updated(&item),
             Update::HelpMessage(content) => self.add_item(HistoryItemType::Help, content.into()),
             Update::ErrorMessage(content) => self.add_item(HistoryItemType::Error, content.into()),
-            Update::CommandPrompt(content) => self.add_item(HistoryItemType::CommandPrompt, content.into()),
-            Update::CommandOutput(content) => self.add_item(HistoryItemType::CommandOutput, content.into()),
+            Update::CommandPrompt(content) => {
+                self.add_item(HistoryItemType::CommandPrompt, content.into())
+            }
+            Update::CommandOutput(content) => {
+                self.add_item(HistoryItemType::CommandOutput, content.into())
+            }
         }
     }
 }
 
-fn by_content_id_json(map: &FnvHashMap<i32, Id<HistoryItem>>) -> Value {
+fn by_item_id_json(map: &FnvHashMap<i32, Id<HistoryItem>>) -> Value {
     map.iter()
         .map(|(k, id)| (k.to_string(), (*id).to_json()))
         .collect()
@@ -826,7 +857,7 @@ fn by_content_id_json(map: &FnvHashMap<i32, Id<HistoryItem>>) -> Value {
 /// - viewport_top_pos: number
 /// - viewport_bottom: id
 /// - viewport_bottom_pos: number
-/// - by_content_id: Map<string, id>
+/// - by_item_id: Map<string, id>
 // rows is intentionally not exposed as of yet
 impl DataQuery for History {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
@@ -841,10 +872,12 @@ impl DataQuery for History {
                 "viewport_top_pos": self.viewport_top_pos,
                 "viewport_bottom": self.viewport_bottom.to_json(),
                 "viewport_bottom_pos": self.viewport_bottom_pos,
-                "by_content_id": by_content_id_json(&self.by_content_id),
+                "by_item_id": by_item_id_json(&self.by_item_id),
             }))),
             "num_rows" => Ok(QueryField::Value(json!(self.num_rows()))),
-            "items" => Ok(QueryField::Boxed(Box::new(HistoryItemsData { history: self }))),
+            "items" => Ok(QueryField::Boxed(Box::new(HistoryItemsData {
+                history: self,
+            }))),
             "width" => Ok(QueryField::Value(json!(self.width))),
             "max_height" => Ok(QueryField::Value(json!(self.max_height))),
             "head" => Ok(QueryField::Value(self.head.to_json())),
@@ -852,7 +885,7 @@ impl DataQuery for History {
             "viewport_top_pos" => Ok(QueryField::Value(json!(self.viewport_top_pos))),
             "viewport_bottom" => Ok(QueryField::Value(self.viewport_bottom.to_json())),
             "viewport_bottom_pos" => Ok(QueryField::Value(json!(self.viewport_bottom_pos))),
-            "by_content_id" => Ok(QueryField::Value(by_content_id_json(&self.by_content_id))),
+            "by_item_id" => Ok(QueryField::Value(by_item_id_json(&self.by_item_id))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -980,10 +1013,16 @@ mod tests {
         assert_eq!(h.num_rows(), 3);
         assert_eq!(h.height(), 2);
 
-        assert_eq!(render_draw(&h), format!("{help_style}  ▐ {italic}two     \n{base_style}            "));
+        assert_eq!(
+            render_draw(&h),
+            format!("{help_style}  ▐ {italic}two     \n{base_style}            ")
+        );
 
         h.scroll_up(1);
-        assert_eq!(render_draw(&h), format!("{help_style}  ▐ {italic}one     \n{help_style}  ▐ {italic}two     "));
+        assert_eq!(
+            render_draw(&h),
+            format!("{help_style}  ▐ {italic}one     \n{help_style}  ▐ {italic}two     ")
+        );
 
         h.set_width(14);
         assert_eq!(h.width(), 14);
@@ -1014,9 +1053,18 @@ mod tests {
             render_canvas(&mut lines[..])
         }
 
-        assert_eq!(render("hello", 14), format!("{help_style}  ▐ {italic}hello     "));
-        assert_eq!(render("foo\nbar", 12), format!("{help_style}  ▐ {italic}foo     \n{help_style}  ▐ {italic}bar     "));
-        assert_eq!(render("hello world", 12), format!("{help_style}  ▐ {italic}hello   \n{help_style}  ▐ {italic}world   "));
+        assert_eq!(
+            render("hello", 14),
+            format!("{help_style}  ▐ {italic}hello     ")
+        );
+        assert_eq!(
+            render("foo\nbar", 12),
+            format!("{help_style}  ▐ {italic}foo     \n{help_style}  ▐ {italic}bar     ")
+        );
+        assert_eq!(
+            render("hello world", 12),
+            format!("{help_style}  ▐ {italic}hello   \n{help_style}  ▐ {italic}world   ")
+        );
         assert_eq!(render("", 8), "");
     }
 
@@ -1034,9 +1082,18 @@ mod tests {
             render_canvas(&mut lines[..])
         }
 
-        assert_eq!(render("hello", 12), format!("{error_style}  ▐ {transition}hello   "));
-        assert_eq!(render("foo\nbar", 12), format!("{error_style}  ▐ {transition}foo     \n{error_style}  ▐ {transition}bar     "));
-        assert_eq!(render("hello world", 12), format!("{error_style}  ▐ {transition}hello   \n{error_style}  ▐ {transition}world   "));
+        assert_eq!(
+            render("hello", 12),
+            format!("{error_style}  ▐ {transition}hello   ")
+        );
+        assert_eq!(
+            render("foo\nbar", 12),
+            format!("{error_style}  ▐ {transition}foo     \n{error_style}  ▐ {transition}bar     ")
+        );
+        assert_eq!(
+            render("hello world", 12),
+            format!("{error_style}  ▐ {transition}hello   \n{error_style}  ▐ {transition}world   ")
+        );
         assert_eq!(render("", 8), "");
     }
 
@@ -1052,15 +1109,21 @@ mod tests {
 
         assert_eq!(
             render("hello", 14),
-            format!("{prompt_style}              \n{prompt_style}  hello       \n{prompt_style}              ")
+            format!(
+                "{prompt_style}              \n{prompt_style}  hello       \n{prompt_style}              "
+            )
         );
         assert_eq!(
             render("foo\nbar", 12),
-            format!("{prompt_style}            \n{prompt_style}  foo       \n{prompt_style}  bar       \n{prompt_style}            ")
+            format!(
+                "{prompt_style}            \n{prompt_style}  foo       \n{prompt_style}  bar       \n{prompt_style}            "
+            )
         );
         assert_eq!(
             render("hello world", 12),
-            format!("{prompt_style}            \n{prompt_style}  hello     \n{prompt_style}  world     \n{prompt_style}            ")
+            format!(
+                "{prompt_style}            \n{prompt_style}  hello     \n{prompt_style}  world     \n{prompt_style}            "
+            )
         );
         assert_eq!(render("", 8), "");
     }
@@ -1080,7 +1143,10 @@ mod tests {
             render_canvas(&mut lines[..])
         }
 
-        assert_eq!(render_prompt("!foo", 14), format!("{prompt_style}  !foo        "));
+        assert_eq!(
+            render_prompt("!foo", 14),
+            format!("{prompt_style}  !foo        ")
+        );
         assert_eq!(
             render_prompt("!foo\n!bar", 14),
             format!("{prompt_style}  !foo        \n{prompt_style}  !bar        ")
@@ -1089,7 +1155,10 @@ mod tests {
             render_prompt("!hello world foo", 14),
             format!("{prompt_style}  !hello wor  \n{prompt_style}  ld foo      ")
         );
-        assert_eq!(render_output("ok", 14), format!("{output_style}  ok          "));
+        assert_eq!(
+            render_output("ok", 14),
+            format!("{output_style}  ok          ")
+        );
         assert_eq!(
             render_output("line1\nline2", 14),
             format!("{output_style}  line1       \n{output_style}  line2       ")
@@ -1216,7 +1285,7 @@ mod tests {
             content: "hello".into(),
             ty: HistoryItemType::Response,
             resume_point: ResumePoint { offset: 0, row: 0 },
-            content_id: None,
+            item_id: None,
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 0,
@@ -1225,7 +1294,7 @@ mod tests {
             "content": "hello",
             "ty": "response",
             "resume_point": item.resume_point.query("/").unwrap(),
-            "content_id": null,
+            "item_id": null,
             "first_row": item.first_row.to_json(),
             "last_row": item.last_row.to_json(),
             "num_rows": 0,
@@ -1233,8 +1302,11 @@ mod tests {
         assert_eq!(item.query("/").unwrap(), expected);
         assert_eq!(item.query("/content").unwrap(), json!("hello"));
         assert_eq!(item.query("/ty").unwrap(), json!("response"));
-        assert_eq!(item.query("/resume_point").unwrap(), item.resume_point.query("/").unwrap());
-        assert_eq!(item.query("/content_id").unwrap(), json!(null));
+        assert_eq!(
+            item.query("/resume_point").unwrap(),
+            item.resume_point.query("/").unwrap()
+        );
+        assert_eq!(item.query("/item_id").unwrap(), json!(null));
         assert_eq!(item.query("/first_row").unwrap(), item.first_row.to_json());
         assert_eq!(item.query("/last_row").unwrap(), item.last_row.to_json());
         assert_eq!(item.query("/num_rows").unwrap(), json!(0));
@@ -1253,7 +1325,7 @@ mod tests {
             "viewport_top_pos": 0,
             "viewport_bottom": history.viewport_bottom.to_json(),
             "viewport_bottom_pos": 0,
-            "by_content_id": {},
+            "by_item_id": {},
         });
         assert_eq!(history.query("/").unwrap(), expected);
         assert_eq!(history.query("/num_rows").unwrap(), json!(0));
@@ -1261,10 +1333,16 @@ mod tests {
         assert_eq!(history.query("/width").unwrap(), json!(20));
         assert_eq!(history.query("/max_height").unwrap(), json!(5));
         assert_eq!(history.query("/head").unwrap(), history.head.to_json());
-        assert_eq!(history.query("/viewport_top").unwrap(), history.viewport_top.to_json());
+        assert_eq!(
+            history.query("/viewport_top").unwrap(),
+            history.viewport_top.to_json()
+        );
         assert_eq!(history.query("/viewport_top_pos").unwrap(), json!(0));
-        assert_eq!(history.query("/viewport_bottom").unwrap(), history.viewport_bottom.to_json());
+        assert_eq!(
+            history.query("/viewport_bottom").unwrap(),
+            history.viewport_bottom.to_json()
+        );
         assert_eq!(history.query("/viewport_bottom_pos").unwrap(), json!(0));
-        assert_eq!(history.query("/by_content_id").unwrap(), json!({}));
+        assert_eq!(history.query("/by_item_id").unwrap(), json!({}));
     }
 }

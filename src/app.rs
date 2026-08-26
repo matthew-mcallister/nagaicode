@@ -23,20 +23,24 @@ use crate::model::revalidate_models;
 use crate::provider::Provider;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::DefaultClient;
-use crate::session::{Content, ContentType, Item, ItemType, Session};
+use crate::session::{Item, ItemType, NewItem, Session, Turn, TurnType};
 use crate::terminal::{DefaultTerminal, Terminal};
 use crate::tools::{DefaultToolServer, ToolServer};
+use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::chat::{Chat, Update};
 use crate::ui::style::{THEME_DARK, Theme};
-use crate::ui::Component;
 use crate::ui::styled_string::StyledString;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
     Command(String),
-    ContentCreated { item: Item, content: Content },
-    ContentUpdated { item: Item, content: Content },
+    ItemCreated {
+        item: Item,
+    },
+    ItemUpdated {
+        item: Item,
+    },
     /// Navigate to the previous entry in the command history.
     HistoryPrev,
     /// Navigate to the next entry in the command history.
@@ -50,7 +54,7 @@ pub enum AppEvent {
 #[derive(Debug)]
 enum Poll {
     Input(crossterm::event::Event),
-    Event(AppEvent),
+    Event(Box<AppEvent>),
 }
 
 /// A running background agent task, bundling its cancellation token with the
@@ -221,7 +225,11 @@ impl App {
     pub async fn run(&mut self) -> AnyResult<()> {
         self.spawn_revalidate_models();
         self.terminal.enable_raw_mode()?;
-        execute!(self.terminal.stdout(), EnterAlternateScreen, DisableLineWrap)?;
+        execute!(
+            self.terminal.stdout(),
+            EnterAlternateScreen,
+            DisableLineWrap
+        )?;
 
         while !self.quit {
             self.render()?;
@@ -229,11 +237,11 @@ impl App {
                 input = self.terminal.events().next() => {
                     Poll::Input(input.ok_or_else(|| std::io::Error::other("terminal stream closed"))??)
                 }
-                event = self.recv.recv() => Poll::Event(event.expect("channel closed")),
+                event = self.recv.recv() => Poll::Event(Box::new(event.expect("channel closed"))),
             };
             match poll {
                 Poll::Input(event) => self.handle_input(event),
-                Poll::Event(event) => self.process_event(event),
+                Poll::Event(event) => self.process_event(*event),
             }
         }
 
@@ -243,7 +251,10 @@ impl App {
         Ok(())
     }
 
-    fn process_slash_command(&mut self, command: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
+    fn process_slash_command(
+        &mut self,
+        command: &str,
+    ) -> Result<String, Box<dyn Error + Send + Sync>> {
         let command = match crate::command::parse_command(command) {
             Ok(x) => x,
             Err(e) => return Ok(e.to_string()),
@@ -254,7 +265,7 @@ impl App {
             Command::Quit => {
                 self.quit = true;
                 Ok(String::new())
-            },
+            }
         }
     }
 
@@ -301,24 +312,23 @@ impl App {
             .ok_or_else(|| format!("no provider found for model '{}'", model.id))?;
 
         let session = self.create_session()?;
+        let turn = Turn::create(&mut self.conn, session.id, TurnType::User, None, None, None)?;
         let item = Item::create(
             &mut self.conn,
-            session.id,
-            None,
-            ItemType::User,
-            None,
-        )?;
-        let content = Content::create(
-            &mut self.conn,
-            item.id,
-            ContentType::Text,
-            prompt,
+            NewItem {
+                session_id: session.id,
+                turn_id: turn.id,
+                response_id: None,
+                provider_id: None,
+                ty: ItemType::UserText,
+                upstream_id: None,
+                upstream_type: None,
+                upstream_call_id: None,
+                text: Some(prompt),
+            },
         )?;
 
-        let _ = self.send.send(AppEvent::ContentCreated {
-            item: item.clone(),
-            content: content.clone(),
-        });
+        let _ = self.send.send(AppEvent::ItemCreated { item: item.clone() });
 
         let cancel = CancellationToken::new();
         let agent = Agent::new(
@@ -383,12 +393,12 @@ impl App {
     pub(crate) fn process_event(&mut self, event: AppEvent) {
         let res = match event {
             AppEvent::Command(cmd) => self.process_command(&cmd),
-            AppEvent::ContentCreated { item, content } => {
-                self.chat.handle_update(Update::ContentCreated { item: &item, content: &content });
+            AppEvent::ItemCreated { item } => {
+                self.chat.handle_update(Update::ItemCreated { item: &item });
                 Ok(())
             }
-            AppEvent::ContentUpdated { item, content } => {
-                self.chat.handle_update(Update::ContentUpdated { item: &item, content: &content });
+            AppEvent::ItemUpdated { item } => {
+                self.chat.handle_update(Update::ItemUpdated { item: &item });
                 Ok(())
             }
             AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
@@ -406,7 +416,8 @@ impl App {
             }
         };
         if let Err(e) = res {
-            self.chat.handle_update(Update::ErrorMessage(&e.to_string()));
+            self.chat
+                .handle_update(Update::ErrorMessage(&e.to_string()));
         }
     }
 }

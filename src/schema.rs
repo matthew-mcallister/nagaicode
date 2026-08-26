@@ -1,35 +1,22 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    chain (id) {
-        id -> Integer,
-        session_id -> Integer,
-        provider_id -> Integer,
-        provider_name -> Text,
-        model_id -> Text,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
-    content (id) {
-        id -> Integer,
-        item_id -> Integer,
-        r#type -> Text,
-        value -> Text,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
     item (id) {
         id -> Integer,
         session_id -> Integer,
-        chain_id -> Nullable<Integer>,
-        r#type -> Text,
-        response_id -> Nullable<Text>,
+        turn_id -> Integer,
+        response_id -> Nullable<Integer>,
+        provider_id -> Nullable<Integer>,
+        #[sql_name = "type"]
+        type_ -> Text,
+        upstream_id -> Nullable<Text>,
+        upstream_type -> Nullable<Text>,
+        upstream_call_id -> Nullable<Text>,
+        text -> Nullable<Text>,
+        summary -> Nullable<Text>,
+        encrypted_text -> Nullable<Text>,
+        json -> Nullable<Json>,
+        raw_data -> Nullable<Json>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -57,6 +44,25 @@ diesel::table! {
 }
 
 diesel::table! {
+    response (id) {
+        id -> Integer,
+        session_id -> Integer,
+        turn_id -> Integer,
+        upstream_id -> Nullable<Text>,
+        upstream_status -> Nullable<Text>,
+        input_tokens -> Nullable<BigInt>,
+        cached_input_tokens -> Nullable<BigInt>,
+        output_tokens -> Nullable<BigInt>,
+        reasoning_tokens -> Nullable<BigInt>,
+        total_tokens -> Nullable<BigInt>,
+        raw_request -> Nullable<Json>,
+        raw_response -> Nullable<Json>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     session (id) {
         id -> Integer,
         name -> Text,
@@ -65,17 +71,26 @@ diesel::table! {
     }
 }
 
-diesel::joinable!(chain -> session (session_id));
-diesel::joinable!(content -> item (item_id));
-diesel::joinable!(item -> chain (chain_id));
-diesel::joinable!(item -> session (session_id));
-diesel::joinable!(model -> provider (provider_id));
+diesel::table! {
+    turn (id) {
+        id -> Integer,
+        #[sql_name = "type"]
+        type_ -> Text,
+        session_id -> Integer,
+        provider_id -> Nullable<Integer>,
+        provider_name -> Nullable<Text>,
+        model_id -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
 
-diesel::allow_tables_to_appear_in_same_query!(
-    chain,
-    content,
-    item,
-    model,
-    provider,
-    session,
-);
+diesel::joinable!(item -> response (response_id));
+diesel::joinable!(item -> session (session_id));
+diesel::joinable!(item -> turn (turn_id));
+diesel::joinable!(model -> provider (provider_id));
+diesel::joinable!(response -> session (session_id));
+diesel::joinable!(response -> turn (turn_id));
+diesel::joinable!(turn -> session (session_id));
+
+diesel::allow_tables_to_appear_in_same_query!(item, model, provider, response, session, turn,);

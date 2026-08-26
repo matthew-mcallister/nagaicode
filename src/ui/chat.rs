@@ -4,12 +4,12 @@ use serde_json::json;
 
 use crate::app::AppEvent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::session::{Content, Item};
+use crate::session::Item;
+use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::padded::Padded;
 use crate::ui::stacked_view::{self, StackedView};
 use crate::ui::style::Theme;
-use crate::ui::Component;
 
 const TEXT_INPUT_MAX_HEIGHT: u16 = 24;
 
@@ -32,7 +32,8 @@ impl Chat {
             TEXT_INPUT_MAX_HEIGHT.min(h.saturating_sub(2)) as usize,
             theme,
         );
-        let help = dedent!("
+        let help = dedent!(
+            "
             Welcome to NagaiCode!
 
             Type /help for a list of commands."
@@ -52,8 +53,8 @@ impl Chat {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
-    ContentCreated { item: &'a Item, content: &'a Content },
-    ContentUpdated { item: &'a Item, content: &'a Content },
+    ItemCreated { item: &'a Item },
+    ItemUpdated { item: &'a Item },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -65,8 +66,8 @@ impl<'a> TryFrom<Update<'a>> for stacked_view::Update<'a> {
 
     fn try_from(update: Update<'a>) -> Result<Self, Self::Error> {
         match update {
-            Update::ContentCreated { item, content } => Ok(stacked_view::Update::ContentCreated { item, content }),
-            Update::ContentUpdated { item, content } => Ok(stacked_view::Update::ContentUpdated { item, content }),
+            Update::ItemCreated { item } => Ok(stacked_view::Update::ItemCreated { item }),
+            Update::ItemUpdated { item } => Ok(stacked_view::Update::ItemUpdated { item }),
             Update::HelpMessage(content) => Ok(stacked_view::Update::HelpMessage(content)),
             Update::ErrorMessage(content) => Ok(stacked_view::Update::ErrorMessage(content)),
             Update::CommandPrompt(content) => Ok(stacked_view::Update::CommandPrompt(content)),
@@ -150,6 +151,9 @@ mod tests {
             "stacked": chat.stacked.query("/").unwrap(),
         });
         assert_eq!(chat.query("/").unwrap(), expected);
-        assert_eq!(chat.query("/stacked").unwrap(), chat.stacked.query("/").unwrap());
+        assert_eq!(
+            chat.query("/stacked").unwrap(),
+            chat.stacked.query("/").unwrap()
+        );
     }
 }

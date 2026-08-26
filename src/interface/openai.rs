@@ -1,17 +1,17 @@
 use futures::{Stream, StreamExt};
 use log::debug;
 use reqwest_eventsource::Event;
-use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
-#[allow(unused_imports)]
-use crate::request::{Client as _, Response as _};
 use crate::error::AnyResult;
 use crate::interface::{
-    ChatMessage, InferenceEvent, InferenceParams, InterfaceModel, ReasoningEffort,
-    ResponseCompleted, ResponseCreated, Usage,
+    ChatMessage, InferenceEvent, InferenceParams, InterfaceModel, ItemDelta, OutputItemEvent,
+    ReasoningEffort, ResponseCompleted, ResponseCreated, ResponseFailed, Usage,
 };
 use crate::request::DefaultClient;
+#[allow(unused_imports)]
+use crate::request::{Client as _, Response as _};
 
 /// HTTP client wrapping a [`DefaultClient`] with auth and a base URL.
 #[derive(Clone, Debug)]
@@ -147,24 +147,22 @@ impl<'a> CreateResponseRequest<'a> {
         let input = params
             .input
             .iter()
-            .map(|msg| {
-                match msg {
-                    ChatMessage::Message { content } => InputItem::Message {
-                        role: "user",
-                        content,
-                    },
-                    ChatMessage::Response { content } => InputItem::Message {
-                        role: "assistant",
-                        content,
-                    },
-                    ChatMessage::Reasoning { content } => InputItem::Reasoning {
-                        r#type: "reasoning",
-                        summary: vec![ReasoningSummary {
-                            r#type: "summary_text",
-                            text: content,
-                        }],
-                    },
-                }
+            .map(|msg| match msg {
+                ChatMessage::Message { content } => InputItem::Message {
+                    role: "user",
+                    content,
+                },
+                ChatMessage::Response { content } => InputItem::Message {
+                    role: "assistant",
+                    content,
+                },
+                ChatMessage::Reasoning { content } => InputItem::Reasoning {
+                    r#type: "reasoning",
+                    summary: vec![ReasoningSummary {
+                        r#type: "summary_text",
+                        text: content,
+                    }],
+                },
             })
             .collect();
 
@@ -191,29 +189,43 @@ impl<'a> CreateResponseRequest<'a> {
 #[serde(tag = "type")]
 enum ResponseStreamEvent {
     #[serde(rename = "response.created")]
-    Created {
-        response: ResponsePayload,
+    Created { response: ResponsePayload },
+    #[serde(rename = "response.output_item.added")]
+    OutputItemAdded {
+        #[serde(default)]
+        output_index: i64,
+        item: OutputItemPayload,
+    },
+    #[serde(rename = "response.output_item.done")]
+    OutputItemDone {
+        #[serde(default)]
+        output_index: i64,
+        item: OutputItemPayload,
     },
     #[serde(rename = "response.output_text.delta")]
     OutputTextDelta {
+        #[serde(default)]
+        output_index: i64,
         delta: String,
     },
     #[serde(rename = "response.reasoning_text.delta")]
     ReasoningTextDelta {
+        #[serde(default)]
+        output_index: i64,
         delta: String,
     },
     #[serde(rename = "response.reasoning_summary_text.delta")]
     ReasoningSummaryTextDelta {
+        #[serde(default)]
+        output_index: i64,
         delta: String,
     },
     #[serde(rename = "response.completed")]
-    Completed {
-        response: ResponsePayload,
-    },
+    Completed { response: ResponsePayload },
+    #[serde(rename = "response.incomplete")]
+    Incomplete { response: ResponsePayload },
     #[serde(rename = "response.failed")]
-    Failed {
-        response: ResponsePayload,
-    },
+    Failed { response: ResponsePayload },
     #[serde(rename = "error")]
     Error(ResponseError),
     #[serde(other)]
@@ -221,23 +233,48 @@ enum ResponseStreamEvent {
 }
 
 #[derive(Debug, Deserialize)]
-struct ResponsePayload {
+struct OutputItemPayload {
+    #[serde(default)]
     id: String,
+    #[serde(default, rename = "type")]
+    ty: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResponsePayload {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    status: Option<String>,
     #[serde(default)]
     usage: Option<ResponseUsage>,
     #[serde(default)]
     error: Option<ResponseError>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct ResponseUsage {
+    #[serde(default)]
     input_tokens: u64,
+    #[serde(default)]
     output_tokens: u64,
+    #[serde(default)]
+    total_tokens: u64,
+    #[serde(default)]
+    input_tokens_details: InputTokensDetails,
+    #[serde(default)]
     output_tokens_details: OutputTokensDetails,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+struct InputTokensDetails {
+    #[serde(default)]
+    cached_tokens: u64,
+}
+
+#[derive(Debug, Default, Deserialize)]
 struct OutputTokensDetails {
+    #[serde(default)]
     reasoning_tokens: u64,
 }
 
@@ -245,8 +282,10 @@ impl From<ResponseUsage> for Usage {
     fn from(value: ResponseUsage) -> Self {
         Self {
             input_tokens: value.input_tokens,
+            cached_input_tokens: value.input_tokens_details.cached_tokens,
             output_tokens: value.output_tokens,
             reasoning_tokens: value.output_tokens_details.reasoning_tokens,
+            total_tokens: value.total_tokens,
         }
     }
 }
@@ -295,7 +334,11 @@ impl OpenaiInterface {
 
     pub async fn get_models(&self) -> AnyResult<Vec<InterfaceModel>> {
         let parsed: ModelsResponse = self.client.get("/models").await?;
-        Ok(parsed.data.into_iter().map(|m| InterfaceModel { id: m.id }).collect())
+        Ok(parsed
+            .data
+            .into_iter()
+            .map(|m| InterfaceModel { id: m.id })
+            .collect())
     }
 
     pub fn generate(
@@ -323,24 +366,90 @@ impl OpenaiInterface {
                             return;
                         }
                         debug!("SSE event {}", trimmed);
-                        match serde_json::from_str::<ResponseStreamEvent>(&msg.data)? {
-                            ResponseStreamEvent::Created { response } =>
-                                yield InferenceEvent::Created(ResponseCreated { id: response.id }),
-                            ResponseStreamEvent::OutputTextDelta { delta } =>
-                                yield InferenceEvent::OutputDelta(delta),
-                            ResponseStreamEvent::ReasoningTextDelta { delta }
-                            | ResponseStreamEvent::ReasoningSummaryTextDelta { delta } =>
-                                yield InferenceEvent::ThinkingDelta(delta),
-                            ResponseStreamEvent::Completed { response } => {
-                                yield InferenceEvent::Completed(ResponseCompleted {
-                                    usage: response.usage.map(Usage::from),
+                        let raw_event: serde_json::Value = serde_json::from_str(trimmed)?;
+                        let event: ResponseStreamEvent =
+                            serde_json::from_value(raw_event.clone())?;
+                        match event {
+                            ResponseStreamEvent::Created { response } => {
+                                yield InferenceEvent::Created(ResponseCreated {
+                                    id: response.id,
+                                    status: response.status
+                                        .unwrap_or_else(|| "in_progress".into()),
                                 });
                             }
-                            ResponseStreamEvent::Error(error)
-                            | ResponseStreamEvent::Failed { response: ResponsePayload { error: Some(error), .. } } => {
+                            ResponseStreamEvent::OutputItemAdded { output_index, item } => {
+                                yield InferenceEvent::OutputItemAdded(OutputItemEvent {
+                                    output_index,
+                                    id: item.id,
+                                    ty: item.ty,
+                                    raw: raw_event["item"].clone(),
+                                });
+                            }
+                            ResponseStreamEvent::OutputItemDone { output_index, item } => {
+                                yield InferenceEvent::OutputItemDone(OutputItemEvent {
+                                    output_index,
+                                    id: item.id,
+                                    ty: item.ty,
+                                    raw: raw_event["item"].clone(),
+                                });
+                            }
+                            ResponseStreamEvent::OutputTextDelta { output_index, delta } => {
+                                yield InferenceEvent::OutputTextDelta(ItemDelta {
+                                    output_index,
+                                    delta,
+                                });
+                            }
+                            ResponseStreamEvent::ReasoningTextDelta { output_index, delta } => {
+                                yield InferenceEvent::ReasoningTextDelta(ItemDelta {
+                                    output_index,
+                                    delta,
+                                });
+                            }
+                            ResponseStreamEvent::ReasoningSummaryTextDelta {
+                                output_index,
+                                delta,
+                            } => {
+                                yield InferenceEvent::ReasoningSummaryDelta(ItemDelta {
+                                    output_index,
+                                    delta,
+                                });
+                            }
+                            ResponseStreamEvent::Completed { response } => {
+                                yield InferenceEvent::Completed(ResponseCompleted {
+                                    status: response
+                                        .status
+                                        .unwrap_or_else(|| "completed".into()),
+                                    usage: response.usage.map(Usage::from),
+                                    raw_response: raw_event["response"].clone(),
+                                });
+                            }
+                            ResponseStreamEvent::Incomplete { response } => {
+                                yield InferenceEvent::Completed(ResponseCompleted {
+                                    status: response
+                                        .status
+                                        .unwrap_or_else(|| "incomplete".into()),
+                                    usage: response.usage.map(Usage::from),
+                                    raw_response: raw_event["response"].clone(),
+                                });
+                            }
+                            ResponseStreamEvent::Failed { response } => {
+                                yield InferenceEvent::Failed(ResponseFailed {
+                                    status: response
+                                        .status
+                                        .unwrap_or_else(|| "failed".into()),
+                                    error_message: response
+                                        .error
+                                        .as_ref()
+                                        .map(|e| e.message.clone())
+                                        .unwrap_or_else(|| "response failed".into()),
+                                    usage: response.usage.map(Usage::from),
+                                    raw_response: raw_event["response"].clone(),
+                                });
+                                return;
+                            }
+                            ResponseStreamEvent::Error(error) => {
                                 Err(error)?;
                             }
-                            ResponseStreamEvent::Failed { .. } => Err("Response failed".to_owned())?,
                             ResponseStreamEvent::Unknown => {}
                         }
                     }
@@ -360,8 +469,8 @@ mod tests {
     use crate::request::DefaultClient;
     use crate::request::test_client::{Response, ResponseData};
     use crate::testing::QueueStream;
-    use reqwest::header::HeaderMap;
     use reqwest::StatusCode;
+    use reqwest::header::HeaderMap;
     use reqwest_eventsource::Event;
 
     const BASE_URL: &str = "https://example.test/v1";
@@ -382,11 +491,24 @@ mod tests {
     fn default_events() -> Vec<AnyResult<Event>> {
         vec![
             Ok(Event::Open),
-            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-mock-1"}}"#)),
-            Ok(create_message_event(r#"{"type":"response.reasoning_text.delta","delta":"Thinking about the question..."}"#)),
-            Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"Hello! "}"#)),
-            Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"How can I help you today?"}"#)),
-            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-mock-1","usage":{"input_tokens":12,"output_tokens":18,"output_tokens_details":{"reasoning_tokens":7}}}}"#)),
+            Ok(create_message_event(
+                r#"{"type":"response.created","response":{"id":"resp-mock-1","status":"in_progress"}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"Hello! "}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"How can I help you today?"}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello! How can I help you today?"}]}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.completed","response":{"id":"resp-mock-1","status":"completed","usage":{"input_tokens":12,"output_tokens":18,"total_tokens":30,"input_tokens_details":{"cached_tokens":4},"output_tokens_details":{"reasoning_tokens":7}}}}"#,
+            )),
             Ok(create_message_event("[DONE]")),
         ]
     }
@@ -412,7 +534,10 @@ mod tests {
     #[tokio::test]
     async fn test_list_models() {
         let mut client = DefaultClient::default();
-        client.add_response(&format!("{BASE_URL}/models"), http_ok(r#"{"data":[{"id":"fake-model"}]}"#));
+        client.add_response(
+            &format!("{BASE_URL}/models"),
+            http_ok(r#"{"data":[{"id":"fake-model"}]}"#),
+        );
 
         let iface = make_iface(client);
         let models = iface.get_models().await.unwrap();
@@ -438,8 +563,12 @@ mod tests {
             reasoning_effort: Some(ReasoningEffort::Low),
             input: &[
                 ChatMessage::Message { content: "Hello" },
-                ChatMessage::Response { content: "Hi there!" },
-                ChatMessage::Message { content: "How are you?" },
+                ChatMessage::Response {
+                    content: "Hi there!",
+                },
+                ChatMessage::Message {
+                    content: "How are you?",
+                },
             ],
         };
 
@@ -455,16 +584,60 @@ mod tests {
             events,
             vec![
                 InferenceEvent::Created(ResponseCreated {
-                    id: "resp-mock-1".into()
+                    id: "resp-mock-1".into(),
+                    status: "in_progress".into(),
                 }),
-                InferenceEvent::ThinkingDelta("Thinking about the question...".into()),
-                InferenceEvent::OutputDelta("Hello! ".into()),
-                InferenceEvent::OutputDelta("How can I help you today?".into()),
+                InferenceEvent::OutputItemAdded(OutputItemEvent {
+                    output_index: 0,
+                    id: "msg_1".into(),
+                    ty: "message".into(),
+                    raw: json!({
+                        "id": "msg_1",
+                        "type": "message",
+                        "status": "in_progress",
+                        "role": "assistant",
+                        "content": [],
+                    }),
+                }),
+                InferenceEvent::OutputTextDelta(ItemDelta {
+                    output_index: 0,
+                    delta: "Hello! ".into(),
+                }),
+                InferenceEvent::OutputTextDelta(ItemDelta {
+                    output_index: 0,
+                    delta: "How can I help you today?".into(),
+                }),
+                InferenceEvent::OutputItemDone(OutputItemEvent {
+                    output_index: 0,
+                    id: "msg_1".into(),
+                    ty: "message".into(),
+                    raw: json!({
+                        "id": "msg_1",
+                        "type": "message",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Hello! How can I help you today?"}],
+                    }),
+                }),
                 InferenceEvent::Completed(ResponseCompleted {
+                    status: "completed".into(),
                     usage: Some(Usage {
                         input_tokens: 12,
+                        cached_input_tokens: 4,
                         output_tokens: 18,
                         reasoning_tokens: 7,
+                        total_tokens: 30,
+                    }),
+                    raw_response: json!({
+                        "id": "resp-mock-1",
+                        "status": "completed",
+                        "usage": {
+                            "input_tokens": 12,
+                            "output_tokens": 18,
+                            "total_tokens": 30,
+                            "input_tokens_details": {"cached_tokens": 4},
+                            "output_tokens_details": {"reasoning_tokens": 7},
+                        },
                     }),
                 }),
             ]
@@ -521,7 +694,14 @@ mod tests {
             .map(Result::unwrap)
             .collect();
 
-        assert_eq!(events, vec![InferenceEvent::Completed(ResponseCompleted { usage: None })]);
+        assert_eq!(
+            events,
+            vec![InferenceEvent::Completed(ResponseCompleted {
+                status: "completed".into(),
+                usage: None,
+                raw_response: json!({"id": "resp-custom-1"}),
+            })]
+        );
     }
 
     #[tokio::test]
@@ -530,11 +710,33 @@ mod tests {
         client.add_response(
             &format!("{BASE_URL}/responses"),
             sse(vec![
-                Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-think-1"}}"#)),
-                Ok(create_message_event(r#"{"type":"response.reasoning_text.delta","delta":"step 1"}"#)),
-                Ok(create_message_event(r#"{"type":"response.reasoning_summary_text.delta","delta":"step 2"}"#)),
-                Ok(create_message_event(r#"{"type":"response.output_text.delta","delta":"done"}"#)),
-                Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-think-1"}}"#)),
+                Ok(create_message_event(
+                    r#"{"type":"response.created","response":{"id":"resp-think-1","status":"in_progress"}}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.reasoning_text.delta","item_id":"rs_1","output_index":0,"delta":"step 1"}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.reasoning_summary_text.delta","item_id":"rs_1","output_index":0,"delta":"step 2"}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"step 2"}]}}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"delta":"done"}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.completed","response":{"id":"resp-think-1","status":"completed"}}"#,
+                )),
                 Ok(create_message_event("[DONE]")),
             ]),
         );
@@ -560,13 +762,65 @@ mod tests {
             events,
             vec![
                 InferenceEvent::Created(ResponseCreated {
-                    id: "resp-think-1".into()
+                    id: "resp-think-1".into(),
+                    status: "in_progress".into(),
                 }),
-                InferenceEvent::ThinkingDelta("step 1".into()),
-                InferenceEvent::ThinkingDelta("step 2".into()),
-                InferenceEvent::OutputDelta("done".into()),
+                InferenceEvent::OutputItemAdded(OutputItemEvent {
+                    output_index: 0,
+                    id: "rs_1".into(),
+                    ty: "reasoning".into(),
+                    raw: json!({"id": "rs_1", "type": "reasoning", "summary": []}),
+                }),
+                InferenceEvent::ReasoningTextDelta(ItemDelta {
+                    output_index: 0,
+                    delta: "step 1".into(),
+                }),
+                InferenceEvent::ReasoningSummaryDelta(ItemDelta {
+                    output_index: 0,
+                    delta: "step 2".into(),
+                }),
+                InferenceEvent::OutputItemDone(OutputItemEvent {
+                    output_index: 0,
+                    id: "rs_1".into(),
+                    ty: "reasoning".into(),
+                    raw: json!({
+                        "id": "rs_1",
+                        "type": "reasoning",
+                        "summary": [{"type": "summary_text", "text": "step 2"}],
+                    }),
+                }),
+                InferenceEvent::OutputItemAdded(OutputItemEvent {
+                    output_index: 1,
+                    id: "msg_1".into(),
+                    ty: "message".into(),
+                    raw: json!({
+                        "id": "msg_1",
+                        "type": "message",
+                        "status": "in_progress",
+                        "role": "assistant",
+                        "content": [],
+                    }),
+                }),
+                InferenceEvent::OutputTextDelta(ItemDelta {
+                    output_index: 1,
+                    delta: "done".into(),
+                }),
+                InferenceEvent::OutputItemDone(OutputItemEvent {
+                    output_index: 1,
+                    id: "msg_1".into(),
+                    ty: "message".into(),
+                    raw: json!({
+                        "id": "msg_1",
+                        "type": "message",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "done"}],
+                    }),
+                }),
                 InferenceEvent::Completed(ResponseCompleted {
+                    status: "completed".into(),
                     usage: None,
+                    raw_response: json!({"id": "resp-think-1", "status": "completed"}),
                 }),
             ]
         );
@@ -578,38 +832,52 @@ mod tests {
         let iface = make_iface(client.clone());
         let url = format!("{BASE_URL}/responses");
 
-        for v in &[
-            json!({
-                "type": "error",
-                "message": "Incorrect API key provided",
-                "code":"invalid_api_key",
-            }),
-            json!({
-                "type": "response.failed",
-                "response": {
-                    "id": "id1",
-                    "error": {
-                        "message":"Incorrect API key provided",
-                        "code":"invalid_api_key",
-                    },
-                },
-            }),
-        ] {
-            client.add_response(&url, sse(vec![Ok(create_message_event(&v.to_string()))]));
+        // A top-level error event surfaces as a stream error.
+        client.add_response(&url, sse(vec![Ok(create_message_event(
+            r#"{"type":"error","message":"Incorrect API key provided","code":"invalid_api_key"}"#,
+        ))]));
 
-            let params = InferenceParams {
-                model_id: "test-model",
-                system_prompt: "",
-                temperature: 0.0,
-                reasoning_effort: None,
-                input: &[],
-            };
+        let params = InferenceParams {
+            model_id: "test-model",
+            system_prompt: "",
+            temperature: 0.0,
+            reasoning_effort: None,
+            input: &[],
+        };
 
-            let stream = iface.generate(params);
-            let results: Vec<_> = stream.collect().await;
-            assert_eq!(results.len(), 1);
-            assert!(results[0].is_err());
-            assert_eq!(results[0].as_ref().unwrap_err().to_string(), "Incorrect API key provided");
+        let stream = iface.generate(params);
+        let results: Vec<_> = stream.collect().await;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_err());
+        assert_eq!(
+            results[0].as_ref().unwrap_err().to_string(),
+            "Incorrect API key provided"
+        );
+
+        // A failed response surfaces as a Failed event carrying the raw
+        // response payload.
+        client.add_response(&url, sse(vec![Ok(create_message_event(
+            r#"{"type":"response.failed","response":{"id":"resp-1","status":"failed","error":{"message":"Incorrect API key provided","code":"invalid_api_key"}}}"#,
+        ))]));
+
+        let params = InferenceParams {
+            model_id: "test-model",
+            system_prompt: "",
+            temperature: 0.0,
+            reasoning_effort: None,
+            input: &[],
+        };
+
+        let stream = iface.generate(params);
+        let results: Vec<_> = stream.collect().await;
+        assert_eq!(results.len(), 1);
+        match results[0].as_ref().unwrap() {
+            InferenceEvent::Failed(failed) => {
+                assert_eq!(failed.status, "failed");
+                assert_eq!(failed.error_message, "Incorrect API key provided");
+                assert_eq!(failed.raw_response["error"]["code"], "invalid_api_key");
+            }
+            other => panic!("expected Failed event, got {other:?}"),
         }
     }
 }

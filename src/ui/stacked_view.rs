@@ -3,13 +3,13 @@ use serde_json::{Value, json};
 
 use crate::app::AppEvent;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
-use crate::session::{Content, Item};
+use crate::session::Item;
+use crate::ui::Component;
 use crate::ui::canvas::Canvas;
-use crate::ui::style::Theme;
 use crate::ui::command_editor::CommandEditor;
 use crate::ui::history_view;
 use crate::ui::history_view::HistoryView;
-use crate::ui::Component;
+use crate::ui::style::Theme;
 
 /// Which child of `StackedView` currently receives keyboard input.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
@@ -56,7 +56,7 @@ impl StackedView {
             input: CommandEditor::new(width, input_max_height, theme),
             focus_state: FocusState::default(),
         };
-        this.resize();  // Compute history height
+        this.resize(); // Compute history height
         this.focus_child();
         this
     }
@@ -111,8 +111,8 @@ impl StackedView {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
-    ContentCreated { item: &'a Item, content: &'a Content },
-    ContentUpdated { item: &'a Item, content: &'a Content },
+    ItemCreated { item: &'a Item },
+    ItemUpdated { item: &'a Item },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -124,8 +124,8 @@ impl<'a> TryFrom<Update<'a>> for history_view::Update<'a> {
 
     fn try_from(update: Update<'a>) -> Result<Self, Self::Error> {
         match update {
-            Update::ContentCreated { item, content } => Ok(history_view::Update::ContentCreated { item, content }),
-            Update::ContentUpdated { item, content } => Ok(history_view::Update::ContentUpdated { item, content }),
+            Update::ItemCreated { item } => Ok(history_view::Update::ItemCreated { item }),
+            Update::ItemUpdated { item } => Ok(history_view::Update::ItemUpdated { item }),
             Update::HelpMessage(content) => Ok(history_view::Update::HelpMessage(content)),
             Update::ErrorMessage(content) => Ok(history_view::Update::ErrorMessage(content)),
             Update::CommandPrompt(content) => Ok(history_view::Update::CommandPrompt(content)),
@@ -143,9 +143,11 @@ impl Component for StackedView {
         for i in 0..empty_rows {
             canvas[i].pad(self.width);
         }
-        self.history.draw(&mut canvas[empty_rows..empty_rows + self.history.height()]);
+        self.history
+            .draw(&mut canvas[empty_rows..empty_rows + self.history.height()]);
         canvas[empty_rows + self.history.height()].pad(self.width);
-        self.input.draw(&mut canvas[self.height() - self.input.height()..self.height()]);
+        self.input
+            .draw(&mut canvas[self.height() - self.input.height()..self.height()]);
     }
 
     fn set_width(&mut self, width: usize) {
@@ -185,7 +187,7 @@ impl Component for StackedView {
                 let (row, col) = self.input.cursor()?;
                 let row = self.height.saturating_sub(self.input.height()) + row;
                 Some((row, col))
-            },
+            }
             FocusState::History => self.history.cursor(),
         }
     }
@@ -193,7 +195,9 @@ impl Component for StackedView {
     fn handle_input(&mut self, event: Event) -> Self::Event {
         let out = match event {
             // Tab switches focus
-            Event::Key(KeyEvent { code: KeyCode::Tab, .. }) => {
+            Event::Key(KeyEvent {
+                code: KeyCode::Tab, ..
+            }) => {
                 self.toggle_focus();
                 self.focus_child();
                 None
@@ -203,7 +207,7 @@ impl Component for StackedView {
                 FocusState::History => {
                     self.history.handle_input(e);
                     None
-                },
+                }
                 FocusState::CommandEditor => self.input.handle_input(e),
             },
         };
@@ -265,8 +269,17 @@ mod tests {
         assert_eq!(stacked.query("/").unwrap(), expected);
         assert_eq!(stacked.query("/width").unwrap(), json!(80));
         assert_eq!(stacked.query("/height").unwrap(), json!(24));
-        assert_eq!(stacked.query("/focus_state").unwrap(), json!("command_editor"));
-        assert_eq!(stacked.query("/history").unwrap(), stacked.history.query("/").unwrap());
-        assert_eq!(stacked.query("/input").unwrap(), stacked.input.query("/").unwrap());
+        assert_eq!(
+            stacked.query("/focus_state").unwrap(),
+            json!("command_editor")
+        );
+        assert_eq!(
+            stacked.query("/history").unwrap(),
+            stacked.history.query("/").unwrap()
+        );
+        assert_eq!(
+            stacked.query("/input").unwrap(),
+            stacked.input.query("/").unwrap()
+        );
     }
 }
