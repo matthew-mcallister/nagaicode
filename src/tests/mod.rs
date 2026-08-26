@@ -93,6 +93,24 @@ async fn test_app_interrupt() {
 
     app.process_event(AppEvent::Interrupt);
     assert_eq!(app.query("/current_task").unwrap(), json!(false));
+
+    // Interrupting an active task emits a single help message.
+    fn interrupted_count(app: &App) -> usize {
+        app.query("/chat/stacked/inner/history/history/items")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["content"].as_str() == Some("Interrupted."))
+            .count()
+    }
+    assert_eq!(interrupted_count(&app), 1);
+
+    // Interrupting with no active task shows nothing.
+    app.process_event(AppEvent::Interrupt);
+    assert_eq!(interrupted_count(&app), 1);
+
+    app.await_task().await.expect("await canceled agent");
 }
 
 #[tokio::test]

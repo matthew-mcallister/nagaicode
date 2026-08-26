@@ -410,10 +410,10 @@ impl App {
             }
             AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
             AppEvent::Interrupt => {
-                if let Some(task) = &self.current_task {
-                    task.cancel.cancel();
+                if self.current_task.is_some() {
+                    self.cancel();
+                    self.chat.handle_update(Update::HelpMessage("Interrupted."));
                 }
-                self.current_task = None;
                 self.process_pending_events();
                 Ok(())
             }
