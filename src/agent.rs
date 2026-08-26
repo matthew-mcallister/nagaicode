@@ -182,7 +182,7 @@ impl Agent {
     fn handle_item_done(&mut self, done: OutputItemEvent) -> AnyResult<Option<AppEvent>> {
         if let Some(item) = self.items.get_mut(&done.output_index) {
             Item::set_raw_data(&mut self.conn, item.id, &done.raw)?;
-            item.raw_data = Some(done.raw);
+            item.raw_data = Some(done.raw.to_string());
         }
         Ok(None)
     }

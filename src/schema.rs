@@ -15,8 +15,8 @@ diesel::table! {
         text -> Nullable<Text>,
         summary -> Nullable<Text>,
         encrypted_text -> Nullable<Text>,
-        json -> Nullable<Json>,
-        raw_data -> Nullable<Json>,
+        json -> Nullable<Text>,
+        raw_data -> Nullable<Text>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -55,8 +55,8 @@ diesel::table! {
         output_tokens -> Nullable<BigInt>,
         reasoning_tokens -> Nullable<BigInt>,
         total_tokens -> Nullable<BigInt>,
-        raw_request -> Nullable<Json>,
-        raw_response -> Nullable<Json>,
+        raw_request -> Nullable<Text>,
+        raw_response -> Nullable<Text>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -93,4 +93,11 @@ diesel::joinable!(response -> session (session_id));
 diesel::joinable!(response -> turn (turn_id));
 diesel::joinable!(turn -> session (session_id));
 
-diesel::allow_tables_to_appear_in_same_query!(item, model, provider, response, session, turn,);
+diesel::allow_tables_to_appear_in_same_query!(
+    item,
+    model,
+    provider,
+    response,
+    session,
+    turn,
+);

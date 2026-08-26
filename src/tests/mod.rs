@@ -301,7 +301,8 @@ async fn test_app_prompt_agent() {
     assert_eq!(response.raw_request, None);
     assert!(response.raw_response.is_some());
     assert_eq!(
-        response.raw_response.as_ref().unwrap()["status"],
+        serde_json::from_str::<serde_json::Value>(response.raw_response.as_ref().unwrap())
+            .unwrap()["status"],
         "completed"
     );
 }

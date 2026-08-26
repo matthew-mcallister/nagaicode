@@ -287,8 +287,8 @@ pub struct Response {
     pub output_tokens: Option<i64>,
     pub reasoning_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
-    pub raw_request: Option<Value>,
-    pub raw_response: Option<Value>,
+    pub raw_request: Option<String>,
+    pub raw_response: Option<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -372,7 +372,7 @@ impl Response {
                 dsl::output_tokens.eq(output_tokens),
                 dsl::reasoning_tokens.eq(reasoning_tokens),
                 dsl::total_tokens.eq(total_tokens),
-                dsl::raw_response.eq(raw_response.cloned()),
+                dsl::raw_response.eq(raw_response.map(|v| v.to_string())),
             ))
             .execute(conn)?;
         Ok(())
@@ -390,8 +390,8 @@ impl Response {
 /// - output_tokens: number | null
 /// - reasoning_tokens: number | null
 /// - total_tokens: number | null
-/// - raw_request: JSON | null
-/// - raw_response: JSON | null
+/// - raw_request: string | null
+/// - raw_response: string | null
 /// - created_at: string (ISO 8601)
 /// - updated_at: string (ISO 8601)
 impl DataQuery for Response {
@@ -449,8 +449,8 @@ pub struct Item {
     pub text: Option<String>,
     pub summary: Option<String>,
     pub encrypted_text: Option<String>,
-    pub json: Option<Value>,
-    pub raw_data: Option<Value>,
+    pub json: Option<String>,
+    pub raw_data: Option<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -553,13 +553,22 @@ impl Item {
     pub fn set_raw_data(conn: &mut SqliteConnection, id: i32, raw_data: &Value) -> AnyResult<()> {
         use crate::schema::item::dsl;
         diesel::update(dsl::item.filter(dsl::id.eq(id)))
-            .set(dsl::raw_data.eq(raw_data.clone()))
+            .set(dsl::raw_data.eq(raw_data.to_string()))
             .execute(conn)?;
         Ok(())
     }
 
     pub fn ty(&self) -> AnyResult<ItemType> {
         Ok(ItemType::from_str(&self.ty)?)
+    }
+
+    /// Parse the stored JSON blob, if present.
+    pub fn json(&self) -> AnyResult<Option<Value>> {
+        self.json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(Into::into)
     }
 }
 
@@ -576,8 +585,8 @@ impl Item {
 /// - text: string | null
 /// - summary: string | null
 /// - encrypted_text: string | null
-/// - json: JSON | null
-/// - raw_data: JSON | null
+/// - json: string | null
+/// - raw_data: string | null
 /// - created_at: string (ISO 8601)
 /// - updated_at: string (ISO 8601)
 impl DataQuery for Item {
@@ -596,7 +605,7 @@ impl DataQuery for Item {
                 "text": self.text,
                 "summary": self.summary,
                 "encrypted_text": self.encrypted_text,
-                "json": self.json,
+                "json": self.json().map_err(|e| QueryError::DataError(e.to_string()))?,
                 "raw_data": self.raw_data,
                 "created_at": self.created_at.to_json(),
                 "updated_at": self.updated_at.to_json(),
@@ -613,7 +622,11 @@ impl DataQuery for Item {
             "text" => Ok(QueryField::Value(json!(self.text))),
             "summary" => Ok(QueryField::Value(json!(self.summary))),
             "encrypted_text" => Ok(QueryField::Value(json!(self.encrypted_text))),
-            "json" => Ok(QueryField::Value(json!(self.json))),
+            "json" => Ok(QueryField::Value(
+                self.json()
+                    .map_err(|e| QueryError::DataError(e.to_string()))?
+                    .unwrap_or(Value::Null),
+            )),
             "raw_data" => Ok(QueryField::Value(json!(self.raw_data))),
             "created_at" => Ok(QueryField::Value(self.created_at.to_json())),
             "updated_at" => Ok(QueryField::Value(self.updated_at.to_json())),
@@ -730,7 +743,7 @@ mod tests {
         assert_eq!(fetched.output_tokens, Some(18));
         assert_eq!(fetched.reasoning_tokens, Some(7));
         assert_eq!(fetched.total_tokens, Some(30));
-        assert_eq!(fetched.raw_response, Some(raw_response));
+        assert_eq!(fetched.raw_response, Some(raw_response.to_string()));
 
         let prompt = Item::create(
             &mut conn,
@@ -784,7 +797,7 @@ mod tests {
         assert_eq!(fetched.summary.as_deref(), Some("summarizing"));
         assert_eq!(fetched.encrypted_text, None);
         assert_eq!(fetched.json, None);
-        assert_eq!(fetched.raw_data, Some(raw_data));
+        assert_eq!(fetched.raw_data, Some(raw_data.to_string()));
 
         let answer = Item::create(
             &mut conn,
@@ -1023,7 +1036,7 @@ mod tests {
                 "text": item.text,
                 "summary": item.summary,
                 "encrypted_text": item.encrypted_text,
-                "json": item.json,
+                "json": item.json().unwrap(),
                 "raw_data": item.raw_data,
                 "created_at": item.created_at.to_json(),
                 "updated_at": item.updated_at.to_json(),
