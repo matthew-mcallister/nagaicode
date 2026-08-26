@@ -130,7 +130,7 @@ impl DataQuery for Chat {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "stacked": self.stacked.query("/")?,
+                "stacked": self.query("/stacked")?,
             }))),
             "stacked" => Ok(QueryField::DataQuery(&self.stacked)),
             _ => Err(QueryError::InvalidField(field.to_string())),

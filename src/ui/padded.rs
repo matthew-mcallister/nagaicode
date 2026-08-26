@@ -116,18 +116,12 @@ impl<C: Component> Component for Padded<C> {
 impl<C: DataQuery> DataQuery for Padded<C> {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
-            "" => {
-                let background_color = match self.background_color {
-                    Some(c) => c.to_json(),
-                    None => json!(null),
-                };
-                Ok(QueryField::Value(json!({
-                    "h_padding": self.h_padding,
-                    "v_padding": self.v_padding,
-                    "background_color": background_color,
-                    "inner": self.inner.query("/")?,
-                })))
-            }
+            "" => Ok(QueryField::Value(json!({
+                "h_padding": self.query("/h_padding")?,
+                "v_padding": self.query("/v_padding")?,
+                "background_color": self.query("/background_color")?,
+                "inner": self.query("/inner")?,
+            }))),
             "h_padding" => Ok(QueryField::Value(json!(self.h_padding))),
             "v_padding" => Ok(QueryField::Value(json!(self.v_padding))),
             "background_color" => Ok(QueryField::Value(match self.background_color {

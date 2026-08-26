@@ -441,23 +441,13 @@ impl App {
 impl DataQuery for App {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
-            "" => {
-                let selected_model = match self.selected_model.as_ref() {
-                    Some(model) => model.query("/")?,
-                    None => Value::Null,
-                };
-                let session = match self.session.as_ref() {
-                    Some(session) => session.query("/")?,
-                    None => Value::Null,
-                };
-                Ok(QueryField::Value(json!({
-                    "chat": self.chat.query("/")?,
-                    "selected_model": selected_model,
-                    "db_url": self.db_url,
-                    "session": session,
-                    "current_task": self.current_task.is_some(),
-                })))
-            }
+            "" => Ok(QueryField::Value(json!({
+                "chat": self.query("/chat")?,
+                "selected_model": self.query("/selected_model")?,
+                "db_url": self.query("/db_url")?,
+                "session": self.query("/session")?,
+                "current_task": self.query("/current_task")?,
+            }))),
             "chat" => Ok(QueryField::DataQuery(&self.chat)),
             "selected_model" => match self.selected_model.as_ref() {
                 Some(model) => Ok(QueryField::DataQuery(model)),

@@ -586,8 +586,8 @@ impl DataQuery for ResumePoint {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "offset": self.offset,
-                "row": self.row,
+                "offset": self.query("/offset")?,
+                "row": self.query("/row")?,
             }))),
             "offset" => Ok(QueryField::Value(json!(self.offset))),
             "row" => Ok(QueryField::Value(json!(self.row))),

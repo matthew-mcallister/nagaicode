@@ -161,11 +161,11 @@ impl DataQuery for CommandEditor {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "input": self.input.query("/")?,
-                "scroll_bar": self.scroll_bar.query("/")?,
-                "command_history": self.command_history,
-                "command_history_pos": self.command_history_pos,
-                "buffered_command": self.buffered_command,
+                "input": self.query("/input")?,
+                "scroll_bar": self.query("/scroll_bar")?,
+                "command_history": self.query("/command_history")?,
+                "command_history_pos": self.query("/command_history_pos")?,
+                "buffered_command": self.query("/buffered_command")?,
             }))),
             "input" => Ok(QueryField::DataQuery(&self.input)),
             "scroll_bar" => Ok(QueryField::DataQuery(&self.scroll_bar)),
