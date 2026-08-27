@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
@@ -58,7 +59,7 @@ impl Provider {
             Err(DieselError::DatabaseError(
                 diesel::result::DatabaseErrorKind::UniqueViolation,
                 _,
-            )) => Err(format!("a provider named '{name}' already exists").into()),
+            )) => Err(anyhow!("a provider named '{name}' already exists")),
             Err(e) => Err(e.into()),
         }
     }

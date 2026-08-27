@@ -1,8 +1,8 @@
-use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
+use anyhow::anyhow;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::execute;
 use crossterm::queue;
@@ -300,7 +300,7 @@ impl App {
     fn process_slash_command(
         &mut self,
         command: &str,
-    ) -> Result<String, Box<dyn Error + Send + Sync>> {
+    ) -> AnyResult<String> {
         let command = match crate::command::parse_command(command) {
             Ok(x) => x,
             Err(e) => return Ok(e.to_string()),
@@ -394,7 +394,10 @@ impl App {
 
     /// Spawns an agent to handle the submitted prompt.
     async fn submit_prompt(&mut self, prompt: &str) -> AnyResult<()> {
-        let (provider, model) = self.selected_model.clone().ok_or("no model selected")?;
+        let (provider, model) = self
+            .selected_model
+            .clone()
+            .ok_or_else(|| anyhow!("no model selected"))?;
 
         let session = self.create_session()?;
         let turn = Turn::create(&mut self.conn, session.id, TurnType::User, None, None, None)?;

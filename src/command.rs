@@ -1,6 +1,6 @@
 // TODO: Should execute the correct command as long as you type any prefix that
 // uniquely determines that command
-use std::error::Error;
+use anyhow::anyhow;
 
 use dedent::dedent;
 use diesel::QueryDsl;
@@ -8,6 +8,7 @@ use diesel::RunQueryDsl;
 use diesel::expression_methods::ExpressionMethods;
 
 use crate::app::App;
+use crate::error::AnyError;
 use crate::interface::InterfaceId;
 use crate::model::Model;
 use crate::provider::Provider;
@@ -55,28 +56,28 @@ impl std::fmt::Display for CliParseError {
 
 impl std::error::Error for CliParseError {}
 
-fn unknown_command(usage: &'static str, command: &str) -> Box<dyn Error + Send + Sync> {
+fn unknown_command(usage: &'static str, command: &str) -> AnyError {
     From::from(CliParseError {
         error: Some(format!("Unknown command: '{}'", command)),
         usage,
     })
 }
 
-fn unexpected_argument(usage: &'static str, argument: &str) -> Box<dyn Error + Send + Sync> {
+fn unexpected_argument(usage: &'static str, argument: &str) -> AnyError {
     From::from(CliParseError {
         error: Some(format!("Unexpected argument: '{}'", argument)),
         usage,
     })
 }
 
-fn missing_argument(usage: &'static str, argument: &str) -> Box<dyn Error + Send + Sync> {
+fn missing_argument(usage: &'static str, argument: &str) -> AnyError {
     From::from(CliParseError {
         error: Some(format!("Missing argument: '{}'", argument)),
         usage,
     })
 }
 
-fn show_usage(usage: &'static str) -> Box<dyn Error + Send + Sync> {
+fn show_usage(usage: &'static str) -> AnyError {
     From::from(CliParseError {
         error: None,
         usage,
@@ -88,7 +89,7 @@ fn set_arg<T>(
     var: &mut Option<T>,
     key: &str,
     value: impl Into<T>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), AnyError> {
     if var.is_some() {
         Err(From::from(CliParseError {
             error: Some(format!("Repeated argument: '{}'", key)),
@@ -116,7 +117,7 @@ impl<'a> Parser<'a> {
         self.args.is_empty()
     }
 
-    fn expect(&mut self) -> Result<&'a str, Box<dyn Error + Send + Sync>> {
+    fn expect(&mut self) -> Result<&'a str, AnyError> {
         if let Some((arg, rest)) = self.args.split_first() {
             self.args = rest;
             Ok(arg)
@@ -125,7 +126,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_empty(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+    fn expect_empty(&mut self) -> Result<(), AnyError> {
         if let Some(first) = self.args.first() {
             Err(From::from(unexpected_argument(self.usage, first)))
         } else {
@@ -133,7 +134,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_key_value(&mut self) -> Result<(&'a str, &'a str), Box<dyn Error + Send + Sync>> {
+    fn expect_key_value(&mut self) -> Result<(&'a str, &'a str), AnyError> {
         let first = self.expect()?;
         let second = self.expect()?;
         if !first.starts_with('-') {
@@ -146,7 +147,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn parse_args<'a>(args: Vec<String>) -> Result<Command, Box<dyn Error + Send + Sync>> {
+fn parse_args<'a>(args: Vec<String>) -> Result<Command, AnyError> {
     let args_: Vec<&str> = args.iter().map(|s| &s[..]).collect();
 
     const USAGE: &str = dedent!("
@@ -167,7 +168,7 @@ fn parse_args<'a>(args: Vec<String>) -> Result<Command, Box<dyn Error + Send + S
     }
 }
 
-fn parse_quit(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
+fn parse_quit(args: &[&str]) -> Result<Command, AnyError> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -178,7 +179,7 @@ fn parse_quit(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
     Ok(Command::Quit)
 }
 
-fn parse_provider(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
+fn parse_provider(args: &[&str]) -> Result<Command, AnyError> {
     const USAGE: &str = dedent!("
         List of commands:
 
@@ -195,7 +196,7 @@ fn parse_provider(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>
     }
 }
 
-fn parse_provider_ls(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
+fn parse_provider_ls(args: &[&str]) -> Result<Command, AnyError> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -206,7 +207,7 @@ fn parse_provider_ls(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sy
     Ok(Command::Provider(ProviderCommand::Ls))
 }
 
-fn parse_provider_rm(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
+fn parse_provider_rm(args: &[&str]) -> Result<Command, AnyError> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -218,7 +219,7 @@ fn parse_provider_rm(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sy
     Ok(Command::Provider(ProviderCommand::Rm(arg.into())))
 }
 
-fn parse_provider_new(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
+fn parse_provider_new(args: &[&str]) -> Result<Command, AnyError> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -258,7 +259,7 @@ fn parse_provider_new(args: &[&str]) -> Result<Command, Box<dyn Error + Send + S
     }))
 }
 
-fn parse_model(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
+fn parse_model(args: &[&str]) -> Result<Command, AnyError> {
     const USAGE: &str = dedent!("
         List of commands:
 
@@ -273,7 +274,7 @@ fn parse_model(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
     }
 }
 
-fn parse_model_ls(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
+fn parse_model_ls(args: &[&str]) -> Result<Command, AnyError> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -284,7 +285,7 @@ fn parse_model_ls(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>
     Ok(Command::Model(ModelCommand::Ls))
 }
 
-fn parse_model_switch(args: &[&str]) -> Result<Command, Box<dyn Error + Send + Sync>> {
+fn parse_model_switch(args: &[&str]) -> Result<Command, AnyError> {
     const USAGE: &str = dedent!("
         Usage:
 
@@ -300,7 +301,7 @@ fn parse_model_switch(args: &[&str]) -> Result<Command, Box<dyn Error + Send + S
     }))
 }
 
-pub fn parse_command(text: &str) -> Result<Command, Box<dyn Error + Send + Sync>> {
+pub fn parse_command(text: &str) -> Result<Command, AnyError> {
     let args = shellwords::split(text)?;
     parse_args(args)
 }
@@ -308,7 +309,7 @@ pub fn parse_command(text: &str) -> Result<Command, Box<dyn Error + Send + Sync>
 pub fn run_provider_command(
     app: &mut App,
     command: ProviderCommand,
-) -> Result<String, Box<dyn Error + Send + Sync>> {
+) -> Result<String, AnyError> {
     match command {
         ProviderCommand::Ls => {
             let providers: Vec<Provider> = dsl::provider
@@ -342,7 +343,7 @@ pub fn run_provider_command(
                 app.on_provider_deleted(&name)?;
                 Ok(format!("Deleted provider \"{name}\""))
             } else {
-                Err(format!("no provider named '{name}' found").into())
+                Err(anyhow!("no provider named '{name}' found"))
             }
         }
     }
@@ -351,7 +352,7 @@ pub fn run_provider_command(
 pub fn run_model_command(
     app: &mut App,
     command: ModelCommand,
-) -> Result<String, Box<dyn Error + Send + Sync>> {
+) -> Result<String, AnyError> {
     match command {
         ModelCommand::Ls => {
             use crate::schema::model::dsl as model_dsl;
@@ -377,11 +378,9 @@ pub fn run_model_command(
         }
         ModelCommand::Switch { provider, model } => {
             let p = Provider::get_by_name(app.conn(), &provider)?
-                .ok_or_else(|| format!("No provider '{provider}'"))?;
+                .ok_or_else(|| anyhow!("No provider '{provider}'"))?;
             let m = Model::get(app.conn(), p.id, &model)?
-                .ok_or_else(|| {
-                    format!("No model '{provider}:{model}''")
-                })?;
+                .ok_or_else(|| anyhow!("No model '{provider}:{model}''"))?;
             app.switch_model(p, m)?;
             Ok(format!("Using '{provider}:{model}'"))
         }

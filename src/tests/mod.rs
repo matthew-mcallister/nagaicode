@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use reqwest::{Method, Request};
 use reqwest_eventsource::Event as SseEvent;
@@ -269,7 +270,7 @@ async fn test_app_process_command() {
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 4);
 
-    app.tools_mut().add_result("sh", Err("tool error".into()));
+    app.tools_mut().add_result("sh", Err(anyhow!("tool error")));
     app.process_event(AppEvent::Command("!failing_tool".to_string()))
         .await;
     let calls = app.tools().get_calls();

@@ -1,4 +1,5 @@
 // TODO: Track recently used models (requires upsert but can do client-side)
+use anyhow::anyhow;
 use chrono::{Duration, NaiveDateTime, Utc};
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
@@ -53,10 +54,9 @@ impl Model {
             Err(DieselError::DatabaseError(
                 diesel::result::DatabaseErrorKind::UniqueViolation,
                 _,
-            )) => Err(format!(
+            )) => Err(anyhow!(
                 "a model with id '{id}' already exists for provider {provider_id}"
-            )
-            .into()),
+            )),
             Err(e) => Err(e.into()),
         }
     }

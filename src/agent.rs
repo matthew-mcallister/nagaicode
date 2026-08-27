@@ -65,8 +65,7 @@ impl Agent {
                 Err(e) => {
                     match self.fail_response() {
                         Ok(()) => return Err(e),
-                        // FIXME: Switch to anyhow and add f to the error chain
-                        Err(_f) => return Err(e),
+                        Err(f) => return Err(f.context(e)),
                     }
                 }
             }

@@ -9,10 +9,9 @@ pub use self::real::{db_url, open};
 pub use self::mock::{db_url, open, open_new};
 
 fn run_migrations(conn: &mut SqliteConnection) -> AnyResult<()> {
-    let migrations = diesel_migrations::FileBasedMigrations::find_migrations_directory()
-        .map_err(|e| e.to_string())?;
+    let migrations = diesel_migrations::FileBasedMigrations::find_migrations_directory()?;
     conn.run_pending_migrations(migrations)
-        .map_err(|e| e.to_string())?;
+        .map_err(anyhow::Error::from_boxed)?;
     Ok(())
 }
 

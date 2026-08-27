@@ -80,6 +80,7 @@ pub mod test_client {
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
+    use anyhow::anyhow;
     use fnv::FnvHashMap;
     use futures::Stream;
     use reqwest::{Request, StatusCode};
@@ -117,7 +118,7 @@ pub mod test_client {
 
         fn error_for_status(self) -> AnyResult<Self> {
             if self.status.is_client_error() || self.status.is_server_error() {
-                Err(format!("HTTP status error: {}", self.status).into())
+                Err(anyhow!("HTTP status error: {}", self.status))
             } else {
                 Ok(self)
             }

@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
@@ -5,7 +6,7 @@ use serde_json::{Value, json};
 use std::fmt;
 use std::str::FromStr;
 
-use crate::error::AnyResult;
+use crate::error::{AnyError, AnyResult};
 use crate::interface::Usage;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::schema::{item, response, session, turn};
@@ -26,12 +27,12 @@ impl fmt::Display for TurnType {
 }
 
 impl FromStr for TurnType {
-    type Err = String;
+    type Err = AnyError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "user" => Ok(TurnType::User),
             "assistant" => Ok(TurnType::Assistant),
-            other => Err(format!("unknown turn type: {other}")),
+            other => Err(anyhow!("unknown turn type: {other}")),
         }
     }
 }
@@ -54,13 +55,13 @@ impl fmt::Display for ItemType {
 }
 
 impl FromStr for ItemType {
-    type Err = String;
+    type Err = AnyError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "user_text" => Ok(ItemType::UserText),
             "response_text" => Ok(ItemType::ResponseText),
             "reasoning" => Ok(ItemType::Reasoning),
-            other => Err(format!("unknown item type: {other}")),
+            other => Err(anyhow!("unknown item type: {other}")),
         }
     }
 }
