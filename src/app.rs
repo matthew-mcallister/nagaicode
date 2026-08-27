@@ -34,6 +34,20 @@ use crate::ui::canvas::Canvas;
 use crate::ui::chat::{Chat, Update};
 use crate::ui::style::{THEME_DARK, Theme};
 use crate::ui::styled_string::StyledString;
+use crate::ui::text::{Grapheme, truncate_line};
+
+/// Maximum width of a session name derived from the prompt.
+const SESSION_NAME_WIDTH: usize = 120;
+
+/// Returns a session name derived from the first line of the prompt.
+fn session_name(prompt: &str) -> String {
+    let line = prompt.trim().lines().next().unwrap_or("");
+    truncate_line(SESSION_NAME_WIDTH, line)
+        .graphemes
+        .iter()
+        .map(Grapheme::formatted)
+        .collect()
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
@@ -317,11 +331,12 @@ impl App {
 
     /// Returns the current session, creating a new session if one does not
     /// exist.
-    fn create_session(&mut self) -> AnyResult<Session> {
+    fn create_session(&mut self, name: &str) -> AnyResult<Session> {
         if let Some(session) = &self.session {
             return Ok(session.clone());
         }
-        let session = Session::create(&mut self.conn, "Session")?;
+        // TODO: asynchronously overwrite with a model-generated name
+        let session = Session::create(&mut self.conn, name)?;
         self.session = Some(session.clone());
         Ok(session)
     }
@@ -399,7 +414,8 @@ impl App {
             .clone()
             .ok_or_else(|| anyhow!("no model selected"))?;
 
-        let session = self.create_session()?;
+        let name = session_name(prompt);
+        let session = self.create_session(&name)?;
         let turn = Turn::create(&mut self.conn, session.id, TurnType::User, None, None, None)?;
         let item = Item::create(
             &mut self.conn,

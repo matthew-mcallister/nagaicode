@@ -368,7 +368,8 @@ async fn test_app_prompt_agent() {
         Some("Hello there, how can I help?")
     );
 
-    // The prompt and the response should both be persisted in the database.
+    // Session was created
+    assert_eq!(app.query("/session/name").unwrap(), json!("hello"));
     let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
 
     let turns = Turn::list_by_session(app.conn(), session_id).unwrap();
