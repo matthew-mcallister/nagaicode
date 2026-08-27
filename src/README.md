@@ -7,6 +7,7 @@
   - `src/README.md`: architectural notes
   - `src/agent.rs`: LLM agents
   - `src/app.rs`: main entrypoint
+  - `src/tasks.rs`: task spawning and lifecycle
   - `src/tools.rs`: tool server
   - `src/query.rs`: debug query trait
   - `src/interface/`
