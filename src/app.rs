@@ -34,20 +34,7 @@ use crate::ui::canvas::Canvas;
 use crate::ui::chat::{Chat, Update};
 use crate::ui::style::{THEME_DARK, Theme};
 use crate::ui::styled_string::StyledString;
-use crate::ui::text::{Grapheme, truncate_line};
-
-/// Maximum width of a session name derived from the prompt.
-const SESSION_NAME_WIDTH: usize = 120;
-
-/// Returns a session name derived from the first line of the prompt.
-fn session_name(prompt: &str) -> String {
-    let line = prompt.trim().lines().next().unwrap_or("");
-    truncate_line(SESSION_NAME_WIDTH, line)
-        .graphemes
-        .iter()
-        .map(Grapheme::formatted)
-        .collect()
-}
+use crate::ui::text::truncate_line;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
@@ -165,6 +152,11 @@ impl App {
     /// Returns the currently selected provider and model, if any.
     pub fn selected_model(&self) -> Option<&(Provider, Model)> {
         self.selected_model.as_ref()
+    }
+
+    /// Returns the active session, if any.
+    pub fn session(&self) -> Option<&Session> {
+        self.session.as_ref()
     }
 
     /// Returns the database URL.
@@ -322,6 +314,7 @@ impl App {
         match command {
             Command::Provider(cmd) => crate::command::run_provider_command(self, cmd),
             Command::Model(cmd) => crate::command::run_model_command(self, cmd),
+            Command::Session(cmd) => crate::command::run_session_command(self, cmd),
             Command::Quit => {
                 self.quit = true;
                 Ok(String::new())
@@ -414,7 +407,9 @@ impl App {
             .clone()
             .ok_or_else(|| anyhow!("no model selected"))?;
 
-        let name = session_name(prompt);
+        const SESSION_NAME_WIDTH: usize = 120;
+        let line = prompt.trim().lines().next().unwrap_or("");
+        let name = truncate_line(SESSION_NAME_WIDTH, line).to_padded_string(0);
         let session = self.create_session(&name)?;
         let turn = Turn::create(&mut self.conn, session.id, TurnType::User, None, None, None)?;
         let item = Item::create(

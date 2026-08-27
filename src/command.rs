@@ -13,11 +13,14 @@ use crate::interface::InterfaceId;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::schema::provider::dsl;
+use crate::session::Session;
+use crate::ui::text::truncate_line;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Command {
     Provider(ProviderCommand),
     Model(ModelCommand),
+    Session(SessionCommand),
     Quit,
 }
 
@@ -37,6 +40,11 @@ pub enum ProviderCommand {
 pub enum ModelCommand {
     Ls,
     Switch { provider: String, model: String },
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum SessionCommand {
+    Ls,
 }
 
 #[derive(Clone, Debug)]
@@ -155,6 +163,7 @@ fn parse_args<'a>(args: Vec<String>) -> Result<Command, AnyError> {
 
           /provider     [/p]
           /model        [/m]
+          /session      [/s]
           /help         [/h]
           /quit         [/q]
     ");
@@ -162,6 +171,7 @@ fn parse_args<'a>(args: Vec<String>) -> Result<Command, AnyError> {
     match parser.expect()? {
         "p" | "provider" => parse_provider(parser.args),
         "m" | "model" => parse_model(parser.args),
+        "s" | "session" => parse_session(parser.args),
         "q" | "quit" => parse_quit(parser.args),
         "h" | "help" => Err(show_usage(USAGE)),
         command => Err(unknown_command(USAGE, command)),
@@ -301,6 +311,25 @@ fn parse_model_switch(args: &[&str]) -> Result<Command, AnyError> {
     }))
 }
 
+fn parse_session(args: &[&str]) -> Result<Command, AnyError> {
+    if args.is_empty() {
+        return Ok(Command::Session(SessionCommand::Ls));
+    }
+    const USAGE: &str = dedent!("
+        Usage:
+
+          /session ls
+    ");
+    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    match parser.expect()? {
+        "ls" => {
+            parser.expect_empty()?;
+            Ok(Command::Session(SessionCommand::Ls))
+        }
+        command => Err(unknown_command(USAGE, command)),
+    }
+}
+
 pub fn parse_command(text: &str) -> Result<Command, AnyError> {
     let args = shellwords::split(text)?;
     parse_args(args)
@@ -387,13 +416,40 @@ pub fn run_model_command(
     }
 }
 
+pub fn run_session_command(
+    app: &mut App,
+    command: SessionCommand,
+) -> Result<String, AnyError> {
+    match command {
+        SessionCommand::Ls => {
+            const SESSION_LIST_NAME_WIDTH: usize = 30;
+            let sessions = Session::all(app.conn())?;
+            if sessions.is_empty() {
+                return Ok("No sessions yet.".into());
+            }
+            // TODO: colored output
+            let active_id = app.session().map(|s| s.id);
+            let mut out = String::new();
+            for s in sessions {
+                let marker = if Some(s.id) == active_id { "* " } else { "  " };
+                let name = truncate_line(SESSION_LIST_NAME_WIDTH, &s.name)
+                    .to_padded_string(SESSION_LIST_NAME_WIDTH);
+                let created = s.created_at.format("%Y-%m-%d %H:%M");
+                let id = s.id;
+                out.push_str(&format!("{marker}{id:>4}  {name}  {created}\n"));
+            }
+            Ok(out)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_help() {
-        let expected = "List of commands:\n\n  /provider     [/p]\n  /model        [/m]\n  /help         [/h]\n  /quit         [/q]";
+        let expected = "List of commands:\n\n  /provider     [/p]\n  /model        [/m]\n  /session      [/s]\n  /help         [/h]\n  /quit         [/q]";
         let result = parse_args(vec!["help".into()]).unwrap_err().to_string();
         assert_eq!(result, expected);
     }
@@ -450,5 +506,23 @@ mod tests {
 
         let extra = parse_args(shellwords::split("model switch openai gpt-4 x").unwrap());
         assert!(extra.is_err(), "expected error, got {:?}", extra.unwrap());
+    }
+
+    #[test]
+    fn test_session() {
+        let cmd = parse_args(vec!["session".into()]).expect("parse bare failed");
+        assert_eq!(cmd, Command::Session(SessionCommand::Ls));
+
+        let cmd = parse_args(vec!["s".into()]).expect("parse alias failed");
+        assert_eq!(cmd, Command::Session(SessionCommand::Ls));
+
+        let cmd = parse_args(vec!["s".into(), "ls".into()]).expect("parse ls failed");
+        assert_eq!(cmd, Command::Session(SessionCommand::Ls));
+
+        let extra = parse_args(vec!["session".into(), "ls".into(), "x".into()]);
+        assert!(extra.is_err(), "expected error, got {:?}", extra.unwrap());
+
+        let unknown = parse_args(vec!["session".into(), "foo".into()]);
+        assert!(unknown.is_err(), "expected error, got {:?}", unknown.unwrap());
     }
 }

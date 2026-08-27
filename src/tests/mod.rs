@@ -281,6 +281,76 @@ async fn test_app_process_command() {
 }
 
 #[tokio::test]
+async fn test_app_session_ls() {
+    use crate::session::Session;
+
+    let mut app = App::new().unwrap();
+
+    // Returns the content of the most recent history item.
+    let last_content = |app: &App| {
+        app.query("/chat/stacked/inner/history/history/items")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let date = |s: &Session| s.created_at.format("%Y-%m-%d %H:%M").to_string();
+
+    // No sessions yet.
+    app.process_command("/session ls").await.unwrap();
+    assert_eq!(last_content(&app), "No sessions yet.");
+
+    // Stored sessions are listed with no marker while none is active. Long
+    // names are truncated to 30 columns.
+    let s1 = Session::create(app.conn(), "first").unwrap();
+    let s2 = Session::create(
+        app.conn(),
+        "this session name is definitely longer than thirty columns",
+    )
+    .unwrap();
+    app.process_command("/s").await.unwrap();
+    let expected = format!(
+        "     1  {:<30}  {}\n     2  {}  {}\n",
+        "first",
+        date(&s1),
+        "this session name is definitel",
+        date(&s2),
+    );
+    assert_eq!(last_content(&app), expected);
+
+    // Submitting a prompt lazily creates the active session, marked with '*'.
+    let provider = Provider::create(app.conn(), "test", InterfaceId::Openai, "key", None)
+        .expect("create provider");
+    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    app.switch_model(provider, model).unwrap();
+    app.process_command("hello world").await.unwrap();
+    app.process_event(AppEvent::Interrupt).await;
+    app.process_pending_events().await;
+
+    let s3_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+    let s3 = Session::get_by_id(app.conn(), s3_id)
+        .unwrap()
+        .expect("active session");
+    assert_eq!(s3.name, "hello world");
+    assert_eq!(s3.id, s2.id + 1);
+    app.process_command("/session ls").await.unwrap();
+    let expected = format!(
+        "     1  {:<30}  {}\n     2  {}  {}\n*    3  {:<30}  {}\n",
+        "first",
+        date(&s1),
+        "this session name is definitel",
+        date(&s2),
+        "hello world",
+        date(&s3),
+    );
+    assert_eq!(last_content(&app), expected);
+}
+
+#[tokio::test]
 async fn test_app_prompt_agent() {
     use crate::session::{ItemType, Response, Turn, TurnType};
 
