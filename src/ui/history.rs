@@ -465,13 +465,13 @@ impl DataQuery for HistoryItem {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "content": self.content,
-                "ty": self.ty.as_str(),
-                "resume_point": self.resume_point.query("/")?,
-                "item_id": self.item_id,
-                "first_row": self.first_row.to_json(),
-                "last_row": self.last_row.to_json(),
-                "num_rows": self.num_rows,
+                "content": self.query("/content")?,
+                "ty": self.query("/ty")?,
+                "resume_point": self.query("/resume_point")?,
+                "item_id": self.query("/item_id")?,
+                "first_row": self.query("/first_row")?,
+                "last_row": self.query("/last_row")?,
+                "num_rows": self.query("/num_rows")?,
             }))),
             "content" => Ok(QueryField::Value(json!(self.content))),
             "ty" => Ok(QueryField::Value(json!(self.ty.as_str()))),
@@ -877,16 +877,16 @@ impl DataQuery for History {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "num_rows": self.num_rows(),
-                "items": HistoryItemsData { history: self }.query("/")?,
-                "width": self.width,
-                "max_height": self.max_height,
-                "head": self.head.to_json(),
-                "viewport_top": self.viewport_top.to_json(),
-                "viewport_top_pos": self.viewport_top_pos,
-                "viewport_bottom": self.viewport_bottom.to_json(),
-                "viewport_bottom_pos": self.viewport_bottom_pos,
-                "by_item_id": by_item_id_json(&self.by_item_id),
+                "num_rows": self.query("/num_rows")?,
+                "items": self.query("/items")?,
+                "width": self.query("/width")?,
+                "max_height": self.query("/max_height")?,
+                "head": self.query("/head")?,
+                "viewport_top": self.query("/viewport_top")?,
+                "viewport_top_pos": self.query("/viewport_top_pos")?,
+                "viewport_bottom": self.query("/viewport_bottom")?,
+                "viewport_bottom_pos": self.query("/viewport_bottom_pos")?,
+                "by_item_id": self.query("/by_item_id")?,
             }))),
             "num_rows" => Ok(QueryField::Value(json!(self.num_rows()))),
             "items" => Ok(QueryField::Boxed(Box::new(HistoryItemsData {

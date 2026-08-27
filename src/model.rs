@@ -123,10 +123,10 @@ impl DataQuery for Model {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "provider_id": self.provider_id,
-                "id": self.id,
-                "created_at": self.created_at.to_json(),
-                "updated_at": self.updated_at.to_json(),
+                "provider_id": self.query("/provider_id")?,
+                "id": self.query("/id")?,
+                "created_at": self.query("/created_at")?,
+                "updated_at": self.query("/updated_at")?,
             }))),
             "provider_id" => Ok(QueryField::Value(json!(self.provider_id))),
             "id" => Ok(QueryField::Value(json!(self.id))),

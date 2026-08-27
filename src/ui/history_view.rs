@@ -131,8 +131,8 @@ impl DataQuery for HistoryView {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "history": self.history.query("/")?,
-                "scroll_bar": self.scroll_bar.query("/")?,
+                "history": self.query("/history")?,
+                "scroll_bar": self.query("/scroll_bar")?,
             }))),
             "history" => Ok(QueryField::DataQuery(&self.history)),
             "scroll_bar" => Ok(QueryField::DataQuery(&self.scroll_bar)),

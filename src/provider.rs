@@ -116,12 +116,12 @@ impl DataQuery for Provider {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "id": self.id,
-                "name": self.name,
-                "interface": self.interface,
-                "base_url": self.base_url,
-                "created_at": self.created_at.to_json(),
-                "updated_at": self.updated_at.to_json(),
+                "id": self.query("/id")?,
+                "name": self.query("/name")?,
+                "interface": self.query("/interface")?,
+                "base_url": self.query("/base_url")?,
+                "created_at": self.query("/created_at")?,
+                "updated_at": self.query("/updated_at")?,
             }))),
             "id" => Ok(QueryField::Value(json!(self.id))),
             "name" => Ok(QueryField::Value(json!(self.name))),

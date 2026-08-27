@@ -161,12 +161,12 @@ impl DataQuery for ScrollBar {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "height": self.height,
-                "width": self.width,
-                "num_rows": self.num_rows,
-                "top": self.top,
-                "bottom": self.bottom,
-                "focused": self.focused,
+                "height": self.query("/height")?,
+                "width": self.query("/width")?,
+                "num_rows": self.query("/num_rows")?,
+                "top": self.query("/top")?,
+                "bottom": self.query("/bottom")?,
+                "focused": self.query("/focused")?,
             }))),
             "height" => Ok(QueryField::Value(json!(self.height))),
             "width" => Ok(QueryField::Value(json!(self.width))),

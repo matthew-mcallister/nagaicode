@@ -234,11 +234,11 @@ impl DataQuery for StackedView {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "width": self.width,
-                "height": self.height,
-                "focus_state": self.focus_state.to_json(),
-                "history": self.history.query("/")?,
-                "input": self.input.query("/")?,
+                "width": self.query("/width")?,
+                "height": self.query("/height")?,
+                "focus_state": self.query("/focus_state")?,
+                "history": self.query("/history")?,
+                "input": self.query("/input")?,
             }))),
             "width" => Ok(QueryField::Value(json!(self.width))),
             "height" => Ok(QueryField::Value(json!(self.height))),
