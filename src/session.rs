@@ -146,13 +146,18 @@ impl DataQuery for Session {
     }
 }
 
+/// A container for items. In a user-guided conversation, turn alternates
+/// between user and assistant. In a subagent session (roadmap), there is only
+/// one turn.
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = turn)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct Turn {
     pub id: i32,
+    /// Maps to TurnType
     pub ty: String,
     pub session_id: i32,
+    /// Agent turn fields
     pub provider_id: Option<i32>,
     pub provider_name: Option<String>,
     pub model_id: Option<String>,
@@ -273,6 +278,8 @@ impl DataQuery for Turn {
     }
 }
 
+/// A response from the upstream API. Contains text, reasoning, and tool call
+/// outputs.
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = response)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
@@ -282,11 +289,13 @@ pub struct Response {
     pub turn_id: i32,
     pub upstream_id: Option<String>,
     pub upstream_status: Option<String>,
+    // Usage data
     pub input_tokens: Option<i64>,
     pub cached_input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub reasoning_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    // Raw event data
     pub raw_request: Option<String>,
     pub raw_response: Option<String>,
     pub created_at: NaiveDateTime,
@@ -432,6 +441,7 @@ impl DataQuery for Response {
     }
 }
 
+/// Basic datum in human/agent/tool loop history.
 #[derive(Debug, Clone, Eq, PartialEq, Queryable, Selectable)]
 #[diesel(table_name = item)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
@@ -441,13 +451,21 @@ pub struct Item {
     pub turn_id: i32,
     pub response_id: Option<i32>,
     pub provider_id: Option<i32>,
+    /// Maps to ItemType, may be converted from upstream_type
     pub ty: String,
     pub upstream_id: Option<String>,
+    /// Raw type from API
     pub upstream_type: Option<String>,
+    /// Correlates tool call and tool output
     pub upstream_call_id: Option<String>,
+    /// Used by user_text, response_text, and reasoning. Also stores the tool
+    /// name/id on tool_call and tool_output
     pub text: Option<String>,
+    /// Reasoning summary
     pub summary: Option<String>,
+    /// Encrypted reasoning
     pub encrypted_text: Option<String>,
+    /// Used by tool_call and tool_output
     pub json: Option<String>,
     pub raw_data: Option<String>,
     pub created_at: NaiveDateTime,

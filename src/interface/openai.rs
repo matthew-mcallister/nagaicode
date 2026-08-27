@@ -341,6 +341,10 @@ impl OpenaiInterface {
             .collect())
     }
 
+    // FIXME: Some providers emit output text events before reasoning events
+    // causing the UI to display reasoning *after* the response. Need to do
+    // some field study to determine how we can reorder these by buffering here
+    // and if that's a better design than reordering on UI side.
     pub fn generate(
         &self,
         params: InferenceParams<'_>,
