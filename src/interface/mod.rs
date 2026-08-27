@@ -1,13 +1,13 @@
 pub mod openai;
 
-use std::error::Error;
 use std::str::FromStr;
 
+use anyhow::anyhow;
 use futures::Stream;
 
 use serde_json::Value;
 
-use crate::error::AnyResult;
+use crate::error::{AnyError, AnyResult};
 use crate::interface::openai::OpenaiInterface;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
@@ -21,14 +21,14 @@ pub enum InterfaceId {
 }
 
 impl FromStr for InterfaceId {
-    type Err = Box<dyn Error + Send + Sync>;
+    type Err = AnyError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "openai" => Ok(Self::Openai),
             "openrouter" => Ok(Self::Openrouter),
             "deepseek" => Ok(Self::Deepseek),
-            _ => Err(From::from(format!("unknown interface: '{}'", s))),
+            _ => Err(anyhow!("unknown interface: '{}'", s)),
         }
     }
 }

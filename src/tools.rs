@@ -1,5 +1,6 @@
 use std::process::Command;
 
+use anyhow::anyhow;
 use serde_json::{json, Value};
 
 use crate::error::AnyResult;
@@ -63,7 +64,7 @@ impl ToolServer for HostToolServer {
             "sh" => {
                 let cmd = match args {
                     Value::String(s) => s,
-                    _ => return Err("invalid arguments for 'sh': expected a string".into()),
+                    _ => return Err(anyhow!("invalid arguments for 'sh': expected a string")),
                 };
                 let output = Command::new("sh")
                     .arg("-c")
@@ -81,7 +82,7 @@ impl ToolServer for HostToolServer {
                     is_error: !output.status.success(),
                 })
             }
-            _ => Err(format!("unknown tool: '{name}'").into()),
+            _ => Err(anyhow!("unknown tool: '{name}'")),
         }
     }
 }
@@ -213,7 +214,7 @@ mod tests {
         assert_eq!(res.content, json!("command failed"));
         assert!(res.is_error);
 
-        server.add_result("sh", Err("execution failed".into()));
+        server.add_result("sh", Err(anyhow!("execution failed")));
         let err = server.call("sh", json!("bad command")).unwrap_err();
         assert_eq!(err.to_string(), "execution failed");
 
