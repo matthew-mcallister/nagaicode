@@ -303,7 +303,7 @@ impl App {
         Ok(())
     }
 
-    fn process_slash_command(
+    async fn process_slash_command(
         &mut self,
         command: &str,
     ) -> AnyResult<String> {
@@ -314,7 +314,7 @@ impl App {
         match command {
             Command::Provider(cmd) => crate::command::run_provider_command(self, cmd),
             Command::Model(cmd) => crate::command::run_model_command(self, cmd),
-            Command::Session(cmd) => crate::command::run_session_command(self, cmd),
+            Command::Session(cmd) => crate::command::run_session_command(self, cmd).await,
             Command::Quit => {
                 self.quit = true;
                 Ok(String::new())
@@ -332,6 +332,19 @@ impl App {
         let session = Session::create(&mut self.conn, name)?;
         self.session = Some(session.clone());
         Ok(session)
+    }
+
+    /// Cancels the active task, drops all pending events, and resets the
+    /// session and UI for a fresh start.
+    pub(crate) async fn new_session(&mut self) -> AnyResult<()> {
+        self.cancel_task().await;
+        // Task bookkeeping updates arrive via events, which are dropped below.
+        self.tasks.clear();
+        (self.send, self.recv) = unbounded_channel();
+        self.session = None;
+        let (w, h) = self.terminal.size()?;
+        self.chat = Chat::new(w, h, self.theme);
+        Ok(())
     }
 
     /// Processes any events sent by the active task that are still pending.
@@ -467,7 +480,7 @@ impl App {
         if slash_command || bang_command {
             let command = &command[1..];
             if slash_command {
-                let output = self.process_slash_command(command)?;
+                let output = self.process_slash_command(command).await?;
                 if !output.trim().is_empty() {
                     self.chat.handle_update(Update::HelpMessage(&output));
                 }

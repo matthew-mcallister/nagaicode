@@ -91,6 +91,19 @@ fn interrupted_count(app: &App) -> usize {
         .count()
 }
 
+/// Returns the content of the most recent history item.
+fn last_content(app: &App) -> String {
+    app.query("/chat/stacked/inner/history/history/items")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
 #[tokio::test]
 async fn test_app_interrupt() {
     let mut app = App::new().unwrap();
@@ -286,18 +299,6 @@ async fn test_app_session_ls() {
 
     let mut app = App::new().unwrap();
 
-    // Returns the content of the most recent history item.
-    let last_content = |app: &App| {
-        app.query("/chat/stacked/inner/history/history/items")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .last()
-            .unwrap()["content"]
-            .as_str()
-            .unwrap()
-            .to_owned()
-    };
     let date = |s: &Session| s.created_at.format("%Y-%m-%d %H:%M").to_string();
 
     // No sessions yet.
@@ -346,6 +347,55 @@ async fn test_app_session_ls() {
         date(&s2),
         "hello world",
         date(&s3),
+    );
+    assert_eq!(last_content(&app), expected);
+}
+
+#[tokio::test]
+async fn test_app_session_new() {
+    use crate::session::Session;
+
+    let mut app = App::new().unwrap();
+
+    let provider = Provider::create(app.conn(), "test", InterfaceId::Openai, "key", None)
+        .expect("create provider");
+    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    app.switch_model(provider, model).unwrap();
+
+    // Submitting a prompt creates a session and a running agent task.
+    app.process_command("hello world").await.unwrap();
+    assert_eq!(app.query("/current_task").unwrap(), json!(0));
+    let old_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+    let old = Session::get_by_id(app.conn(), old_id).unwrap().unwrap();
+    assert_eq!(old.name, "hello world");
+
+    // /session new cancels the task, purges the event queue, resets the
+    // session, and rebuilds the UI from scratch.
+    app.process_command("/session new").await.unwrap();
+    assert_eq!(app.query("/session").unwrap(), json!(null));
+    assert_eq!(app.query("/current_task").unwrap(), json!(null));
+    assert_eq!(app.query("/task_count").unwrap(), json!(0));
+    let mut canvas = app.make_canvas();
+    app.draw(&mut canvas);
+    assert_eq!(render_canvas(&mut canvas), EXPECTED_INITIAL_FRAME);
+
+    // Interrupt feedback from the canceled task was purged with the queue.
+    assert_eq!(interrupted_count(&app), 0);
+
+    // The next prompt lazily creates a fresh, starred session.
+    app.process_command("round two").await.unwrap();
+    let new_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+    assert_eq!(new_id, old_id + 1);
+    let fresh = Session::get_by_id(app.conn(), new_id).unwrap().unwrap();
+    assert_eq!(fresh.name, "round two");
+    app.process_command("/session ls").await.unwrap();
+    let date = |s: &Session| s.created_at.format("%Y-%m-%d %H:%M").to_string();
+    let expected = format!(
+        "  {old_id:>4}  {:<30}  {}\n* {new_id:>4}  {:<30}  {}\n",
+        "hello world",
+        date(&old),
+        "round two",
+        date(&fresh),
     );
     assert_eq!(last_content(&app), expected);
 }

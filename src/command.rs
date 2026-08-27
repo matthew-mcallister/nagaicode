@@ -45,6 +45,7 @@ pub enum ModelCommand {
 #[derive(Debug, Eq, PartialEq)]
 pub enum SessionCommand {
     Ls,
+    New,
 }
 
 #[derive(Clone, Debug)]
@@ -319,12 +320,17 @@ fn parse_session(args: &[&str]) -> Result<Command, AnyError> {
         Usage:
 
           /session ls
+          /session new
     ");
     let mut parser = Parser::new(USAGE, &args[..], &[]);
     match parser.expect()? {
         "ls" => {
             parser.expect_empty()?;
             Ok(Command::Session(SessionCommand::Ls))
+        }
+        "new" => {
+            parser.expect_empty()?;
+            Ok(Command::Session(SessionCommand::New))
         }
         command => Err(unknown_command(USAGE, command)),
     }
@@ -416,7 +422,7 @@ pub fn run_model_command(
     }
 }
 
-pub fn run_session_command(
+pub async fn run_session_command(
     app: &mut App,
     command: SessionCommand,
 ) -> Result<String, AnyError> {
@@ -439,6 +445,10 @@ pub fn run_session_command(
                 out.push_str(&format!("{marker}{id:>4}  {name}  {created}\n"));
             }
             Ok(out)
+        }
+        SessionCommand::New => {
+            app.new_session().await?;
+            Ok(String::new())
         }
     }
 }
@@ -518,6 +528,15 @@ mod tests {
 
         let cmd = parse_args(vec!["s".into(), "ls".into()]).expect("parse ls failed");
         assert_eq!(cmd, Command::Session(SessionCommand::Ls));
+
+        let cmd = parse_args(vec!["session".into(), "new".into()]).expect("parse new failed");
+        assert_eq!(cmd, Command::Session(SessionCommand::New));
+
+        let cmd = parse_args(vec!["s".into(), "new".into()]).expect("parse alias new failed");
+        assert_eq!(cmd, Command::Session(SessionCommand::New));
+
+        let extra = parse_args(vec!["session".into(), "new".into(), "x".into()]);
+        assert!(extra.is_err(), "expected error, got {:?}", extra.unwrap());
 
         let extra = parse_args(vec!["session".into(), "ls".into(), "x".into()]);
         assert!(extra.is_err(), "expected error, got {:?}", extra.unwrap());
