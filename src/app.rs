@@ -488,7 +488,7 @@ impl App {
 /// - selected_model: Model | null
 /// - db_url: string
 /// - session: Session | null
-/// - current_task: FIXME
+/// - current_task: int | null
 /// - task_count: int
 impl DataQuery for App {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
@@ -511,7 +511,9 @@ impl DataQuery for App {
                 Some(session) => Ok(QueryField::DataQuery(session)),
                 None => Ok(QueryField::Value(json!(null))),
             },
-            "current_task" => Ok(QueryField::Value(json!(self.current_task.is_some()))),
+            "current_task" => Ok(QueryField::Value(json!(
+                self.current_task.as_ref().map(|t| t.tid())
+            ))),
             "task_count" => Ok(QueryField::Value(json!(self.tasks.len()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }

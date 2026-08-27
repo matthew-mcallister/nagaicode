@@ -100,13 +100,13 @@ async fn test_app_interrupt() {
     app.switch_model(model);
 
     app.process_event(AppEvent::Interrupt).await;
-    assert_eq!(app.query("/current_task").unwrap(), json!(false));
+    assert_eq!(app.query("/current_task").unwrap(), json!(null));
 
     app.process_command("hello").await.unwrap();
-    assert_eq!(app.query("/current_task").unwrap(), json!(true));
+    assert_eq!(app.query("/current_task").unwrap(), json!(0));
 
     app.process_event(AppEvent::Interrupt).await;
-    assert_eq!(app.query("/current_task").unwrap(), json!(false));
+    assert_eq!(app.query("/current_task").unwrap(), json!(null));
     app.process_pending_events().await;
     assert_eq!(app.query("/task_count").unwrap(), json!(0));
 
@@ -127,19 +127,19 @@ async fn test_app_task_complete() {
     let dummy = app.spawn_dummy_task().await;
     tokio::task::yield_now().await;
     app.process_pending_events().await;
-    assert_eq!(app.query("current_task").unwrap(), json!(true));
+    assert_eq!(app.query("current_task").unwrap(), json!(0));
     assert_eq!(app.query("task_count").unwrap(), json!(1));
     dummy.complete();
     app.await_task().await.expect("await dummy task");
     app.process_pending_events().await;
-    assert_eq!(app.query("current_task").unwrap(), json!(false));
+    assert_eq!(app.query("current_task").unwrap(), json!(null));
     assert_eq!(app.query("task_count").unwrap(), json!(0));
 
     // Canceling a task ends it and reports the cancelation once pending
     // events are processed.
     let _dummy = app.spawn_dummy_task().await;
     app.process_event(AppEvent::Interrupt).await;
-    assert_eq!(app.query("current_task").unwrap(), json!(false));
+    assert_eq!(app.query("current_task").unwrap(), json!(null));
     app.process_pending_events().await;
     assert_eq!(app.query("task_count").unwrap(), json!(0));
     assert_eq!(interrupted_count(&app), 1);
@@ -575,7 +575,7 @@ async fn test_app_query() {
     assert!(db_url.as_str().unwrap().contains("mode=memory"));
     assert_eq!(app.query("/selected_model").unwrap(), json!(null));
     assert_eq!(app.query("/session").unwrap(), json!(null));
-    assert_eq!(app.query("/current_task").unwrap(), json!(false));
+    assert_eq!(app.query("/current_task").unwrap(), json!(null));
     assert_eq!(app.query("/task_count").unwrap(), json!(0));
 
     // Nested query into chat.
@@ -595,7 +595,7 @@ async fn test_app_query() {
             "selected_model": null,
             "db_url": db_url,
             "session": null,
-            "current_task": false,
+            "current_task": null,
             "task_count": 0,
         })
     );
