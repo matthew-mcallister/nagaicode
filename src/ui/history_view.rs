@@ -1,4 +1,8 @@
-// FIXME: scroll bar should be hidden when history fits entirely onto screen
+// FIXME: scroll bar should be hidden when history fits entirely onto screen.
+// Once history grows large enough to scroll, <tab> focus switching becomes
+// available as well. Generally only time history shrinks is when input box
+// size changes, so it should be fine to force focus on the input box in this
+// manner.
 
 use crossterm::event::Event;
 use serde_json::json;
