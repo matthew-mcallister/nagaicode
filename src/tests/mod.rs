@@ -1,4 +1,4 @@
-use crossterm::event::{Event, KeyCode, KeyEvent};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use reqwest::{Method, Request};
 use reqwest_eventsource::Event as SseEvent;
 use serde_json::json;
@@ -314,7 +314,7 @@ async fn test_app_prompt_agent() {
     for c in "hello".chars() {
         app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))));
     }
-    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
+    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)));
 
     // Await the spawned agent, then fold its events into the UI.
     app.await_task().await.expect("await agent task");
@@ -460,7 +460,7 @@ async fn test_agent_stream_without_item_events() {
     for c in "hello".chars() {
         app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))));
     }
-    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
+    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)));
     app.await_task().await.expect("await agent task");
     app.process_pending_events();
 
@@ -545,7 +545,7 @@ async fn test_agent_history() {
     for c in "what is 1+1?".chars() {
         app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))));
     }
-    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
+    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)));
     app.await_task().await.expect("await first agent");
     app.process_pending_events();
 
@@ -595,7 +595,7 @@ async fn test_agent_history() {
     for c in "thanks!".chars() {
         app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))));
     }
-    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
+    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)));
     app.await_task().await.expect("await second task");
     app.process_pending_events();
 

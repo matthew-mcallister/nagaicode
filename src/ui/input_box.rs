@@ -256,6 +256,12 @@ impl InputBox {
             .is_some_and(|(_, g)| g.data.starts_with(c))
     }
 
+    /// Returns true if the input begins with a special command prefix
+    /// (`!` or `/`).
+    pub fn is_special_command(&self) -> bool {
+        self.starts_with('!') || self.starts_with('/')
+    }
+
     fn first_row(&self) -> Id<InputRow> {
         self.rows[self.head].next
     }
@@ -977,9 +983,19 @@ impl InputBox {
         self.splice(start, pos, "");
     }
 
+    /// Clears the input and returns its former contents as a command event.
+    fn submit(&mut self) -> AppEvent {
+        let mut text = self.get_text();
+        self.set_text("");
+        if text.ends_with('\n') { text.pop(); }
+        AppEvent::Command(text)
+    }
+
     /// Handles a single keyboard event, applying the corresponding edit or
-    /// movement. Returns `Some(text)` when the input is submitted (bare
-    /// Enter), in which case the buffer is cleared.
+    /// movement. Returns `Some(text)` when the input is submitted, in which
+    /// case the buffer is cleared. Enter submits special commands (input
+    /// beginning with `!` or `/`) and inserts a newline otherwise; Alt+Enter
+    /// does the opposite.
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<AppEvent> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
@@ -1012,19 +1028,26 @@ impl InputBox {
             | (KeyCode::Char('j'), true, _, _)
             | (KeyCode::Char('j'), _, _, true)
             | (KeyCode::Enter, true, _, _)
-            | (KeyCode::Enter, _, true, _)
-            | (KeyCode::Enter, _, _, true) => self.paste("\n"),
+            | (KeyCode::Enter, _, true, _) => self.paste("\n"),
             // Ignoring modifiers
             (KeyCode::Char(c), _, _, _) => {
                 let mut s = CompactString::with_capacity(1);
                 s.push(c);
                 self.paste(&s);
             }
+            (KeyCode::Enter, _, _, true) => {
+                if self.is_special_command() {
+                    self.paste("\n");
+                } else {
+                    response = Some(self.submit());
+                }
+            }
             (KeyCode::Enter, _, _, _) => {
-                let mut text = self.get_text();
-                self.set_text("");
-                if text.ends_with('\n') { text.pop(); }
-                response = Some(AppEvent::Command(text));
+                if self.is_special_command() {
+                    response = Some(self.submit());
+                } else {
+                    self.paste("\n");
+                }
             }
             // XXX: Maybe should expand to spaces when input via keyboard
             (KeyCode::Tab, _, _, _) => self.paste("\t"),
@@ -2126,6 +2149,50 @@ That on himself such murd'rous shame commits.
         input.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         assert_eq!(input.get_text(), "\n");
         assert_eq!(input.buffer, "first line\nsecond line");
+        check_positions(&input);
+    }
+
+    #[test]
+    fn test_enter_key() {
+        let mut input = InputBox::new(80, 8);
+
+        // Plain text: Enter inserts a newline, Alt+Enter submits.
+        input.set_text("hello");
+        input.go_to_end();
+        assert!(!input.is_special_command());
+        let response = input.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(response, None);
+        assert_eq!(input.get_text(), "hello\n\n");
+        let response = input.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        assert_eq!(response, Some(AppEvent::Command("hello\n".to_string())));
+        assert_eq!(input.get_text(), "\n");
+
+        // Special commands: Enter submits, Alt+Enter inserts a newline.
+        input.set_text("/clear");
+        assert!(input.is_special_command());
+        let response = input.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(response, Some(AppEvent::Command("/clear".to_string())));
+        assert_eq!(input.get_text(), "\n");
+        input.set_text("!deploy");
+        input.go_to_end();
+        assert!(input.is_special_command());
+        let response = input.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        assert_eq!(response, None);
+        assert_eq!(input.get_text(), "!deploy\n\n");
+
+        // A special character not at the start of the input does not count.
+        input.set_text("a/b c");
+        assert!(!input.is_special_command());
+
+        // Ctrl+Enter and Ctrl/Alt+J always insert a newline.
+        input.set_text("multi");
+        input.go_to_end();
+        input.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        assert_eq!(input.get_text(), "multi\n\n");
+        input.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+        assert_eq!(input.get_text(), "multi\n\n\n");
+        input.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT));
+        assert_eq!(input.get_text(), "multi\n\n\n\n");
         check_positions(&input);
     }
 
