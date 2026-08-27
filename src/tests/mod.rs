@@ -58,8 +58,8 @@ const EXPECTED_INITIAL_FRAME: &str = concat!(
     "\x1b[48;2;12;10;9m\x1b[38;5;15m                                                                                ",
 );
 
-#[test]
-fn test_app_e2e() {
+#[tokio::test]
+async fn test_app_e2e() {
     let mut app = App::new().expect("failed to create app");
 
     let mut canvas = app.make_canvas();
@@ -69,11 +69,25 @@ fn test_app_e2e() {
     assert_eq!(frame, EXPECTED_INITIAL_FRAME);
     assert!(!app.quit());
 
-    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char('/'))));
-    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char('q'))));
-    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
+    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char('/'))))
+        .await;
+    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char('q'))))
+        .await;
+    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)))
+        .await;
 
     assert!(app.quit());
+}
+
+/// Counts "Interrupted." help messages in the chat history.
+fn interrupted_count(app: &App) -> usize {
+    app.query("/chat/stacked/inner/history/history/items")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["content"].as_str() == Some("Interrupted."))
+        .count()
 }
 
 #[tokio::test]
@@ -85,32 +99,24 @@ async fn test_app_interrupt() {
     let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
     app.switch_model(model);
 
-    app.process_event(AppEvent::Interrupt);
+    app.process_event(AppEvent::Interrupt).await;
     assert_eq!(app.query("/current_task").unwrap(), json!(false));
 
-    app.process_command("hello").unwrap();
+    app.process_command("hello").await.unwrap();
     assert_eq!(app.query("/current_task").unwrap(), json!(true));
 
-    app.process_event(AppEvent::Interrupt);
+    app.process_event(AppEvent::Interrupt).await;
     assert_eq!(app.query("/current_task").unwrap(), json!(false));
+    app.process_pending_events().await;
+    assert_eq!(app.query("/task_count").unwrap(), json!(0));
 
     // Interrupting an active task emits a single help message.
-    fn interrupted_count(app: &App) -> usize {
-        app.query("/chat/stacked/inner/history/history/items")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|item| item["content"].as_str() == Some("Interrupted."))
-            .count()
-    }
     assert_eq!(interrupted_count(&app), 1);
 
     // Interrupting with no active task shows nothing.
-    app.process_event(AppEvent::Interrupt);
+    app.process_event(AppEvent::Interrupt).await;
+    app.process_pending_events().await;
     assert_eq!(interrupted_count(&app), 1);
-
-    app.await_task().await.expect("await canceled agent");
 }
 
 #[tokio::test]
@@ -118,24 +124,29 @@ async fn test_app_task_complete() {
     let mut app = App::new().unwrap();
 
     // Completing a task clears it once completion events are processed.
-    let dummy = app.spawn_dummy_task();
+    let dummy = app.spawn_dummy_task().await;
+    tokio::task::yield_now().await;
+    app.process_pending_events().await;
     assert_eq!(app.query("current_task").unwrap(), json!(true));
+    assert_eq!(app.query("task_count").unwrap(), json!(1));
     dummy.complete();
     app.await_task().await.expect("await dummy task");
-    app.process_pending_events();
+    app.process_pending_events().await;
     assert_eq!(app.query("current_task").unwrap(), json!(false));
+    assert_eq!(app.query("task_count").unwrap(), json!(0));
 
-    // Canceling a task clears it immediately, and its late completion event
-    // is absorbed when pending events are processed.
-    let _dummy = app.spawn_dummy_task();
-    assert_eq!(app.query("current_task").unwrap(), json!(true));
-    app.cancel();
-    app.process_pending_events();
+    // Canceling a task ends it and reports the cancelation once pending
+    // events are processed.
+    let _dummy = app.spawn_dummy_task().await;
+    app.process_event(AppEvent::Interrupt).await;
     assert_eq!(app.query("current_task").unwrap(), json!(false));
+    app.process_pending_events().await;
+    assert_eq!(app.query("task_count").unwrap(), json!(0));
+    assert_eq!(interrupted_count(&app), 1);
 }
 
-#[test]
-fn test_app_process_command() {
+#[tokio::test]
+async fn test_app_process_command() {
     let mut app = App::new().unwrap();
 
     app.tools_mut().add_result(
@@ -147,7 +158,7 @@ fn test_app_process_command() {
         }))),
     );
 
-    app.process_command("!echo test").unwrap();
+    app.process_command("!echo test").await.unwrap();
 
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 1);
@@ -161,7 +172,7 @@ fn test_app_process_command() {
 
     app.tools_mut()
         .add_result("sh", Ok(ToolResult::success(json!("string output"))));
-    app.process_command("!pwd").unwrap();
+    app.process_command("!pwd").await.unwrap();
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[1].args, json!("pwd"));
@@ -174,7 +185,7 @@ fn test_app_process_command() {
             "return_code": 1,
         }))),
     );
-    app.process_command("!false").unwrap();
+    app.process_command("!false").await.unwrap();
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 3);
 
@@ -186,17 +197,18 @@ fn test_app_process_command() {
             "return_code": 0,
         }))),
     );
-    app.process_command("!true").unwrap();
+    app.process_command("!true").await.unwrap();
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 4);
 
     app.tools_mut().add_result("sh", Err("tool error".into()));
-    app.process_event(AppEvent::Command("!failing_tool".to_string()));
+    app.process_event(AppEvent::Command("!failing_tool".to_string()))
+        .await;
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 5);
 
-    assert!(app.process_command("").is_ok());
-    assert!(app.process_command("   ").is_ok());
+    assert!(app.process_command("").await.is_ok());
+    assert!(app.process_command("   ").await.is_ok());
 }
 
 #[tokio::test]
@@ -244,13 +256,15 @@ async fn test_app_prompt_agent() {
 
     // Drive the terminal to input a prompt and submit it.
     for c in "hello".chars() {
-        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))));
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
+            .await;
     }
-    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
+    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)))
+        .await;
 
     // Await the spawned agent, then fold its events into the UI.
     app.await_task().await.expect("await agent task");
-    app.process_pending_events();
+    app.process_pending_events().await;
 
     // The agent should have made a single inference request.
     let requests = app.client_mut().get_requests();
@@ -390,11 +404,13 @@ async fn test_agent_stream_without_item_events() {
     );
 
     for c in "hello".chars() {
-        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))));
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
+            .await;
     }
-    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
+    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)))
+        .await;
     app.await_task().await.expect("await agent task");
-    app.process_pending_events();
+    app.process_pending_events().await;
 
     let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
     let items = Item::list_by_session(app.conn(), session_id).unwrap();
@@ -475,11 +491,13 @@ async fn test_agent_history() {
     );
 
     for c in "what is 1+1?".chars() {
-        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))));
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
+            .await;
     }
-    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
+    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)))
+        .await;
     app.await_task().await.expect("await first agent");
-    app.process_pending_events();
+    app.process_pending_events().await;
 
     // The first assistant turn should have recorded one reasoning item and
     // one response item, in that order, after the user prompt item.
@@ -525,11 +543,13 @@ async fn test_agent_history() {
     );
 
     for c in "thanks!".chars() {
-        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))));
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
+            .await;
     }
-    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)));
+    app.handle_input(Event::Key(KeyEvent::from(KeyCode::Enter)))
+        .await;
     app.await_task().await.expect("await second task");
-    app.process_pending_events();
+    app.process_pending_events().await;
 
     let requests = app.client_mut().get_requests();
     assert_eq!(requests.len(), 2);
@@ -556,6 +576,7 @@ async fn test_app_query() {
     assert_eq!(app.query("/selected_model").unwrap(), json!(null));
     assert_eq!(app.query("/session").unwrap(), json!(null));
     assert_eq!(app.query("/current_task").unwrap(), json!(false));
+    assert_eq!(app.query("/task_count").unwrap(), json!(0));
 
     // Nested query into chat.
     let expected_chat = Chat::new(80, 24, &THEME_DARK).query("/").unwrap();
@@ -575,6 +596,7 @@ async fn test_app_query() {
             "db_url": db_url,
             "session": null,
             "current_task": false,
+            "task_count": 0,
         })
     );
 

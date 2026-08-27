@@ -14,6 +14,7 @@ pub mod query;
 pub mod request;
 pub mod schema;
 pub mod session;
+pub mod tasks;
 pub mod terminal;
 pub mod testing;
 pub mod tools;

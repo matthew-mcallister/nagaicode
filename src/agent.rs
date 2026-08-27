@@ -1,9 +1,6 @@
 use diesel::SqliteConnection;
 use fnv::FnvHashMap;
 use futures::StreamExt;
-use tokio::sync::mpsc::UnboundedSender;
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
@@ -14,15 +11,14 @@ use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, ItemType, NewItem, Response, Session, Turn, TurnType};
+use crate::tasks::{Task, TaskContext};
 
 pub struct Agent {
     pub session: Session,
     pub provider: Provider,
     pub model: Model,
-    pub sender: UnboundedSender<AppEvent>,
     pub client: DefaultClient,
     pub conn: SqliteConnection,
-    pub cancel: CancellationToken,
 
     turn: Option<Turn>,
     response: Option<Response>,
@@ -30,34 +26,26 @@ pub struct Agent {
 }
 
 impl Agent {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: Session,
         provider: Provider,
         model: Model,
-        sender: UnboundedSender<AppEvent>,
         client: DefaultClient,
         conn: SqliteConnection,
-        cancel: CancellationToken,
     ) -> Self {
         Self {
             session,
             provider,
             model,
-            sender,
             client,
             conn,
-            cancel,
             turn: None,
             response: None,
             items: FnvHashMap::default(),
         }
     }
 
-    pub async fn run(mut self) -> AnyResult<()> {
-        if self.cancel.is_cancelled() {
-            return Ok(());
-        }
+    async fn run(mut self, context: &TaskContext) -> AnyResult<()> {
         let interface = self.provider.create_interface(&self.client)?;
 
         let history = self.load_history()?;
@@ -67,36 +55,23 @@ impl Agent {
         let stream = interface.generate(params);
         tokio::pin!(stream);
 
-        loop {
-            tokio::select! {
-                _ = self.cancel.cancelled() => return Ok(()),
-                item = stream.next() => match item {
-                    Some(Ok(event)) => {
-                        if let Some(event) = self.handle_event(event)? {
-                            let _ = self.sender.send(event);
-                        }
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(event) => {
+                    if let Some(event) = self.handle_event(event)? {
+                        context.send(event);
                     }
-                    Some(Err(e)) => {
-                        match self.fail_response() {
-                            Ok(()) => return Err(e),
-                            // FIXME: Switch to anyhow and add f to the error chain
-                            Err(_f) => return Err(e),
-                        }
+                }
+                Err(e) => {
+                    match self.fail_response() {
+                        Ok(()) => return Err(e),
+                        // FIXME: Switch to anyhow and add f to the error chain
+                        Err(_f) => return Err(e),
                     }
-                    None => return Ok(()),
                 }
             }
         }
-    }
-
-    pub fn spawn(self) -> JoinHandle<()> {
-        let sender = self.sender.clone();
-        tokio::spawn(async move {
-            if let Err(e) = self.run().await {
-                let _ = sender.send(AppEvent::ErrorMessage(e.to_string()));
-            }
-            let _ = sender.send(AppEvent::TaskComplete);
-        })
+        Ok(())
     }
 
     fn build_params(&self) -> InferenceParams<'_> {
@@ -267,14 +242,28 @@ impl Agent {
     }
 }
 
+impl Task for Agent {
+    type Output = ();
+
+    async fn run(self, context: TaskContext) {
+        if let Err(e) = self.run(&context).await {
+            context.send(AppEvent::ErrorMessage(e.to_string()));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+
     use tokio::sync::mpsc::unbounded_channel;
 
     use crate::interface::InterfaceId;
     use crate::model::Model;
     use crate::provider::Provider;
     use crate::session::Session;
+    use crate::tasks::{TaskContext, TaskError};
 
     use super::*;
 
@@ -286,20 +275,19 @@ mod tests {
             .expect("create provider");
         let model = Model::create(&mut conn, provider.id, "gpt-4").expect("create model");
 
-        let cancel = CancellationToken::new();
         let (sender, mut recv) = unbounded_channel();
-        let agent = Agent::new(
+        let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender);
+        let handle = context.spawn(Agent::new(
             session,
             provider,
             model,
-            sender,
             DefaultClient::default(),
             conn,
-            cancel.clone(),
-        );
-        let task = agent.spawn();
-        cancel.cancel();
-        task.await.unwrap();
-        assert_eq!(recv.try_recv().unwrap(), AppEvent::TaskComplete);
+        ));
+        handle.cancel();
+        let result = handle.join().await.unwrap();
+        assert_eq!(result, Err(TaskError::Canceled));
+        assert_eq!(recv.try_recv().unwrap(), AppEvent::TaskStarted(0));
+        assert_eq!(recv.try_recv().unwrap(), AppEvent::TaskEnded(0));
     }
 }

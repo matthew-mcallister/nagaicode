@@ -5,17 +5,14 @@ use std::sync::Arc;
 use std::task::Poll;
 
 use futures::{Stream, pin_mut};
-use tokio::sync::{Notify, mpsc::UnboundedSender};
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
+use tokio::sync::Notify;
 
-use crate::app::AppEvent;
+use crate::tasks::{Task, TaskContext};
 
-/// A task that does nothing until it is signaled to complete or canceled,
-/// then emits `AppEvent::TaskComplete`. Used for testing task lifecycle
-/// behavior.
+/// A task that does nothing until it is signaled to complete. Used for
+/// testing task lifecycle behavior.
+#[derive(Clone)]
 pub struct DummyTask {
-    cancel: CancellationToken,
     complete: Arc<Notify>,
 }
 
@@ -29,7 +26,6 @@ impl DummyTask {
     /// Creates a new dummy task.
     pub fn new() -> Self {
         Self {
-            cancel: CancellationToken::new(),
             complete: Arc::new(Notify::new()),
         }
     }
@@ -38,23 +34,13 @@ impl DummyTask {
     pub fn complete(&self) {
         self.complete.notify_one();
     }
+}
 
-    /// Returns a cancellation token linked to the task.
-    pub fn token(&self) -> &CancellationToken {
-        &self.cancel
-    }
+impl Task for DummyTask {
+    type Output = ();
 
-    /// Spawns the task, waiting for either a cancel or completion signal.
-    pub fn spawn(&self, sender: UnboundedSender<AppEvent>) -> JoinHandle<()> {
-        let cancel = self.cancel.clone();
-        let complete = self.complete.clone();
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = cancel.cancelled() => (),
-                _ = complete.notified() => (),
-            }
-            let _ = sender.send(AppEvent::TaskComplete);
-        })
+    async fn run(self, _context: TaskContext) {
+        self.complete.notified().await;
     }
 }
 

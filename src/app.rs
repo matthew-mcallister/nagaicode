@@ -1,5 +1,7 @@
 use std::error::Error;
 use std::io::Write;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::execute;
@@ -9,11 +11,10 @@ use crossterm::terminal::{
     DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use diesel::SqliteConnection;
+use fnv::FnvHashSet;
 use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
 use crate::agent::Agent;
 use crate::command::Command;
@@ -24,6 +25,7 @@ use crate::provider::Provider;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::DefaultClient;
 use crate::session::{Item, ItemType, NewItem, Session, Turn, TurnType};
+use crate::tasks::{Task, TaskContext, TaskError, TaskHandle, Tid};
 use crate::terminal::{DefaultTerminal, Terminal};
 use crate::tools::{DefaultToolServer, ToolServer};
 use crate::ui::Component;
@@ -47,10 +49,14 @@ pub enum AppEvent {
     HistoryNext,
     /// Cancel the active task.
     Interrupt,
-    /// The active task has completed.
-    TaskComplete,
+    /// The active task was canceled.
+    Interrupted,
     /// Report an error from a background task.
     ErrorMessage(String),
+    /// A task has started running.
+    TaskStarted(Tid),
+    /// A task has ended.
+    TaskEnded(Tid),
 }
 
 #[derive(Debug)]
@@ -59,11 +65,26 @@ enum Poll {
     Event(Box<AppEvent>),
 }
 
-/// A running background agent task, bundling its cancellation token with the
-/// join handle used to await its completion.
-struct Task {
-    cancel: CancellationToken,
-    join: JoinHandle<()>,
+/// Background task that refreshes cached provider model lists.
+struct RevalidateModelsTask {
+    db_url: String,
+}
+
+impl Task for RevalidateModelsTask {
+    type Output = ();
+
+    async fn run(self, _context: TaskContext) {
+        let mut conn = match crate::db::open(&self.db_url) {
+            Ok(conn) => conn,
+            Err(e) => {
+                log::error!("failed to open db for revalidation: {e}");
+                return;
+            }
+        };
+        if let Err(e) = revalidate_models(&mut conn).await {
+            log::error!("failed to revalidate models: {e}");
+        }
+    }
 }
 
 pub struct App {
@@ -81,8 +102,13 @@ pub struct App {
     // Channel for async events
     send: UnboundedSender<AppEvent>,
     recv: UnboundedReceiver<AppEvent>,
-    // Active background agent task
-    current_task: Option<Task>,
+    tid_counter: Arc<AtomicU64>,
+    // Tracks all tasks including background and child tasks. Sole purpose is
+    // stats for the status bar.
+    tasks: FnvHashSet<Tid>,
+    // Bookkeeping to ensure one foreground task at a time and to allow
+    // manual interrupt.
+    current_task: Option<TaskHandle<()>>,
 }
 
 impl App {
@@ -107,6 +133,8 @@ impl App {
             tools: DefaultToolServer::default(),
             send,
             recv,
+            tid_counter: Arc::new(AtomicU64::new(0)),
+            tasks: FnvHashSet::default(),
             current_task: None,
         })
     }
@@ -187,10 +215,10 @@ impl App {
     }
 
     /// Handles a terminal input event.
-    pub fn handle_input(&mut self, input: crossterm::event::Event) {
+    pub async fn handle_input(&mut self, input: crossterm::event::Event) {
         let event = self.chat.handle_input(input);
         if let Some(event) = event {
-            self.process_event(event);
+            self.process_event(event).await;
         }
     }
 
@@ -200,19 +228,9 @@ impl App {
     }
 
     /// Spawns a background task to revalidate stale model lists.
-    fn spawn_revalidate_models(&self) {
-        let db_url = self.db_url.clone();
-        tokio::spawn(async move {
-            let mut conn = match crate::db::open(&db_url) {
-                Ok(conn) => conn,
-                Err(e) => {
-                    eprintln!("failed to open db for revalidation: {e}");
-                    return;
-                }
-            };
-            if let Err(e) = revalidate_models(&mut conn).await {
-                eprintln!("failed to revalidate models: {e}");
-            }
+    fn spawn_revalidate_models(&mut self) {
+        self.spawn_background(RevalidateModelsTask {
+            db_url: self.db_url.clone(),
         });
     }
 
@@ -235,8 +253,8 @@ impl App {
                 event = self.recv.recv() => Poll::Event(Box::new(event.expect("channel closed"))),
             };
             match poll {
-                Poll::Input(event) => self.handle_input(event),
-                Poll::Event(event) => self.process_event(*event),
+                Poll::Input(event) => self.handle_input(event).await,
+                Poll::Event(event) => self.process_event(*event).await,
             }
         }
 
@@ -276,44 +294,73 @@ impl App {
     }
 
     /// Processes any events sent by the active task that are still pending.
-    pub fn process_pending_events(&mut self) {
+    pub async fn process_pending_events(&mut self) {
         while let Ok(event) = self.recv.try_recv() {
-            self.process_event(event);
+            self.process_event(event).await;
         }
     }
 
-    /// Cancels the active task.
-    pub fn cancel(&mut self) {
-        if let Some(task) = self.current_task.as_mut() {
-            task.cancel.cancel();
-            self.current_task = None;
+    /// Returns a root task context for spawning tasks.
+    fn context(&self) -> TaskContext {
+        TaskContext::root(Arc::clone(&self.tid_counter), self.send.clone())
+    }
+
+    /// Spawns a task as the current foreground task. Interrupts any currently
+    /// running task.
+    async fn spawn_foreground<T: Task<Output = ()>>(&mut self, task: T) {
+        self.cancel_task().await;
+        let handle = self.context().spawn(task);
+        self.current_task = Some(handle);
+    }
+
+    /// Spawns a detached background task.
+    fn spawn_background<T: Task<Output = ()>>(&mut self, task: T) -> TaskHandle<()> {
+        self.context().spawn(task)
+    }
+
+    /// Cancels the active task and waits for it to complete.
+    async fn cancel_task(&mut self) {
+        let Some(task) = self.current_task.take() else { return };
+        task.cancel();
+        self.finish_task(task).await;
+    }
+
+    /// Waits for a task to finish and posts a message to the history if it was
+    /// canceled.
+    async fn finish_task(&mut self, task: TaskHandle<()>) {
+        let tid = task.tid();
+        match task.join().await {
+            Ok(Ok(())) => {}
+            Ok(Err(TaskError::Canceled)) => {
+                let _ = self.send.send(AppEvent::Interrupted);
+            }
+            Err(e) => {
+                // Panicked tasks never send TaskEnded, so clean up here.
+                self.tasks.remove(&tid);
+                log::error!("task {tid} did not end cleanly: {e}");
+            }
         }
     }
 
     /// Awaits completion of the active task, if any.
     pub async fn await_task(&mut self) -> AnyResult<()> {
         if let Some(task) = self.current_task.take() {
-            task.join.await?;
+            self.finish_task(task).await;
         }
         Ok(())
     }
 
     /// Spawns a dummy task tracked as the current task, for testing.
     #[cfg(test)]
-    pub(crate) fn spawn_dummy_task(&mut self) -> crate::testing::DummyTask {
+    pub(crate) async fn spawn_dummy_task(&mut self) -> crate::testing::DummyTask {
         let task = crate::testing::DummyTask::new();
-        let join = task.spawn(self.send.clone());
-        self.current_task = Some(Task {
-            cancel: task.token().clone(),
-            join,
-        });
-        task
+        let control = task.clone();
+        self.spawn_foreground(task).await;
+        control
     }
 
     /// Spawns an agent to handle the submitted prompt.
-    fn submit_prompt(&mut self, prompt: &str) -> AnyResult<()> {
-        self.cancel();
-
+    async fn submit_prompt(&mut self, prompt: &str) -> AnyResult<()> {
         let model = self.selected_model.clone().ok_or("no model selected")?;
         let provider = Provider::get_by_id(&mut self.conn, model.provider_id)?
             .ok_or_else(|| format!("no provider found for model '{}'", model.id))?;
@@ -337,19 +384,14 @@ impl App {
 
         let _ = self.send.send(AppEvent::ItemCreated { item: item.clone() });
 
-        let cancel = CancellationToken::new();
         let agent = Agent::new(
             session,
             provider,
             model,
-            self.send.clone(),
             self.client.clone(),
             crate::db::open(&self.db_url)?,
-            cancel.clone(),
         );
-
-        let join = agent.spawn();
-        self.current_task = Some(Task { cancel, join });
+        self.spawn_foreground(agent).await;
 
         Ok(())
     }
@@ -370,7 +412,7 @@ impl App {
         Ok(output)
     }
 
-    pub(crate) fn process_command(&mut self, command: &str) -> AnyResult<()> {
+    pub(crate) async fn process_command(&mut self, command: &str) -> AnyResult<()> {
         if command.trim().is_empty() {
             return Ok(());
         }
@@ -391,15 +433,15 @@ impl App {
                 self.chat.handle_update(Update::CommandOutput(&output));
             }
         } else {
-            self.submit_prompt(command)?;
+            self.submit_prompt(command).await?;
         }
 
         Ok(())
     }
 
-    pub(crate) fn process_event(&mut self, event: AppEvent) {
+    pub(crate) async fn process_event(&mut self, event: AppEvent) {
         let res = match event {
-            AppEvent::Command(cmd) => self.process_command(&cmd),
+            AppEvent::Command(cmd) => self.process_command(&cmd).await,
             AppEvent::ItemCreated { item } => {
                 self.chat.handle_update(Update::ItemCreated { item: &item });
                 Ok(())
@@ -410,19 +452,27 @@ impl App {
             }
             AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
             AppEvent::Interrupt => {
-                if self.current_task.is_some() {
-                    self.cancel();
-                    self.chat.handle_update(Update::HelpMessage("Interrupted."));
-                }
-                self.process_pending_events();
+                self.cancel_task().await;
+                Ok(())
+            }
+            AppEvent::Interrupted => {
+                self.chat.handle_update(Update::HelpMessage("Interrupted."));
                 Ok(())
             }
             AppEvent::ErrorMessage(msg) => {
                 self.chat.handle_update(Update::ErrorMessage(&msg));
                 Ok(())
             }
-            AppEvent::TaskComplete => {
-                self.current_task = None;
+            AppEvent::TaskStarted(tid) => {
+                self.tasks.insert(tid);
+                Ok(())
+            }
+            AppEvent::TaskEnded(tid) => {
+                self.tasks.remove(&tid);
+                if self.current_task.as_ref().is_some_and(|t| t.tid() == tid) {
+                    let task = self.current_task.take().expect("current task matches");
+                    self.finish_task(task).await;
+                }
                 Ok(())
             }
         };
@@ -438,6 +488,8 @@ impl App {
 /// - selected_model: Model | null
 /// - db_url: string
 /// - session: Session | null
+/// - current_task: FIXME
+/// - task_count: int
 impl DataQuery for App {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -447,6 +499,7 @@ impl DataQuery for App {
                 "db_url": self.query("/db_url")?,
                 "session": self.query("/session")?,
                 "current_task": self.query("/current_task")?,
+                "task_count": self.query("/task_count")?,
             }))),
             "chat" => Ok(QueryField::DataQuery(&self.chat)),
             "selected_model" => match self.selected_model.as_ref() {
@@ -459,6 +512,7 @@ impl DataQuery for App {
                 None => Ok(QueryField::Value(json!(null))),
             },
             "current_task" => Ok(QueryField::Value(json!(self.current_task.is_some()))),
+            "task_count" => Ok(QueryField::Value(json!(self.tasks.len()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
