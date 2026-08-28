@@ -946,7 +946,7 @@ impl InputBox {
 
     fn word_end(&self) -> GraphemePos {
         let mut iter = self.iter_graphemes(self.cursor_pos(), self.grapheme_end());
-        (&mut iter).find(|(_, g)| g.is_alphanumeric());
+        iter.find(|(_, g)| g.is_alphanumeric());
         iter.find(|(_, g)| !g.is_alphanumeric())
             .map(|(pos, _)| pos)
             .unwrap_or(self.last_grapheme())

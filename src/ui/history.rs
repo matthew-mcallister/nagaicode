@@ -855,8 +855,8 @@ impl Component for History {
 
     fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
         match update {
-            Update::ItemCreated { item } => self.on_item_created(&item),
-            Update::ItemUpdated { item } => self.on_item_updated(&item),
+            Update::ItemCreated { item } => self.on_item_created(item),
+            Update::ItemUpdated { item } => self.on_item_updated(item),
             Update::HelpMessage(content) => self.add_item(HistoryItemType::Help, content.into()),
             Update::ErrorMessage(content) => self.add_item(HistoryItemType::Error, content.into()),
             Update::CommandPrompt(content) => {

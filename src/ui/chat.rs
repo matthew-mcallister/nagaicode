@@ -38,7 +38,7 @@ impl Chat {
 
             Type /help for a list of commands."
         );
-        stacked.handle_update(stacked_view::Update::HelpMessage(&help));
+        stacked.handle_update(stacked_view::Update::HelpMessage(help));
 
         Self {
             stacked: Padded::new(stacked, 2, 1, Some(theme.bg_base)),

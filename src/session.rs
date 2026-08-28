@@ -247,7 +247,7 @@ impl Turn {
     }
 
     pub fn ty(&self) -> AnyResult<TurnType> {
-        Ok(TurnType::from_str(&self.ty)?)
+        TurnType::from_str(&self.ty)
     }
 }
 
@@ -593,7 +593,7 @@ impl Item {
     }
 
     pub fn ty(&self) -> AnyResult<ItemType> {
-        Ok(ItemType::from_str(&self.ty)?)
+        ItemType::from_str(&self.ty)
     }
 
     /// Parse the stored JSON blob, if present.

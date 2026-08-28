@@ -140,8 +140,8 @@ impl Component for StackedView {
 
     fn draw(&self, canvas: Canvas) {
         let empty_rows = self.height - self.history.height() - self.input.height() - 1;
-        for i in 0..empty_rows {
-            canvas[i].pad(self.width);
+        for row in canvas.iter_mut().take(empty_rows) {
+            row.pad(self.width);
         }
         self.history
             .draw(&mut canvas[empty_rows..empty_rows + self.history.height()]);

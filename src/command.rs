@@ -128,7 +128,7 @@ impl<'a> Parser<'a> {
 
     fn expect_empty(&mut self) -> Result<(), AnyError> {
         if let Some(first) = self.args.first() {
-            Err(From::from(unexpected_argument(self.usage, first)))
+            Err(unexpected_argument(self.usage, first))
         } else {
             Ok(())
         }
@@ -147,7 +147,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn parse_args<'a>(args: Vec<String>) -> Result<Command, AnyError> {
+fn parse_args(args: Vec<String>) -> Result<Command, AnyError> {
     let args_: Vec<&str> = args.iter().map(|s| &s[..]).collect();
 
     const USAGE: &str = dedent!("
@@ -174,7 +174,7 @@ fn parse_quit(args: &[&str]) -> Result<Command, AnyError> {
 
             /quit
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     parser.expect_empty()?;
     Ok(Command::Quit)
 }
@@ -187,7 +187,7 @@ fn parse_provider(args: &[&str]) -> Result<Command, AnyError> {
           /provider ls
           /provider rm
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     match parser.expect()? {
         "new" => parse_provider_new(parser.args),
         "ls" => parse_provider_ls(parser.args),
@@ -202,7 +202,7 @@ fn parse_provider_ls(args: &[&str]) -> Result<Command, AnyError> {
 
           /provider ls
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     parser.expect_empty()?;
     Ok(Command::Provider(ProviderCommand::Ls))
 }
@@ -213,7 +213,7 @@ fn parse_provider_rm(args: &[&str]) -> Result<Command, AnyError> {
 
           /provider rm 'provider-name-here'
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     let arg = parser.expect()?;
     parser.expect_empty()?;
     Ok(Command::Provider(ProviderCommand::Rm(arg.into())))
@@ -229,7 +229,7 @@ fn parse_provider_new(args: &[&str]) -> Result<Command, AnyError> {
                 -api-key 'sk-api-key-here'
                 [-base-url 'https://base.url/here']
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &["-name", "-interface", "-api-key", "-base-url"]);
+    let mut parser = Parser::new(USAGE, args, &["-name", "-interface", "-api-key", "-base-url"]);
 
     let mut name: Option<String> = None;
     let mut interface: Option<String> = None;
@@ -266,7 +266,7 @@ fn parse_model(args: &[&str]) -> Result<Command, AnyError> {
           /model ls
           /model switch
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     match parser.expect()? {
         "ls" => parse_model_ls(parser.args),
         "switch" => parse_model_switch(parser.args),
@@ -280,7 +280,7 @@ fn parse_model_ls(args: &[&str]) -> Result<Command, AnyError> {
 
           /model ls
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     parser.expect_empty()?;
     Ok(Command::Model(ModelCommand::Ls))
 }
@@ -291,7 +291,7 @@ fn parse_model_switch(args: &[&str]) -> Result<Command, AnyError> {
 
           /model switch 'provider-name-here' 'model-id-here'
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     let provider = parser.expect()?;
     let model = parser.expect()?;
     parser.expect_empty()?;
