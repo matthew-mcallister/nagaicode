@@ -433,8 +433,8 @@ impl App {
 
     // TODO eventually: execute these as an asynchronous and interruptable
     // agent and stream stdout to history
-    fn process_bang_command(&mut self, command: &str) -> AnyResult<String> {
-        let result = self.tools.call("sh", serde_json::json!(command))?;
+    async fn process_bang_command(&mut self, command: &str) -> AnyResult<String> {
+        let result = self.tools.call("sh", serde_json::json!(command)).await?;
         let output = if let Some(obj) = result.content.as_object() {
             let stdout = obj.get("stdout").and_then(Value::as_str).unwrap_or("");
             let stderr = obj.get("stderr").and_then(Value::as_str).unwrap_or("");
@@ -462,7 +462,7 @@ impl App {
                     self.chat.handle_update(Update::HelpMessage(&output));
                 }
             } else {
-                let output = self.process_bang_command(command)?;
+                let output = self.process_bang_command(command).await?;
                 let prompt = format!("$ {command}");
                 self.chat.handle_update(Update::CommandPrompt(&prompt));
                 self.chat.handle_update(Update::CommandOutput(&output));
