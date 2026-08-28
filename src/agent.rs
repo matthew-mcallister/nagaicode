@@ -1,6 +1,7 @@
 use diesel::SqliteConnection;
 
 use crate::app::AppEvent;
+use crate::error::AnyResult;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
@@ -39,12 +40,8 @@ impl Agent {
             conn,
         }
     }
-}
 
-impl Task for Agent {
-    type Output = ();
-
-    async fn run(self, context: TaskContext) {
+    async fn process(self, context: &TaskContext) -> AnyResult<()> {
         let handle = context.spawn(StreamResponse::new(
             self.session,
             self.provider,
@@ -54,14 +51,23 @@ impl Task for Agent {
             self.conn,
             None,
         ));
-        match handle.join().await {
-            Ok(Ok(result)) => {
-                if let Err(e) = result {
-                    context.send(AppEvent::ErrorMessage(e.to_string()));
-                }
+        match handle.join().await? {
+            Ok(result) => {
+                result?;
+                Ok(())
             }
-            Ok(Err(TaskError::Canceled)) => {}
-            Err(e) => log::error!("agent task failed: {e}"),
+            Err(TaskError::Canceled) => Ok(()),
+        }
+    }
+}
+
+impl Task for Agent {
+    type Output = ();
+
+    async fn run(self, context: TaskContext) {
+        if let Err(e) = self.process(&context).await {
+            log::error!("agent task failed: {e}");
+            context.send(AppEvent::ErrorMessage(e.to_string()));
         }
     }
 }
