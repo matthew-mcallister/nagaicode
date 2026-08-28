@@ -424,7 +424,7 @@ impl App {
             model,
             self.client.clone(),
             self.tools.clone(),
-            crate::db::open(&self.db_url)?,
+            self.db_url.clone(),
         );
         self.spawn_foreground(agent).await;
 

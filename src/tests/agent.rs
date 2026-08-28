@@ -13,6 +13,8 @@ use crate::provider::Provider;
 use crate::query::DataQuery;
 use crate::request::test_client::ResponseData;
 use crate::testing::QueueStream;
+use crate::tools::ToolResult;
+use crate::tools::mock::ToolCall;
 
 fn create_message_event(data: &str) -> SseEvent {
     SseEvent::Message(eventsource_stream::Event {
@@ -452,7 +454,7 @@ async fn test_agent_history() {
 }
 
 #[tokio::test]
-async fn test_agent_tool_call() {
+async fn test_agent_tool_call_loop() {
     use crate::session::{Item, ItemType, Response, Turn, TurnType};
 
     let mut app = App::new().unwrap();
@@ -468,10 +470,13 @@ async fn test_agent_tool_call() {
     let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
     app.switch_model(provider, model).unwrap();
 
+    app.tools_mut()
+        .add_result("add", ToolResult::Json(json!({"result": 3})));
+
     let url = "https://example.test/v1/responses";
 
-    // The model requests a tool call. The arguments stream in as deltas and
-    // are only persisted once the item is done.
+    // First response: the model requests a tool call. The arguments stream in
+    // as deltas and are only persisted once the item is done.
     app.client_mut().add_response(
         url,
         ResponseData::Sse(QueueStream::from(vec![
@@ -498,45 +503,7 @@ async fn test_agent_tool_call() {
         ])),
     );
 
-    for c in "call the add tool".chars() {
-        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
-            .await;
-    }
-    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
-    app.await_task().await.expect("await agent task");
-    app.process_pending_events().await;
-
-    let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
-    let items = Item::list_by_session(app.conn(), session_id).unwrap();
-    assert_eq!(items.len(), 2);
-    assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
-
-    let tool_call = &items[1];
-    assert_eq!(tool_call.ty().unwrap(), ItemType::ToolCall);
-    assert_eq!(tool_call.upstream_id.as_deref(), Some("fc_1"));
-    assert_eq!(tool_call.upstream_type.as_deref(), Some("function_call"));
-    assert_eq!(tool_call.upstream_call_id.as_deref(), Some("call_1"));
-    assert_eq!(tool_call.text.as_deref(), Some("add"));
-    assert_eq!(tool_call.summary, None);
-    assert_eq!(tool_call.json.as_deref(), Some(r#"{"a": 1, "b": 2}"#));
-    assert_eq!(tool_call.json().unwrap(), Some(json!({"a": 1, "b": 2})));
-    assert!(tool_call.raw_data.is_some());
-    let raw = serde_json::from_str::<serde_json::Value>(tool_call.raw_data.as_deref().unwrap())
-        .unwrap();
-    assert_eq!(raw["name"], "add");
-    assert_eq!(raw["call_id"], "call_1");
-    assert_eq!(raw["arguments"], r#"{"a": 1, "b": 2}"#);
-
-    let turns = Turn::list_by_session(app.conn(), session_id).unwrap();
-    assert_eq!(turns.len(), 2);
-    assert_eq!(turns[0].ty().unwrap(), TurnType::User);
-    assert_eq!(turns[1].ty().unwrap(), TurnType::Assistant);
-    let responses = Response::list_by_turn(app.conn(), turns[1].id).unwrap();
-    assert_eq!(responses.len(), 1);
-    assert_eq!(responses[0].upstream_status.as_deref(), Some("completed"));
-
-    // Second turn: the stored tool call must be replayed into the request,
-    // correlated with its output via the call id.
+    // Second response: the model consumes the tool output and answers.
     app.client_mut().add_response(
         url,
         ResponseData::Sse(QueueStream::from(vec![
@@ -545,22 +512,36 @@ async fn test_agent_tool_call() {
                 r#"{"type":"response.created","response":{"id":"resp-2","status":"in_progress"}}"#,
             )),
             Ok(create_message_event(
+                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_2","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_text.delta","item_id":"msg_2","output_index":0,"delta":"The answer is 3."}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_2","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The answer is 3."}]}}"#,
+            )),
+            Ok(create_message_event(
                 r#"{"type":"response.completed","response":{"id":"resp-2","status":"completed"}}"#,
             )),
             Ok(create_message_event("[DONE]")),
         ])),
     );
 
-    for c in "ok thanks".chars() {
+    for c in "call the add tool".chars() {
         app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
             .await;
     }
     app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
-    app.await_task().await.expect("await second task");
+    app.await_task().await.expect("await agent task");
     app.process_pending_events().await;
 
+    // The agent should have made two inference requests within a single turn.
     let requests = app.client_mut().get_requests();
     assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].url().as_str(), url);
+    assert_eq!(requests[1].url().as_str(), url);
+
+    // The second request replays the tool call and its output.
     let body = request_body_value(&requests[1]);
     assert_eq!(
         body["input"],
@@ -572,7 +553,52 @@ async fn test_agent_tool_call() {
                 "name": "add",
                 "arguments": r#"{"a": 1, "b": 2}"#,
             },
-            {"role": "user", "content": "ok thanks"},
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": r#"{"result":3}"#,
+            },
         ])
     );
+
+    // The tool server executed the call with the model's arguments.
+    let calls = app.tools().get_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0],
+        ToolCall {
+            name: "add".to_owned(),
+            args: json!({"a": 1, "b": 2}),
+        }
+    );
+
+    // Both responses live in one assistant turn.
+    let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+    let turns = Turn::list_by_session(app.conn(), session_id).unwrap();
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[0].ty().unwrap(), TurnType::User);
+    assert_eq!(turns[1].ty().unwrap(), TurnType::Assistant);
+
+    let responses = Response::list_by_turn(app.conn(), turns[1].id).unwrap();
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0].upstream_id.as_deref(), Some("resp-1"));
+    assert_eq!(responses[0].upstream_status.as_deref(), Some("completed"));
+    assert_eq!(responses[1].upstream_id.as_deref(), Some("resp-2"));
+    assert_eq!(responses[1].upstream_status.as_deref(), Some("completed"));
+
+    let items = Item::list_by_session(app.conn(), session_id).unwrap();
+    assert_eq!(items.len(), 4);
+    assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
+    assert_eq!(items[1].ty().unwrap(), ItemType::ToolCall);
+    assert_eq!(items[1].upstream_id.as_deref(), Some("fc_1"));
+    assert_eq!(items[1].upstream_call_id.as_deref(), Some("call_1"));
+    assert_eq!(items[1].text.as_deref(), Some("add"));
+    assert_eq!(items[1].json.as_deref(), Some(r#"{"a": 1, "b": 2}"#));
+    assert_eq!(items[2].ty().unwrap(), ItemType::ToolOutput);
+    assert_eq!(items[2].upstream_call_id.as_deref(), Some("call_1"));
+    assert_eq!(items[2].json.as_deref(), Some(r#"{"result":3}"#));
+    assert_eq!(items[2].text, None);
+    assert_eq!(items[3].ty().unwrap(), ItemType::ResponseText);
+    assert_eq!(items[3].upstream_id.as_deref(), Some("msg_2"));
+    assert_eq!(items[3].text.as_deref(), Some("The answer is 3."));
 }

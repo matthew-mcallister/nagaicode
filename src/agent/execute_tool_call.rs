@@ -69,7 +69,7 @@ impl Task for ExecuteToolCall {
     type Output = AnyResult<()>;
 
     async fn run(self, context: &mut TaskContext) -> AnyResult<()> {
-        self.process(&context).await
+        self.process(context).await
     }
 }
 

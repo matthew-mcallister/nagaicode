@@ -555,6 +555,19 @@ impl Item {
         Ok(items)
     }
 
+    pub fn tool_call_ids_by_response(
+        conn: &mut SqliteConnection,
+        response_id: i32,
+    ) -> AnyResult<Vec<i32>> {
+        use crate::schema::item::dsl;
+        let ids = dsl::item
+            .filter(dsl::response_id.eq(response_id))
+            .filter(dsl::ty.eq(ItemType::ToolCall.to_string()))
+            .select(dsl::id)
+            .load::<i32>(conn)?;
+        Ok(ids)
+    }
+
     pub fn delete_by_id(conn: &mut SqliteConnection, id: i32) -> AnyResult<bool> {
         let count = diesel::delete(item::table.filter(item::id.eq(id))).execute(conn)?;
         Ok(count > 0)
