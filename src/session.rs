@@ -477,6 +477,10 @@ pub struct Item {
     /// Used by tool_call args and JSON tool output
     pub json: Option<String>,
     pub raw_data: Option<String>,
+    /// Position in the session's item ordering; unique per session.
+    pub seqno: i64,
+    /// For tool outputs, set to `true` when the tool call is finished.
+    pub completed: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -492,6 +496,9 @@ pub struct NewItem<'a> {
     pub upstream_type: Option<&'a str>,
     pub upstream_call_id: Option<&'a str>,
     pub text: Option<&'a str>,
+    /// Explicit seqno, or `None` to autoincrement
+    pub seqno: Option<i64>,
+    pub completed: bool,
 }
 
 impl<'a> diesel::insertable::Insertable<item::table> for NewItem<'a> {
@@ -505,6 +512,8 @@ impl<'a> diesel::insertable::Insertable<item::table> for NewItem<'a> {
         Option<diesel::dsl::Eq<item::upstream_type, &'a str>>,
         Option<diesel::dsl::Eq<item::upstream_call_id, &'a str>>,
         Option<diesel::dsl::Eq<item::text, &'a str>>,
+        Option<diesel::dsl::Eq<item::seqno, i64>>,
+        Option<diesel::dsl::Eq<item::completed, bool>>,
     ) as diesel::insertable::Insertable<item::table>>::Values;
 
     fn values(self) -> Self::Values {
@@ -518,17 +527,42 @@ impl<'a> diesel::insertable::Insertable<item::table> for NewItem<'a> {
             self.upstream_type.map(|x| item::upstream_type.eq(x)),
             self.upstream_call_id.map(|x| item::upstream_call_id.eq(x)),
             self.text.map(|x| item::text.eq(x)),
+            self.seqno.map(|x| item::seqno.eq(x)),
+            Some(item::completed.eq(self.completed)),
         ))
     }
 }
 
 impl Item {
     pub fn create(conn: &mut SqliteConnection, new: NewItem<'_>) -> AnyResult<Item> {
+        if new.seqno.is_some() {
+            return Self::insert(conn, new);
+        }
+        let session_id = new.session_id;
+        conn.transaction(|conn| {
+            let seqno = Self::max_seqno(conn, session_id)?.unwrap_or(0) + 1;
+            Self::insert(conn, NewItem {
+                seqno: Some(seqno),
+                ..new
+            })
+        })
+    }
+
+    fn insert(conn: &mut SqliteConnection, new: NewItem<'_>) -> AnyResult<Item> {
         let item = diesel::insert_into(item::table)
             .values(new)
             .returning(item::all_columns)
             .get_result(conn)?;
         Ok(item)
+    }
+
+    /// Returns the highest seqno for the session, if any.
+    pub fn max_seqno(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Option<i64>> {
+        let result = item::table
+            .filter(item::session_id.eq(session_id))
+            .select(diesel::dsl::max(item::seqno))
+            .first::<Option<i64>>(conn)?;
+        Ok(result)
     }
 
     pub fn get_by_id(conn: &mut SqliteConnection, id: i32) -> AnyResult<Option<Item>> {
@@ -542,7 +576,7 @@ impl Item {
     pub fn list_by_session(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Vec<Item>> {
         let items = item::table
             .filter(item::session_id.eq(session_id))
-            .order(item::id.asc())
+            .order(item::seqno.asc())
             .load::<Item>(conn)?;
         Ok(items)
     }
@@ -550,7 +584,7 @@ impl Item {
     pub fn list_by_turn(conn: &mut SqliteConnection, turn_id: i32) -> AnyResult<Vec<Item>> {
         let items = item::table
             .filter(item::turn_id.eq(turn_id))
-            .order(item::id.asc())
+            .order(item::seqno.asc())
             .load::<Item>(conn)?;
         Ok(items)
     }
@@ -563,6 +597,7 @@ impl Item {
         let ids = dsl::item
             .filter(dsl::response_id.eq(response_id))
             .filter(dsl::ty.eq(ItemType::ToolCall.to_string()))
+            .order(dsl::seqno.asc())
             .select(dsl::id)
             .load::<i32>(conn)?;
         Ok(ids)
@@ -594,6 +629,27 @@ impl Item {
         diesel::update(dsl::item.filter(dsl::id.eq(id)))
             .set(dsl::json.eq(json))
             .execute(conn)?;
+        Ok(())
+    }
+
+    /// Writes a tool output's result and marks it completed.
+    pub fn complete_output(
+        &mut self,
+        conn: &mut SqliteConnection,
+        text: Option<String>,
+        json: Option<String>,
+    ) -> AnyResult<()> {
+        use crate::schema::item::dsl;
+        diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
+            .set((
+                dsl::text.eq(text.as_ref()),
+                dsl::json.eq(json.as_ref()),
+                dsl::completed.eq(true),
+            ))
+            .execute(conn)?;
+        self.completed = true;
+        self.text = text;
+        self.json = json;
         Ok(())
     }
 
@@ -634,6 +690,8 @@ impl Item {
 /// - encrypted_text: string | null
 /// - json: string | null
 /// - raw_data: string | null
+/// - seqno: number
+/// - completed: boolean
 /// - created_at: string (ISO 8601)
 /// - updated_at: string (ISO 8601)
 impl DataQuery for Item {
@@ -654,6 +712,8 @@ impl DataQuery for Item {
                 "encrypted_text": self.query("/encrypted_text")?,
                 "json": self.query("/json")?,
                 "raw_data": self.query("/raw_data")?,
+                "seqno": self.query("/seqno")?,
+                "completed": self.query("/completed")?,
                 "created_at": self.query("/created_at")?,
                 "updated_at": self.query("/updated_at")?,
             }))),
@@ -675,6 +735,8 @@ impl DataQuery for Item {
                     .unwrap_or(Value::Null),
             )),
             "raw_data" => Ok(QueryField::Value(json!(self.raw_data))),
+            "seqno" => Ok(QueryField::Value(json!(self.seqno))),
+            "completed" => Ok(QueryField::Value(json!(self.completed))),
             "created_at" => Ok(QueryField::Value(self.created_at.to_json())),
             "updated_at" => Ok(QueryField::Value(self.updated_at.to_json())),
             _ => Err(QueryError::InvalidField(field.to_string())),
@@ -804,6 +866,8 @@ mod tests {
                 upstream_type: None,
                 upstream_call_id: None,
                 text: Some("hello"),
+                seqno: None,
+                completed: true,
             },
         )
         .expect("create prompt item");
@@ -826,6 +890,8 @@ mod tests {
                 upstream_type: Some("reasoning"),
                 upstream_call_id: None,
                 text: None,
+                seqno: None,
+                completed: true,
             },
         )
         .expect("create reasoning item");
@@ -858,6 +924,8 @@ mod tests {
                 upstream_type: Some("message"),
                 upstream_call_id: None,
                 text: None,
+                seqno: None,
+                completed: true,
             },
         )
         .expect("create answer item");
@@ -874,6 +942,8 @@ mod tests {
                 upstream_type: Some("function_call"),
                 upstream_call_id: Some("call_1"),
                 text: Some("read_file"),
+                seqno: None,
+                completed: true,
             },
         )
         .expect("create tool call item");
@@ -893,6 +963,8 @@ mod tests {
                 upstream_type: Some("function_call_output"),
                 upstream_call_id: Some("call_1"),
                 text: Some("file contents"),
+                seqno: None,
+                completed: true,
             },
         )
         .expect("create tool output item");
@@ -954,6 +1026,8 @@ mod tests {
                 upstream_type: None,
                 upstream_call_id: None,
                 text: Some("orphan"),
+                seqno: None,
+                completed: true,
             },
         )
         .expect("create orphan item");
@@ -1120,6 +1194,8 @@ mod tests {
                 upstream_type: Some("reasoning"),
                 upstream_call_id: None,
                 text: Some("thinking"),
+                seqno: None,
+                completed: true,
             },
         )
         .expect("create item failed");
@@ -1144,6 +1220,8 @@ mod tests {
                 "encrypted_text": item.encrypted_text,
                 "json": item.json().unwrap(),
                 "raw_data": item.raw_data,
+                "seqno": item.seqno,
+                "completed": item.completed,
                 "created_at": item.created_at.to_json(),
                 "updated_at": item.updated_at.to_json(),
             })
@@ -1155,5 +1233,83 @@ mod tests {
         );
         assert_eq!(item.query("/text").unwrap(), json!(item.text));
         assert_eq!(item.query("/raw_data").unwrap(), json!(item.raw_data));
+        assert_eq!(item.query("/seqno").unwrap(), json!(item.seqno));
+        assert_eq!(item.query("/completed").unwrap(), json!(item.completed));
+    }
+
+    fn make_item(
+        conn: &mut SqliteConnection,
+        session_id: i32,
+        turn_id: i32,
+        seqno: Option<i64>,
+        completed: bool,
+    ) -> Item {
+        Item::create(
+            conn,
+            NewItem {
+                session_id,
+                turn_id,
+                response_id: None,
+                provider_id: None,
+                ty: ItemType::UserText,
+                upstream_id: None,
+                upstream_type: None,
+                upstream_call_id: None,
+                text: Some("hi"),
+                seqno,
+                completed,
+            },
+        )
+        .expect("create item")
+    }
+
+    #[test]
+    fn test_seqno() {
+        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
+        let session = Session::create(&mut conn, "Session").expect("create session");
+        let turn = Turn::create(&mut conn, session.id, TurnType::User, None, None, None)
+            .expect("create turn");
+
+        // None appends after the session's highest seqno.
+        let a = make_item(&mut conn, session.id, turn.id, None, true);
+        let b = make_item(&mut conn, session.id, turn.id, None, true);
+        let c = make_item(&mut conn, session.id, turn.id, None, true);
+        assert_eq!([a.seqno, b.seqno, c.seqno], [1, 2, 3]);
+        assert_eq!(Item::max_seqno(&mut conn, session.id).unwrap(), Some(3));
+
+        // Explicit seqnos win over insertion order.
+        let late = make_item(&mut conn, session.id, turn.id, Some(10), true);
+        let early = make_item(&mut conn, session.id, turn.id, Some(5), true);
+        let items = Item::list_by_session(&mut conn, session.id).unwrap();
+        let ids: Vec<i32> = items.iter().map(|i| i.id).collect();
+        assert_eq!(
+            ids,
+            [a.id, b.id, c.id, early.id, late.id],
+            "expected seqno ordering, not insertion order"
+        );
+        assert_eq!(Item::max_seqno(&mut conn, session.id).unwrap(), Some(10));
+
+        // Duplicate (session_id, seqno) is rejected by the unique index.
+        let duplicate = Item::create(
+            &mut conn,
+            NewItem {
+                session_id: session.id,
+                turn_id: turn.id,
+                response_id: None,
+                provider_id: None,
+                ty: ItemType::UserText,
+                upstream_id: None,
+                upstream_type: None,
+                upstream_call_id: None,
+                text: Some("dup"),
+                seqno: Some(5),
+                completed: true,
+            },
+        );
+        assert!(duplicate.is_err());
+
+        // list_by_turn orders by seqno too.
+        let turn_items = Item::list_by_turn(&mut conn, turn.id).unwrap();
+        assert_eq!(turn_items.len(), 5);
     }
 }

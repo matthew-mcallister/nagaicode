@@ -198,6 +198,8 @@ impl<'a, S> StreamProcessor<'a, S> {
                 upstream_type,
                 upstream_call_id,
                 text,
+                seqno: None,
+                completed: true,
             },
         )?;
         self.items.insert(output_index, item.clone());

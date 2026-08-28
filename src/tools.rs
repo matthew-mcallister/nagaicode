@@ -138,6 +138,12 @@ pub mod mock {
         pub args: Value,
     }
 
+    impl ToolCall {
+        pub fn new(name: impl Into<String>, args: impl Into<Value>) -> Self {
+            Self { name: name.into(), args: args.into() }
+        }
+    }
+
     #[derive(Debug, Default)]
     struct MockToolServerInner {
         results: FnvHashMap<String, VecDeque<ToolResult>>,

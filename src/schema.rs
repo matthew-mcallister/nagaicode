@@ -17,6 +17,8 @@ diesel::table! {
         encrypted_text -> Nullable<Text>,
         json -> Nullable<Text>,
         raw_data -> Nullable<Text>,
+        seqno -> BigInt,
+        completed -> Bool,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }

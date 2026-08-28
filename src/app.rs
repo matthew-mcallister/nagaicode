@@ -24,7 +24,7 @@ use crate::model::RevalidateModelsTask;
 use crate::provider::Provider;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::DefaultClient;
-use crate::session::{Item, ItemType, NewItem, Session, Turn, TurnType};
+use crate::session::{Item, Session};
 use crate::settings::{ModelRef, Settings};
 use crate::tasks::{Task, TaskContext, TaskError, TaskHandle, Tid};
 use crate::terminal::{DefaultTerminal, Terminal};
@@ -314,7 +314,7 @@ impl App {
     }
 
     /// Returns a root task context for spawning tasks.
-    fn context(&self) -> TaskContext {
+    pub fn context(&self) -> TaskContext {
         TaskContext::root(
             Arc::clone(&self.tid_counter),
             self.send.clone(),
@@ -385,29 +385,13 @@ impl App {
             .ok_or_else(|| anyhow!("no model selected"))?;
 
         let session = self.create_session()?;
-        let turn = Turn::create(&mut self.conn, session.id, TurnType::User, None, None, None)?;
-        let item = Item::create(
-            &mut self.conn,
-            NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
-                response_id: None,
-                provider_id: None,
-                ty: ItemType::UserText,
-                upstream_id: None,
-                upstream_type: None,
-                upstream_call_id: None,
-                text: Some(prompt),
-            },
-        )?;
-
-        let _ = self.send.send(AppEvent::ItemCreated { item: item.clone() });
 
         let agent = Agent::new(
             session,
             provider,
             model,
             self.client.clone(),
+            prompt.to_owned(),
         );
         self.spawn_foreground(agent).await;
 
@@ -488,6 +472,15 @@ impl App {
             self.chat
                 .handle_update(Update::ErrorMessage(&e.to_string()));
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drain_events(&mut self) -> Vec<AppEvent> {
+        let mut result = Vec::new();
+        while let Ok(event) = self.recv.try_recv() {
+            result.push(event);
+        }
+        result
     }
 }
 

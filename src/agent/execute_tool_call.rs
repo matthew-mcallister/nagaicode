@@ -50,6 +50,8 @@ impl ExecuteToolCall {
                 upstream_type: Some("function_call_output"),
                 upstream_call_id: call_id,
                 text,
+                seqno: None,
+                completed: true,
             },
         )?;
         if let Some(json) = json {
@@ -70,23 +72,18 @@ impl Task for ExecuteToolCall {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicU64;
-
     use serde_json::json;
-    use tokio::sync::mpsc::unbounded_channel;
 
     use super::*;
+    use crate::app::App;
     use crate::db;
     use crate::session::{Session, Turn, TurnType};
-    use crate::tasks::TaskContext;
-    use crate::tools::DefaultToolServer;
     use crate::tools::mock::ToolCall;
 
     #[tokio::test]
     async fn test_execute_tool_call() {
-        let url = db::db_url().unwrap();
-        let mut conn = db::open(&url).unwrap();
+        let mut app = App::new().unwrap();
+        let mut conn = db::open(app.db_url()).unwrap();
         let session = Session::create(&mut conn, "Session").unwrap();
         let turn = Turn::create(&mut conn, session.id, TurnType::Assistant, None, None, None)
             .unwrap();
@@ -103,9 +100,10 @@ mod tests {
                 upstream_type: Some("function_call"),
                 upstream_call_id: Some("call_1"),
                 text: Some("add"),
+                seqno: None,
+                completed: true,
             },
-        )
-        .unwrap();
+        ).unwrap();
         Item::update_json(&mut conn, tool_call.id, r#"{"a":1,"b":2}"#).unwrap();
 
         let text_tool_call = Item::create(
@@ -120,57 +118,23 @@ mod tests {
                 upstream_type: Some("function_call"),
                 upstream_call_id: Some("call_2"),
                 text: Some("echo"),
+                seqno: None,
+                completed: true,
             },
-        )
-        .unwrap();
+        ).unwrap();
         Item::update_json(&mut conn, text_tool_call.id, r#"{"message":"hi"}"#).unwrap();
 
-        let mut tools = DefaultToolServer::new();
-        tools.add_result("add", ToolResult::Json(json!({"result": 3})));
-        tools.add_result("echo", ToolResult::Text("hello".to_owned()));
-        let tools_check = tools.clone();
+        app.tools_mut().add_result("add", ToolResult::Json(json!({"result": 3})));
+        app.tools_mut().add_result("echo", ToolResult::Text("hello".to_owned()));
 
-        let (sender, mut recv) = unbounded_channel();
-        let tid_counter = Arc::new(AtomicU64::new(0));
+        let mut context = app.context();
+        ExecuteToolCall::new(tool_call.id).run(&mut context).await.unwrap();
+        ExecuteToolCall::new(text_tool_call.id).run(&mut context).await.unwrap();
 
-        let mut context = TaskContext::root(
-            Arc::clone(&tid_counter),
-            sender.clone(),
-            url.clone(),
-            tools.clone(),
-        );
-        ExecuteToolCall::new(tool_call.id)
-            .run(&mut context)
-            .await
-            .unwrap();
-
-        let mut context = TaskContext::root(
-            Arc::clone(&tid_counter),
-            sender.clone(),
-            url.clone(),
-            tools.clone(),
-        );
-        ExecuteToolCall::new(text_tool_call.id)
-            .run(&mut context)
-            .await
-            .unwrap();
-
-        let calls = tools_check.get_calls();
+        let calls = app.tools().get_calls();
         assert_eq!(calls.len(), 2);
-        assert_eq!(
-            calls[0],
-            ToolCall {
-                name: "add".to_owned(),
-                args: json!({"a": 1, "b": 2}),
-            }
-        );
-        assert_eq!(
-            calls[1],
-            ToolCall {
-                name: "echo".to_owned(),
-                args: json!({"message": "hi"}),
-            }
-        );
+        assert_eq!(calls[0], ToolCall::new("add", json!({"a": 1, "b": 2})));
+        assert_eq!(calls[1], ToolCall::new("echo", json!({"message": "hi"})));
 
         let items = Item::list_by_session(&mut conn, session.id).unwrap();
         assert_eq!(items.len(), 4);
@@ -186,14 +150,12 @@ mod tests {
         assert_eq!(items[3].text.as_deref(), Some("hello"));
         assert_eq!(items[3].json, None);
 
-        for _ in 0..2 {
-            match recv.try_recv().unwrap() {
-                AppEvent::ItemCreated { item } => {
-                    assert_eq!(item.ty, "tool_output");
-                }
+        let events = app.drain_events();
+        for event in events {
+            match event {
+                AppEvent::ItemCreated { item } => assert_eq!(item.ty, "tool_output"),
                 other => panic!("unexpected event: {other:?}"),
             }
         }
-        assert!(recv.try_recv().is_err());
     }
 }

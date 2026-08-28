@@ -312,6 +312,8 @@ mod tests {
                 upstream_type: None,
                 upstream_call_id,
                 text,
+                seqno: None,
+                completed: true,
             },
         )
         .expect("create item")
