@@ -149,7 +149,6 @@ struct RequestToolInfo<'a> {
     name: &'a str,
     description: &'a str,
     parameters: &'a Value,
-    output_schema: &'a Value,
     strict: bool,
 }
 
@@ -159,7 +158,6 @@ impl<'a> From<&'a ToolInfo> for RequestToolInfo<'a> {
             name: &tool.name,
             description: &tool.description,
             parameters: &tool.input_schema,
-            output_schema: &tool.output_schema,
             strict: true,
         }
     }
@@ -683,7 +681,6 @@ mod tests {
                     "required": ["command"],
                     "additionalProperties": false,
                 }),
-                output_schema: json!({ "type": "object" }),
             },
             ToolInfo {
                 name: "noop".to_owned(),
@@ -697,7 +694,6 @@ mod tests {
                     "required": ["a"],
                     "additionalProperties": true,
                 }),
-                output_schema: json!({ "type": "object" }),
             },
         ]);
 
@@ -806,7 +802,6 @@ mod tests {
                         "required": ["command"],
                         "additionalProperties": false,
                     },
-                    "output_schema": { "type": "object" },
                     "strict": true,
                 },
                 {
@@ -822,7 +817,6 @@ mod tests {
                         "required": ["a"],
                         "additionalProperties": true,
                     },
-                    "output_schema": { "type": "object" },
                     "strict": true,
                 },
             ])

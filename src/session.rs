@@ -468,13 +468,13 @@ pub struct Item {
     /// Correlates tool call and tool output
     pub upstream_call_id: Option<String>,
     /// Used by user_text, response_text, and reasoning. Also stores the tool
-    /// name/id on tool_call and tool_output
+    /// name on tool_call and text output on tool_output
     pub text: Option<String>,
     /// Reasoning summary
     pub summary: Option<String>,
     /// Encrypted reasoning
     pub encrypted_text: Option<String>,
-    /// Used by tool_call and tool_output
+    /// Used by tool_call args and JSON tool output
     pub json: Option<String>,
     pub raw_data: Option<String>,
     pub created_at: NaiveDateTime,

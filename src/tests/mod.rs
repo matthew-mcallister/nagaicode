@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use reqwest::{Method, Request};
 use reqwest_eventsource::Event as SseEvent;
@@ -220,11 +219,11 @@ async fn test_app_process_command() {
 
     app.tools_mut().add_result(
         "sh",
-        Ok(ToolResult::success(json!({
+        ToolResult::Json(json!({
             "stdout": "output line\n",
             "stderr": "",
             "return_code": 0,
-        }))),
+        })),
     );
 
     app.process_command("!echo test").await.unwrap();
@@ -235,42 +234,48 @@ async fn test_app_process_command() {
         calls[0],
         ToolCall {
             name: "sh".to_owned(),
-            args: json!("echo test"),
+            args: json!({ "command": "echo test" }),
         }
     );
 
-    app.tools_mut()
-        .add_result("sh", Ok(ToolResult::success(json!("string output"))));
+    app.tools_mut().add_result(
+        "sh",
+        ToolResult::Json(json!({
+            "stdout": "string output\n",
+            "stderr": "",
+            "return_code": 0,
+        })),
+    );
     app.process_command("!pwd").await.unwrap();
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 2);
-    assert_eq!(calls[1].args, json!("pwd"));
+    assert_eq!(calls[1].args, json!({ "command": "pwd" }));
 
     app.tools_mut().add_result(
         "sh",
-        Ok(ToolResult::error(json!({
+        ToolResult::Json(json!({
             "stdout": "",
             "stderr": "error message\n",
             "return_code": 1,
-        }))),
+        })),
     );
-    app.process_command("!false").await.unwrap();
+    assert!(app.process_command("!false").await.is_err());
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 3);
 
     app.tools_mut().add_result(
         "sh",
-        Ok(ToolResult::success(json!({
+        ToolResult::Json(json!({
             "stdout": "",
             "stderr": "",
             "return_code": 0,
-        }))),
+        })),
     );
     app.process_command("!true").await.unwrap();
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 4);
 
-    app.tools_mut().add_result("sh", Err(anyhow!("tool error")));
+    app.tools_mut().add_result("sh", ToolResult::Text("tool error".to_owned()));
     app.process_event(AppEvent::Command("!failing_tool".to_string()))
         .await;
     let calls = app.tools().get_calls();

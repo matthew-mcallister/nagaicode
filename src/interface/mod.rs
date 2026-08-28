@@ -132,10 +132,8 @@ pub fn build_history<'a>(
                 let Some(call_id) = item.upstream_call_id.as_deref() else {
                     continue;
                 };
-                messages.push(ChatMessage::ToolOutput {
-                    call_id,
-                    output: item.json.as_deref().unwrap_or(""),
-                });
+                let output = item.json.as_deref().or(item.text.as_deref()).unwrap_or("");
+                messages.push(ChatMessage::ToolOutput { call_id, output });
             }
         }
     }
@@ -346,10 +344,27 @@ mod tests {
             session.id,
             turn.id,
             ItemType::ToolOutput,
-            Some("add"),
+            None,
             Some("call_1"),
         );
         Item::update_json(&mut conn, tool_output.id, r#"{"result":3}"#).expect("update json");
+        let text_tool_call = create_item(
+            &mut conn,
+            session.id,
+            turn.id,
+            ItemType::ToolCall,
+            Some("cat"),
+            Some("call_2"),
+        );
+        Item::update_json(&mut conn, text_tool_call.id, r#"{"path":"a.txt"}"#).expect("update json");
+        let text_tool_output = create_item(
+            &mut conn,
+            session.id,
+            turn.id,
+            ItemType::ToolOutput,
+            Some("file contents"),
+            Some("call_2"),
+        );
         let orphan_call =
             create_item(&mut conn, session.id, turn.id, ItemType::ToolCall, Some("add"), None);
         let orphan_output =
@@ -361,6 +376,8 @@ mod tests {
             response_text.id,
             tool_call.id,
             tool_output.id,
+            text_tool_call.id,
+            text_tool_output.id,
             orphan_call.id,
             orphan_output.id,
         ];
@@ -390,6 +407,15 @@ mod tests {
                     call_id: "call_1",
                     output: r#"{"result":3}"#,
                 },
+                ChatMessage::ToolCall {
+                    call_id: "call_2",
+                    name: "cat",
+                    arguments: r#"{"path":"a.txt"}"#,
+                },
+                ChatMessage::ToolOutput {
+                    call_id: "call_2",
+                    output: "file contents",
+                },
             ]
         );
 
@@ -406,6 +432,15 @@ mod tests {
                 ChatMessage::ToolOutput {
                     call_id: "call_1",
                     output: r#"{"result":3}"#,
+                },
+                ChatMessage::ToolCall {
+                    call_id: "call_2",
+                    name: "cat",
+                    arguments: r#"{"path":"a.txt"}"#,
+                },
+                ChatMessage::ToolOutput {
+                    call_id: "call_2",
+                    output: "file contents",
                 },
             ]
         );

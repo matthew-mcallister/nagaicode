@@ -28,7 +28,7 @@ use crate::session::{Item, ItemType, NewItem, Session, Turn, TurnType};
 use crate::settings::{ModelRef, Settings};
 use crate::tasks::{Task, TaskContext, TaskError, TaskHandle, Tid};
 use crate::terminal::{DefaultTerminal, Terminal};
-use crate::tools::{DefaultToolServer, ToolServer};
+use crate::tools::{DefaultToolServer, ToolResult, ToolServer};
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::chat::{Chat, Update};
@@ -434,17 +434,28 @@ impl App {
     // TODO eventually: execute these as an asynchronous and interruptable
     // agent and stream stdout to history
     async fn process_bang_command(&mut self, command: &str) -> AnyResult<String> {
-        let result = self.tools.call("sh", serde_json::json!(command)).await?;
-        let output = if let Some(obj) = result.content.as_object() {
-            let stdout = obj.get("stdout").and_then(Value::as_str).unwrap_or("");
-            let stderr = obj.get("stderr").and_then(Value::as_str).unwrap_or("");
-            format!("{stdout}{stderr}")
-        } else if let Some(s) = result.content.as_str() {
-            s.to_string()
-        } else {
-            result.content.to_string()
-        };
-        Ok(output)
+        let result = self.tools.call("sh", json!({ "command": command })).await;
+        match result {
+            ToolResult::Text(msg) => Err(anyhow!(msg)),
+            ToolResult::Json(value) => {
+                let obj = value.as_object().ok_or_else(|| {
+                    anyhow!("invalid result for 'sh': expected an object")
+                })?;
+                let stdout = obj.get("stdout").and_then(Value::as_str).unwrap_or("");
+                let stderr = obj.get("stderr").and_then(Value::as_str).unwrap_or("");
+                let return_code = obj
+                    .get("return_code")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(-1);
+                if return_code == 0 {
+                    Ok(format!("{stdout}{stderr}"))
+                } else {
+                    Err(anyhow!(
+                        "command exited with code {return_code}: {stdout}{stderr}"
+                    ))
+                }
+            }
+        }
     }
 
     pub(crate) async fn process_command(&mut self, command: &str) -> AnyResult<()> {

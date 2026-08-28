@@ -1,12 +1,9 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use anyhow::anyhow;
-use tokio::process::Command;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-
-use crate::error::AnyResult;
+use tokio::process::Command;
 
 #[cfg(not(test))]
 pub type DefaultToolServer = HostToolServer;
@@ -19,23 +16,21 @@ pub struct ToolInfo {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
-    pub output_schema: Value,
 }
 
 /// The result of a completed tool call.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ToolResult {
-    pub content: Value,
-    pub is_error: bool,
+pub enum ToolResult {
+    /// Free-form text output. Also used for tool errors.
+    Text(String),
+    /// Structured JSON output.
+    Json(Value),
 }
 
 impl ToolResult {
-    pub fn success(content: Value) -> Self {
-        Self { content, is_error: false }
-    }
-
-    pub fn error(content: Value) -> Self {
-        Self { content, is_error: true }
+    /// Creates a text error result.
+    pub fn error(msg: impl Into<String>) -> Self {
+        Self::Text(msg.into())
     }
 }
 
@@ -44,17 +39,12 @@ pub trait ToolServer {
     /// Returns a description of every available tool.
     fn list_tools(&self) -> impl Iterator<Item = &ToolInfo>;
 
-    /// Attempts to execute a tool call and return the result.
-    ///
-    /// If the tool call was completed, then `Ok(_)` is returned, even if the
-    /// tool itself encountered an error. `Err(_)` is only returned when there
-    /// was an issue calling the tool, such as an invalid tool name, invalid
-    /// arguments, an I/O error, etc.
+    /// Executes a tool call, handling all errors internally.
     fn call(
         &mut self,
         name: &str,
         args: Value,
-    ) -> impl Future<Output = AnyResult<ToolResult>> + Send + 'static;
+    ) -> impl Future<Output = ToolResult> + Send + 'static;
 }
 
 /// Executes tool calls on the host system.
@@ -71,17 +61,12 @@ impl HostToolServer {
                 name: "sh".to_owned(),
                 description: "Run a shell command on the host system".to_owned(),
                 input_schema: json!({
-                    "type": "string",
-                    "additionalProperties": false,
-                    "required": [],
-                }),
-                output_schema: json!({
                     "type": "object",
                     "properties": {
-                        "stdout": { "type": "string" },
-                        "stderr": { "type": "string" },
-                        "return_code": { "type": "integer" },
+                        "command": { "type": "string" },
                     },
+                    "required": ["command"],
+                    "additionalProperties": false,
                 }),
             }]),
         }
@@ -97,37 +82,37 @@ impl ToolServer for HostToolServer {
         &mut self,
         name: &str,
         args: Value,
-    ) -> impl Future<Output = AnyResult<ToolResult>> + Send + 'static {
+    ) -> impl Future<Output = ToolResult> + Send + 'static {
         let name = name.to_owned();
         async move {
             match name.as_str() {
                 "sh" => {
-                    let cmd = match args {
-                        Value::String(s) => s,
-                        _ => {
-                            return Err(anyhow!(
-                                "invalid arguments for 'sh': expected a string"
-                            ))
-                        }
+                    let cmd: Option<String> = match args {
+                        Value::Object(mut obj) => match obj.remove("command") {
+                            Some(Value::String(s)) => Some(s),
+                            _ => None,
+                        },
+                        _ => None,
                     };
-                    let output = Command::new("sh")
-                        .arg("-c")
-                        .arg(cmd)
-                        .output()
-                        .await?;
+                    let Some(cmd) = cmd else {
+                        return ToolResult::error(
+                            "invalid arguments for 'sh': expected {\"command\": \"...\"}",
+                        )
+                    };
+                    let output = match Command::new("sh").arg("-c").arg(cmd).output().await {
+                        Ok(output) => output,
+                        Err(e) => return ToolResult::error(format!("failed to run 'sh': {e}")),
+                    };
                     let return_code = output.status.code().unwrap_or(-1);
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    Ok(ToolResult {
-                        content: json!({
-                            "stdout": stdout,
-                            "stderr": stderr,
-                            "return_code": return_code,
-                        }),
-                        is_error: !output.status.success(),
-                    })
+                    ToolResult::Json(json!({
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "return_code": return_code,
+                    }))
                 }
-                _ => Err(anyhow!("unknown tool: '{name}'")),
+                _ => ToolResult::error(format!("unknown tool: '{name}'")),
             }
         }
     }
@@ -142,7 +127,6 @@ pub mod mock {
     use fnv::FnvHashMap;
     use serde_json::Value;
 
-    use crate::error::AnyResult;
     use super::{ToolInfo, ToolResult, ToolServer};
 
     /// Recorded tool call.
@@ -154,7 +138,7 @@ pub mod mock {
 
     #[derive(Debug, Default)]
     struct MockToolServerInner {
-        results: FnvHashMap<String, VecDeque<AnyResult<ToolResult>>>,
+        results: FnvHashMap<String, VecDeque<ToolResult>>,
         calls: Vec<ToolCall>,
     }
 
@@ -167,11 +151,7 @@ pub mod mock {
 
     impl MockToolServer {
         /// Enqueues a result.
-        pub fn add_result(
-            &mut self,
-            name: &str,
-            result: AnyResult<ToolResult>,
-        ) {
+        pub fn add_result(&mut self, name: &str, result: ToolResult) {
             let mut inner = self.inner.lock().unwrap();
             inner.results
                 .entry(name.to_owned())
@@ -183,7 +163,7 @@ pub mod mock {
         pub fn add_results(
             &mut self,
             name: &str,
-            results: impl IntoIterator<Item = AnyResult<ToolResult>>,
+            results: impl IntoIterator<Item = ToolResult>,
         ) {
             let mut inner = self.inner.lock().unwrap();
             let queue = inner.results.entry(name.to_owned()).or_default();
@@ -223,7 +203,7 @@ pub mod mock {
             &mut self,
             name: &str,
             args: Value,
-        ) -> impl Future<Output = AnyResult<ToolResult>> + Send + 'static {
+        ) -> impl Future<Output = ToolResult> + Send + 'static {
             let inner = self.inner.clone();
             let name = name.to_owned();
             async move {
@@ -232,11 +212,11 @@ pub mod mock {
                     name: name.clone(),
                     args,
                 });
-                let data = inner
+                match inner
                     .results
                     .get_mut(&name)
-                    .and_then(VecDeque::pop_front);
-                match data {
+                    .and_then(VecDeque::pop_front)
+                {
                     Some(res) => res,
                     None => panic!("empty queue tool={name}"),
                 }
@@ -249,8 +229,8 @@ pub mod mock {
 mod tests {
     use serde_json::json;
 
-    use super::*;
     use super::mock::{MockToolServer, ToolCall};
+    use super::*;
 
     #[tokio::test]
     async fn test_mock_tool_server() {
@@ -260,8 +240,7 @@ mod tests {
         let tool = ToolInfo {
             name: "sh".to_owned(),
             description: "Run a shell command".to_owned(),
-            input_schema: json!({ "type": "string" }),
-            output_schema: json!({ "type": "object" }),
+            input_schema: json!({ "type": "object" }),
         };
         server.set_tools(vec![tool.clone()]);
         assert_eq!(server.list_tools().collect::<Vec<_>>(), vec![&tool]);
@@ -272,89 +251,98 @@ mod tests {
             json!({
                 "name": "sh",
                 "description": "Run a shell command",
-                "input_schema": { "type": "string" },
-                "output_schema": { "type": "object" },
+                "input_schema": { "type": "object" },
             })
         );
         value["type"] = json!("function");
         let parsed: ToolInfo = serde_json::from_value(value).unwrap();
         assert_eq!(parsed, tool);
 
-        server.add_result("sh", Ok(ToolResult::success(json!("output 1"))));
-
-        let res = server.call("sh", json!("echo test")).await.unwrap();
-        assert_eq!(res.content, json!("output 1"));
-        assert!(!res.is_error);
+        server.add_result("sh", ToolResult::Text("output 1".to_owned()));
+        let res = server.call("sh", json!({ "command": "echo test" })).await;
+        assert_eq!(res, ToolResult::Text("output 1".to_owned()));
 
         let calls = server.get_calls();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0],
+        assert_eq!(
+            calls[0],
             ToolCall {
                 name: "sh".to_owned(),
-                args: json!("echo test"),
+                args: json!({ "command": "echo test" }),
             }
         );
 
         server.clear_calls();
         assert!(server.get_calls().is_empty());
 
-        server.add_result("sh", Ok(ToolResult::error(json!("command failed"))));
-        let res = server.call("sh", json!("false")).await.unwrap();
-        assert_eq!(res.content, json!("command failed"));
-        assert!(res.is_error);
+        server.add_result("sh", ToolResult::error("command failed"));
+        let res = server.call("sh", json!({ "command": "false" })).await;
+        assert_eq!(res, ToolResult::Text("command failed".to_owned()));
 
-        server.add_result("sh", Err(anyhow!("execution failed")));
-        let err = server.call("sh", json!("bad command")).await.unwrap_err();
-        assert_eq!(err.to_string(), "execution failed");
+        server.add_result("sh", ToolResult::Text("execution failed".to_owned()));
+        let res = server.call("sh", json!({ "command": "bad command" })).await;
+        assert_eq!(res, ToolResult::Text("execution failed".to_owned()));
 
         let calls = server.get_calls();
         assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].args, json!("false"));
-        assert_eq!(calls[1].args, json!("bad command"));
+        assert_eq!(calls[0].args, json!({ "command": "false" }));
+        assert_eq!(calls[1].args, json!({ "command": "bad command" }));
 
         server.add_results("sh", [
-            Ok(ToolResult::success(json!("first"))),
-            Ok(ToolResult::success(json!("second"))),
+            ToolResult::Text("first".to_owned()),
+            ToolResult::Text("second".to_owned()),
         ]);
-        let res1 = server.call("sh", json!("1")).await.unwrap();
-        assert_eq!(res1.content, json!("first"));
-        let res2 = server.call("sh", json!("2")).await.unwrap();
-        assert_eq!(res2.content, json!("second"));
+        let res1 = server.call("sh", json!({ "command": "1" })).await;
+        assert_eq!(res1, ToolResult::Text("first".to_owned()));
+        let res2 = server.call("sh", json!({ "command": "2" })).await;
+        assert_eq!(res2, ToolResult::Text("second".to_owned()));
 
-        server.add_result("sh", Ok(ToolResult::success(json!("stale"))));
+        server.add_result("sh", ToolResult::Text("stale".to_owned()));
         server.clear_results();
-        server.add_result("sh", Ok(ToolResult::success(json!("fresh"))));
-        let res = server.call("sh", json!("fresh test")).await.unwrap();
-        assert_eq!(res.content, json!("fresh"));
+        server.add_result("sh", ToolResult::Text("fresh".to_owned()));
+        let res = server.call("sh", json!({ "command": "fresh test" })).await;
+        assert_eq!(res, ToolResult::Text("fresh".to_owned()));
 
         let mut sys_server = HostToolServer::new();
         let sys_tools: Vec<&ToolInfo> = sys_server.list_tools().collect();
         assert_eq!(sys_tools.len(), 1);
         assert_eq!(sys_tools[0].name, "sh");
 
-        let sys_res = sys_server.call("sh", json!("printf 'hello'")).await.unwrap();
+        let sys_res = sys_server
+            .call("sh", json!({ "command": "printf 'hello'" }))
+            .await;
         assert_eq!(
-            sys_res.content,
-            json!({
+            sys_res,
+            ToolResult::Json(json!({
                 "stdout": "hello",
                 "stderr": "",
                 "return_code": 0,
-            })
+            }))
         );
-        assert!(!sys_res.is_error);
 
-        let sys_err_res = sys_server.call("sh", json!("printf 'err' >&2; exit 1")).await.unwrap();
+        let sys_err_res = sys_server
+            .call("sh", json!({ "command": "printf 'err' >&2; exit 1" }))
+            .await;
         assert_eq!(
-            sys_err_res.content,
-            json!({
+            sys_err_res,
+            ToolResult::Json(json!({
                 "stdout": "",
                 "stderr": "err",
                 "return_code": 1,
-            })
+            }))
         );
-        assert!(sys_err_res.is_error);
 
-        assert!(sys_server.call("unknown", json!("test")).await.is_err());
-        assert!(sys_server.call("sh", json!(123)).await.is_err());
+        let unknown = sys_server.call("unknown", json!({})).await;
+        assert_eq!(unknown, ToolResult::error("unknown tool: 'unknown'"));
+        let bad_args = sys_server.call("sh", json!("echo test")).await;
+        assert_eq!(
+            bad_args,
+            ToolResult::error("invalid arguments for 'sh': expected {\"command\": \"...\"}")
+        );
+        let bad_command = sys_server.call("sh", json!({ "command": 123 })).await;
+        assert_eq!(
+            bad_command,
+            ToolResult::error("invalid arguments for 'sh': expected {\"command\": \"...\"}")
+        );
     }
 }
