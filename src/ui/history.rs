@@ -761,6 +761,7 @@ impl History {
             let theme = self.theme;
             let width = self.width;
             self.item[item_id].update(theme, &mut self.rows, width, item_text(item));
+            // FIXME: Should only track output if already at the bottom!
             self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
         } else {
             self.on_item_created(item);
