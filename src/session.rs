@@ -485,20 +485,20 @@ pub struct Item {
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct NewItem<'a> {
-    pub session_id: i32,
-    pub turn_id: i32,
+    pub session_id: Option<i32>,
+    pub turn_id: Option<i32>,
     pub response_id: Option<i32>,
     pub provider_id: Option<i32>,
-    pub ty: ItemType,
+    pub ty: Option<ItemType>,
     pub upstream_id: Option<&'a str>,
     pub upstream_type: Option<&'a str>,
     pub upstream_call_id: Option<&'a str>,
     pub text: Option<&'a str>,
     /// Explicit seqno, or `None` to autoincrement
     pub seqno: Option<i64>,
-    pub completed: bool,
+    pub completed: Option<bool>,
 }
 
 impl<'a> diesel::insertable::Insertable<item::table> for NewItem<'a> {
@@ -518,17 +518,17 @@ impl<'a> diesel::insertable::Insertable<item::table> for NewItem<'a> {
 
     fn values(self) -> Self::Values {
         diesel::insertable::Insertable::<item::table>::values((
-            Some(item::session_id.eq(self.session_id)),
-            Some(item::turn_id.eq(self.turn_id)),
+            self.session_id.map(|x| item::session_id.eq(x)),
+            self.turn_id.map(|x| item::turn_id.eq(x)),
             self.response_id.map(|x| item::response_id.eq(x)),
             self.provider_id.map(|x| item::provider_id.eq(x)),
-            Some(item::ty.eq(self.ty.to_string())),
+            self.ty.map(|x| item::ty.eq(x.to_string())),
             self.upstream_id.map(|x| item::upstream_id.eq(x)),
             self.upstream_type.map(|x| item::upstream_type.eq(x)),
             self.upstream_call_id.map(|x| item::upstream_call_id.eq(x)),
             self.text.map(|x| item::text.eq(x)),
             self.seqno.map(|x| item::seqno.eq(x)),
-            Some(item::completed.eq(self.completed)),
+            self.completed.map(|x| item::completed.eq(x)),
         ))
     }
 }
@@ -538,7 +538,9 @@ impl Item {
         if new.seqno.is_some() {
             return Self::insert(conn, new);
         }
-        let session_id = new.session_id;
+        let Some(session_id) = new.session_id else {
+            return Self::insert(conn, new);
+        };
         conn.transaction(|conn| {
             let seqno = Self::max_seqno(conn, session_id)?.unwrap_or(0) + 1;
             Self::insert(conn, NewItem {
@@ -857,17 +859,12 @@ mod tests {
         let prompt = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: user_turn.id,
-                response_id: None,
-                provider_id: None,
-                ty: ItemType::UserText,
-                upstream_id: None,
-                upstream_type: None,
-                upstream_call_id: None,
+                session_id: Some(session.id),
+                turn_id: Some(user_turn.id),
+                ty: Some(ItemType::UserText),
                 text: Some("hello"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create prompt item");
@@ -881,17 +878,15 @@ mod tests {
         let reasoning = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: assistant_turn.id,
+                session_id: Some(session.id),
+                turn_id: Some(assistant_turn.id),
                 response_id: Some(response.id),
                 provider_id: Some(999),
-                ty: ItemType::Reasoning,
+                ty: Some(ItemType::Reasoning),
                 upstream_id: Some("rs_1"),
                 upstream_type: Some("reasoning"),
-                upstream_call_id: None,
-                text: None,
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create reasoning item");
@@ -915,17 +910,15 @@ mod tests {
         let answer = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: assistant_turn.id,
+                session_id: Some(session.id),
+                turn_id: Some(assistant_turn.id),
                 response_id: Some(response.id),
                 provider_id: Some(999),
-                ty: ItemType::ResponseText,
+                ty: Some(ItemType::ResponseText),
                 upstream_id: Some("msg_1"),
                 upstream_type: Some("message"),
-                upstream_call_id: None,
-                text: None,
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create answer item");
@@ -933,17 +926,17 @@ mod tests {
         let tool_call = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: assistant_turn.id,
+                session_id: Some(session.id),
+                turn_id: Some(assistant_turn.id),
                 response_id: Some(response.id),
                 provider_id: Some(999),
-                ty: ItemType::ToolCall,
+                ty: Some(ItemType::ToolCall),
                 upstream_id: Some("fc_1"),
                 upstream_type: Some("function_call"),
                 upstream_call_id: Some("call_1"),
                 text: Some("read_file"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create tool call item");
@@ -954,17 +947,16 @@ mod tests {
         let tool_output = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: assistant_turn.id,
-                response_id: None,
+                session_id: Some(session.id),
+                turn_id: Some(assistant_turn.id),
                 provider_id: Some(999),
-                ty: ItemType::ToolOutput,
+                ty: Some(ItemType::ToolOutput),
                 upstream_id: Some("fco_1"),
                 upstream_type: Some("function_call_output"),
                 upstream_call_id: Some("call_1"),
                 text: Some("file contents"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create tool output item");
@@ -1017,17 +1009,13 @@ mod tests {
         let orphan = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: assistant_turn.id,
+                session_id: Some(session.id),
+                turn_id: Some(assistant_turn.id),
                 response_id: Some(response2.id),
-                provider_id: None,
-                ty: ItemType::ResponseText,
-                upstream_id: None,
-                upstream_type: None,
-                upstream_call_id: None,
+                ty: Some(ItemType::ResponseText),
                 text: Some("orphan"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create orphan item");
@@ -1185,17 +1173,16 @@ mod tests {
         let item = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
                 response_id: Some(response.id),
                 provider_id: Some(1),
-                ty: ItemType::Reasoning,
+                ty: Some(ItemType::Reasoning),
                 upstream_id: Some("rs_1"),
                 upstream_type: Some("reasoning"),
-                upstream_call_id: None,
                 text: Some("thinking"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create item failed");
@@ -1247,17 +1234,13 @@ mod tests {
         Item::create(
             conn,
             NewItem {
-                session_id,
-                turn_id,
-                response_id: None,
-                provider_id: None,
-                ty: ItemType::UserText,
-                upstream_id: None,
-                upstream_type: None,
-                upstream_call_id: None,
+                session_id: Some(session_id),
+                turn_id: Some(turn_id),
+                ty: Some(ItemType::UserText),
                 text: Some("hi"),
                 seqno,
-                completed,
+                completed: Some(completed),
+                ..Default::default()
             },
         )
         .expect("create item")
@@ -1293,17 +1276,13 @@ mod tests {
         let duplicate = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
-                response_id: None,
-                provider_id: None,
-                ty: ItemType::UserText,
-                upstream_id: None,
-                upstream_type: None,
-                upstream_call_id: None,
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
+                ty: Some(ItemType::UserText),
                 text: Some("dup"),
                 seqno: Some(5),
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         );
         assert!(duplicate.is_err());

@@ -48,17 +48,17 @@ fn backfill_tool_outputs(conn: &mut SqliteConnection, session_id: i32) -> AnyRes
         let item = Item::create(
             conn,
             NewItem {
-                session_id,
-                turn_id,
+                session_id: Some(session_id),
+                turn_id: Some(turn_id),
                 response_id: None,
                 provider_id,
-                ty: ItemType::ToolOutput,
+                ty: Some(ItemType::ToolOutput),
                 upstream_id: None,
                 upstream_type: Some("function_call_output"),
                 upstream_call_id: Some(&upstream_call_id),
                 text: None,
                 seqno: None,
-                completed: false,
+                completed: Some(false),
             },
         )?;
         events.push(AppEvent::ItemCreated { item });
@@ -90,17 +90,17 @@ impl CreatePrompt {
             let item = Item::create(
                 conn,
                 NewItem {
-                    session_id,
-                    turn_id: turn.id,
+                    session_id: Some(session_id),
+                    turn_id: Some(turn.id),
                     response_id: None,
                     provider_id: None,
-                    ty: ItemType::UserText,
+                    ty: Some(ItemType::UserText),
                     upstream_id: None,
                     upstream_type: None,
                     upstream_call_id: None,
                     text: Some(&self.prompt),
                     seqno: None,
-                    completed: true,
+                    completed: Some(true),
                 },
             )?;
             events.push(AppEvent::ItemCreated { item });
@@ -140,33 +140,30 @@ mod tests {
         Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
-                response_id: None,
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
                 provider_id: Some(1),
-                ty: ItemType::ToolCall,
+                ty: Some(ItemType::ToolCall),
                 upstream_id: Some("completed"),
                 upstream_type: Some("function_call"),
                 upstream_call_id: Some("completed"),
                 text: Some("read_file"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         ).unwrap();
         Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
-                response_id: None,
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
                 provider_id: Some(1),
-                ty: ItemType::ToolOutput,
-                upstream_id: None,
+                ty: Some(ItemType::ToolOutput),
                 upstream_type: Some("function_call_output"),
                 upstream_call_id: Some("completed"),
                 text: Some("file contents"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         ).unwrap();
 
@@ -174,17 +171,16 @@ mod tests {
         Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
-                response_id: None,
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
                 provider_id: Some(2),
-                ty: ItemType::ToolCall,
+                ty: Some(ItemType::ToolCall),
                 upstream_id: Some("interrupted"),
                 upstream_type: Some("function_call"),
                 upstream_call_id: Some("interrupted"),
                 text: Some("write_file"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         ).unwrap();
 
@@ -192,33 +188,27 @@ mod tests {
         Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
-                response_id: None,
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
                 provider_id: Some(3),
-                ty: ItemType::ToolOutput,
-                upstream_id: None,
+                ty: Some(ItemType::ToolOutput),
                 upstream_type: Some("function_call_output"),
                 upstream_call_id: Some("incomplete"),
-                text: None,
-                seqno: None,
-                completed: false,
+                completed: Some(false),
+                ..Default::default()
             },
         ).unwrap();
         Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
-                response_id: None,
-                provider_id: None,
-                ty: ItemType::ToolCall,
-                upstream_id: None,
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
+                ty: Some(ItemType::ToolCall),
                 upstream_type: Some("function_call"),
                 upstream_call_id: Some("incomplete"),
                 text: Some("echo"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         ).unwrap();
 
@@ -230,17 +220,15 @@ mod tests {
         Item::create(
             &mut conn,
             NewItem {
-                session_id: other_session.id,
-                turn_id: other_turn.id,
-                response_id: None,
-                provider_id: None,
-                ty: ItemType::ToolCall,
+                session_id: Some(other_session.id),
+                turn_id: Some(other_turn.id),
+                ty: Some(ItemType::ToolCall),
                 upstream_id: Some("other"),
                 upstream_type: Some("function_call"),
                 upstream_call_id: Some("other"),
                 text: Some("read_file"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         ).unwrap();
 
@@ -262,17 +250,16 @@ mod tests {
         let tool_call = Item::create(
             app.conn(),
             NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
-                response_id: None,
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
                 provider_id: Some(1),
-                ty: ItemType::ToolCall,
+                ty: Some(ItemType::ToolCall),
                 upstream_id: Some("fc_1"),
                 upstream_type: Some("function_call"),
                 upstream_call_id: Some("call_1"),
                 text: Some("read_file"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         ).unwrap();
 

@@ -41,17 +41,17 @@ impl ExecuteToolCall {
         let output = Item::create(
             conn,
             NewItem {
-                session_id: item.session_id,
-                turn_id: item.turn_id,
+                session_id: Some(item.session_id),
+                turn_id: Some(item.turn_id),
                 response_id: None,
                 provider_id: item.provider_id,
-                ty: ItemType::ToolOutput,
+                ty: Some(ItemType::ToolOutput),
                 upstream_id: None,
                 upstream_type: Some("function_call_output"),
                 upstream_call_id: call_id,
                 text,
                 seqno: None,
-                completed: true,
+                completed: Some(true),
             },
         )?;
         if let Some(json) = json {
@@ -91,17 +91,15 @@ mod tests {
         let tool_call = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
-                response_id: None,
-                provider_id: None,
-                ty: ItemType::ToolCall,
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
+                ty: Some(ItemType::ToolCall),
                 upstream_id: Some("fc_1"),
                 upstream_type: Some("function_call"),
                 upstream_call_id: Some("call_1"),
                 text: Some("add"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         ).unwrap();
         Item::update_json(&mut conn, tool_call.id, r#"{"a":1,"b":2}"#).unwrap();
@@ -109,17 +107,15 @@ mod tests {
         let text_tool_call = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
-                response_id: None,
-                provider_id: None,
-                ty: ItemType::ToolCall,
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
+                ty: Some(ItemType::ToolCall),
                 upstream_id: Some("fc_2"),
                 upstream_type: Some("function_call"),
                 upstream_call_id: Some("call_2"),
                 text: Some("echo"),
-                seqno: None,
-                completed: true,
+                completed: Some(true),
+                ..Default::default()
             },
         ).unwrap();
         Item::update_json(&mut conn, text_tool_call.id, r#"{"message":"hi"}"#).unwrap();

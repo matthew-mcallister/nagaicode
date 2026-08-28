@@ -303,17 +303,13 @@ mod tests {
         Item::create(
             conn,
             NewItem {
-                session_id,
-                turn_id,
-                response_id: None,
-                provider_id: None,
-                ty,
-                upstream_id: None,
-                upstream_type: None,
-                upstream_call_id,
+                session_id: Some(session_id),
+                turn_id: Some(turn_id),
+                ty: Some(ty),
                 text,
-                seqno: None,
-                completed: true,
+                upstream_call_id,
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create item")

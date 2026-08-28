@@ -189,17 +189,17 @@ impl<'a, S> StreamProcessor<'a, S> {
         let item = Item::create(
             self.conn,
             NewItem {
-                session_id: self.session.id,
-                turn_id,
+                session_id: Some(self.session.id),
+                turn_id: Some(turn_id),
                 response_id,
                 provider_id: Some(self.provider_id),
-                ty,
+                ty: Some(ty),
                 upstream_id,
                 upstream_type,
                 upstream_call_id,
                 text,
                 seqno: None,
-                completed: true,
+                completed: Some(true),
             },
         )?;
         self.items.insert(output_index, item.clone());
