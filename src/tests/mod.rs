@@ -694,7 +694,8 @@ async fn test_agent_tool_call() {
     assert_eq!(tool_call.ty().unwrap(), ItemType::ToolCall);
     assert_eq!(tool_call.upstream_id.as_deref(), Some("fc_1"));
     assert_eq!(tool_call.upstream_type.as_deref(), Some("function_call"));
-    assert_eq!(tool_call.text, None);
+    assert_eq!(tool_call.upstream_call_id.as_deref(), Some("call_1"));
+    assert_eq!(tool_call.text.as_deref(), Some("add"));
     assert_eq!(tool_call.summary, None);
     assert_eq!(tool_call.json.as_deref(), Some(r#"{"a": 1, "b": 2}"#));
     assert_eq!(tool_call.json().unwrap(), Some(json!({"a": 1, "b": 2})));
@@ -712,6 +713,47 @@ async fn test_agent_tool_call() {
     let responses = Response::list_by_turn(app.conn(), turns[1].id).unwrap();
     assert_eq!(responses.len(), 1);
     assert_eq!(responses[0].upstream_status.as_deref(), Some("completed"));
+
+    // Second turn: the stored tool call must be replayed into the request,
+    // correlated with its output via the call id.
+    app.client_mut().add_response(
+        url,
+        ResponseData::Sse(QueueStream::from(vec![
+            Ok(SseEvent::Open),
+            Ok(create_message_event(
+                r#"{"type":"response.created","response":{"id":"resp-2","status":"in_progress"}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.completed","response":{"id":"resp-2","status":"completed"}}"#,
+            )),
+            Ok(create_message_event("[DONE]")),
+        ])),
+    );
+
+    for c in "ok thanks".chars() {
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
+            .await;
+    }
+    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
+    app.await_task().await.expect("await second task");
+    app.process_pending_events().await;
+
+    let requests = app.client_mut().get_requests();
+    assert_eq!(requests.len(), 2);
+    let body = request_body_value(&requests[1]);
+    assert_eq!(
+        body["input"],
+        json!([
+            {"role": "user", "content": "call the add tool"},
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "add",
+                "arguments": r#"{"a": 1, "b": 2}"#,
+            },
+            {"role": "user", "content": "ok thanks"},
+        ])
+    );
 }
 
 #[tokio::test]

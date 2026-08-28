@@ -145,12 +145,18 @@ impl Agent {
         let Some(ty) = ItemType::from_upstream(&added.ty) else {
             return Ok(None);
         };
+        let name = if ty == ItemType::ToolCall {
+            added.raw["name"].as_str()
+        } else {
+            None
+        };
         let item = self.create_item(
             added.output_index,
             ty,
             (!added.id.is_empty()).then_some(added.id.as_str()),
             Some(added.ty.as_str()),
-            None,
+            added.call_id.as_deref(),
+            name,
         )?;
         Ok(Some(AppEvent::ItemCreated { item }))
     }
@@ -169,7 +175,7 @@ impl Agent {
     fn ensure_item(&mut self, output_index: i64, ty: ItemType) -> AnyResult<()> {
         if !self.items.contains_key(&output_index) {
             // Lazily create a new item in case we receive out-of-order
-            self.create_item(output_index, ty, None, None, None)?;
+            self.create_item(output_index, ty, None, None, None, None)?;
         }
         Ok(())
     }
@@ -198,8 +204,8 @@ impl Agent {
         Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))
     }
 
-    /// Accumulates function call arguments in memory; the DB is only written
-    /// once the item is done, so partial JSON is never persisted.
+    /// Appends args but does not write to DB until item is fully finished
+    /// so we don't commit incomplete JSON
     fn handle_args_delta(&mut self, delta: ItemDelta) -> AnyResult<Option<AppEvent>> {
         self.ensure_item(delta.output_index, ItemType::ToolCall)?;
         let item = self
@@ -217,6 +223,7 @@ impl Agent {
         ty: ItemType,
         upstream_id: Option<&str>,
         upstream_type: Option<&str>,
+        upstream_call_id: Option<&str>,
         text: Option<&str>,
     ) -> AnyResult<Item> {
         let turn = self.ensure_turn()?;
@@ -231,7 +238,7 @@ impl Agent {
                 ty,
                 upstream_id,
                 upstream_type,
-                upstream_call_id: None,
+                upstream_call_id,
                 text,
             },
         )?;

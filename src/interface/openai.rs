@@ -120,6 +120,19 @@ enum InputItem<'a> {
         r#type: &'static str,
         summary: Vec<ReasoningSummary<'a>>,
     },
+    FunctionCall {
+        #[serde(rename = "type")]
+        r#type: &'static str,
+        call_id: &'a str,
+        name: &'a str,
+        arguments: &'a str,
+    },
+    FunctionCallOutput {
+        #[serde(rename = "type")]
+        r#type: &'static str,
+        call_id: &'a str,
+        output: &'a str,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -162,6 +175,21 @@ impl<'a> CreateResponseRequest<'a> {
                         r#type: "summary_text",
                         text: content,
                     }],
+                },
+                ChatMessage::ToolCall {
+                    call_id,
+                    name,
+                    arguments,
+                } => InputItem::FunctionCall {
+                    r#type: "function_call",
+                    call_id,
+                    name,
+                    arguments,
+                },
+                ChatMessage::ToolOutput { call_id, output } => InputItem::FunctionCallOutput {
+                    r#type: "function_call_output",
+                    call_id,
+                    output,
                 },
             })
             .collect();
@@ -244,6 +272,8 @@ struct OutputItemPayload {
     id: String,
     #[serde(default, rename = "type")]
     ty: String,
+    #[serde(default)]
+    call_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -392,6 +422,7 @@ impl OpenaiInterface {
                                     output_index,
                                     id: item.id,
                                     ty: item.ty,
+                                    call_id: item.call_id,
                                     raw: raw_event["item"].clone(),
                                 });
                             }
@@ -400,6 +431,7 @@ impl OpenaiInterface {
                                     output_index,
                                     id: item.id,
                                     ty: item.ty,
+                                    call_id: item.call_id,
                                     raw: raw_event["item"].clone(),
                                 });
                             }
@@ -610,6 +642,7 @@ mod tests {
                     output_index: 0,
                     id: "msg_1".into(),
                     ty: "message".into(),
+                    call_id: None,
                     raw: json!({
                         "id": "msg_1",
                         "type": "message",
@@ -630,6 +663,7 @@ mod tests {
                     output_index: 0,
                     id: "msg_1".into(),
                     ty: "message".into(),
+                    call_id: None,
                     raw: json!({
                         "id": "msg_1",
                         "type": "message",
@@ -788,6 +822,7 @@ mod tests {
                     output_index: 0,
                     id: "rs_1".into(),
                     ty: "reasoning".into(),
+                    call_id: None,
                     raw: json!({"id": "rs_1", "type": "reasoning", "summary": []}),
                 }),
                 InferenceEvent::ReasoningTextDelta(ItemDelta {
@@ -802,6 +837,7 @@ mod tests {
                     output_index: 0,
                     id: "rs_1".into(),
                     ty: "reasoning".into(),
+                    call_id: None,
                     raw: json!({
                         "id": "rs_1",
                         "type": "reasoning",
@@ -812,6 +848,7 @@ mod tests {
                     output_index: 1,
                     id: "msg_1".into(),
                     ty: "message".into(),
+                    call_id: None,
                     raw: json!({
                         "id": "msg_1",
                         "type": "message",
@@ -828,6 +865,7 @@ mod tests {
                     output_index: 1,
                     id: "msg_1".into(),
                     ty: "message".into(),
+                    call_id: None,
                     raw: json!({
                         "id": "msg_1",
                         "type": "message",
@@ -901,6 +939,7 @@ mod tests {
                     output_index: 0,
                     id: "fc_1".into(),
                     ty: "function_call".into(),
+                    call_id: Some("call_1".into()),
                     raw: json!({
                         "id": "fc_1",
                         "type": "function_call",
@@ -922,6 +961,7 @@ mod tests {
                     output_index: 0,
                     id: "fc_1".into(),
                     ty: "function_call".into(),
+                    call_id: Some("call_1".into()),
                     raw: json!({
                         "id": "fc_1",
                         "type": "function_call",
@@ -937,6 +977,58 @@ mod tests {
                     raw_response: json!({"id": "resp-tool-1", "status": "completed"}),
                 }),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_input_items() {
+        let mut client = DefaultClient::default();
+        client.add_response(
+            &format!("{BASE_URL}/responses"),
+            sse(vec![Ok(create_message_event("[DONE]"))]),
+        );
+
+        let iface = make_iface(client);
+        let params = InferenceParams {
+            model_id: "test-model",
+            system_prompt: "",
+            temperature: 0.0,
+            reasoning_effort: None,
+            input: &[
+                ChatMessage::ToolCall {
+                    call_id: "call_1",
+                    name: "add",
+                    arguments: r#"{"a":1}"#,
+                },
+                ChatMessage::ToolOutput {
+                    call_id: "call_1",
+                    output: r#"{"result":3}"#,
+                },
+            ],
+        };
+
+        let stream = iface.generate(params);
+        let events: Vec<AnyResult<InferenceEvent>> = stream.collect().await;
+        assert!(events.is_empty());
+
+        let requests = iface.client().inner().get_requests();
+        assert_eq!(requests.len(), 1);
+        let body = request_body_value(&requests[0]);
+        assert_eq!(
+            body["input"],
+            json!([
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "add",
+                    "arguments": r#"{"a":1}"#,
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": r#"{"result":3}"#,
+                },
+            ])
         );
     }
 
