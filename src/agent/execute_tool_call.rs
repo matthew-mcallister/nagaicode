@@ -125,7 +125,7 @@ mod tests {
         .unwrap();
         Item::update_json(&mut conn, text_tool_call.id, r#"{"message":"hi"}"#).unwrap();
 
-        let mut tools = DefaultToolServer::default();
+        let mut tools = DefaultToolServer::new();
         tools.add_result("add", ToolResult::Json(json!({"result": 3})));
         tools.add_result("echo", ToolResult::Text("hello".to_owned()));
         let tools_check = tools.clone();

@@ -177,7 +177,7 @@ mod tests {
     async fn test_spawn_cancels() {
         let (sender, mut recv) = unbounded_channel();
         let url = crate::db::db_url().unwrap();
-        let tools = crate::tools::DefaultToolServer::default();
+        let tools = crate::tools::DefaultToolServer::new();
         let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender, url, tools);
         let handle = context.spawn(DummyTask::new());
         handle.cancel();

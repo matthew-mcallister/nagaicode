@@ -191,9 +191,9 @@ struct CreateResponseRequest<'a> {
 }
 
 impl<'a> CreateResponseRequest<'a> {
-    fn from_params(
+    fn from_params<T: ToolServer + ?Sized>(
         params: &InferenceParams<'a>,
-        tools: impl Iterator<Item = &'a ToolInfo>,
+        tools: &'a T,
     ) -> Self {
         let input = params
             .input
@@ -238,6 +238,8 @@ impl<'a> CreateResponseRequest<'a> {
             Some(params.system_prompt)
         };
 
+        let tools = tools.list_tools().map(RequestTool::from).collect();
+
         Self {
             model: params.model_id,
             input,
@@ -246,7 +248,7 @@ impl<'a> CreateResponseRequest<'a> {
             reasoning: params.reasoning_effort.map(|effort| RequestReasoning {
                 effort: effort.into(),
             }),
-            tools: tools.map(RequestTool::from).collect(),
+            tools,
             stream: true,
         }
     }
@@ -425,11 +427,8 @@ impl OpenaiInterface {
         params: InferenceParams<'_>,
         tools: &T,
     ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<T> {
-        let req_body = serde_json::to_value(CreateResponseRequest::from_params(
-            &params,
-            tools.list_tools(),
-        ))
-        .unwrap();
+        let req_body = CreateResponseRequest::from_params(&params, tools);
+        let req_body = serde_json::to_value(req_body).unwrap();
         let client = self.client.clone();
 
         async_stream::try_stream! {
@@ -668,7 +667,7 @@ mod tests {
             ],
         };
 
-        let mut tools = DefaultToolServer::default();
+        let mut tools = DefaultToolServer::new();
         tools.set_tools(vec![
             ToolInfo {
                 name: "sh".to_owned(),
@@ -837,7 +836,7 @@ mod tests {
         );
 
         let iface = make_iface(client);
-        let tools = DefaultToolServer::default();
+        let tools = DefaultToolServer::new();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -906,7 +905,7 @@ mod tests {
         );
 
         let iface = make_iface(client);
-        let tools = DefaultToolServer::default();
+        let tools = DefaultToolServer::new();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -1024,7 +1023,7 @@ mod tests {
         );
 
         let iface = make_iface(client);
-        let tools = DefaultToolServer::default();
+        let tools = DefaultToolServer::new();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -1102,7 +1101,7 @@ mod tests {
         );
 
         let iface = make_iface(client);
-        let tools = DefaultToolServer::default();
+        let tools = DefaultToolServer::new();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -1151,7 +1150,7 @@ mod tests {
         let mut client = DefaultClient::default();
         let iface = make_iface(client.clone());
         let url = format!("{BASE_URL}/responses");
-        let tools = DefaultToolServer::default();
+        let tools = DefaultToolServer::new();
 
         // A top-level error event surfaces as a stream error.
         client.add_response(&url, sse(vec![Ok(create_message_event(

@@ -48,7 +48,7 @@ pub trait ToolServer {
 }
 
 /// Executes tool calls on the host system.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct HostToolServer {
     tools: Arc<Vec<ToolInfo>>,
 }
@@ -145,13 +145,20 @@ pub mod mock {
     }
 
     /// Mock tool server for tests.
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug)]
     pub struct MockToolServer {
         inner: Arc<Mutex<MockToolServerInner>>,
         tools: Vec<ToolInfo>,
     }
 
     impl MockToolServer {
+        pub fn new() -> Self {
+            Self {
+                inner: Default::default(),
+                tools: Default::default(),
+            }
+        }
+
         /// Enqueues a result.
         pub fn add_result(&mut self, name: &str, result: ToolResult) {
             let mut inner = self.inner.lock().unwrap();
@@ -236,7 +243,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_tool_server() {
-        let mut server = MockToolServer::default();
+        let mut server = MockToolServer::new();
         assert!(server.list_tools().next().is_none());
 
         let tool = ToolInfo {

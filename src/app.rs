@@ -121,7 +121,7 @@ impl App {
             db_url,
             settings,
             session: None,
-            tools: DefaultToolServer::default(),
+            tools: DefaultToolServer::new(),
             send,
             recv,
             tid_counter: Arc::new(AtomicU64::new(0)),
