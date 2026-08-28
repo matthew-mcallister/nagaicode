@@ -8,8 +8,7 @@ mod real {
     use std::io::Write;
 
     use chrono::Local;
-    use env_logger::Target;
-    use log::LevelFilter;
+    use env_logger::{Env, Target};
 
     use crate::config::data_dir;
     use crate::error::AnyResult;
@@ -30,8 +29,7 @@ mod real {
     pub fn init_logging() -> AnyResult<()> {
         let path = log_file_path()?;
         let target = Box::new(std::fs::File::create(&path)?);
-        env_logger::Builder::new()
-            .filter_level(LevelFilter::Debug)
+        env_logger::Builder::from_env(Env::default())
             .target(Target::Pipe(target))
             .format(|buf, record| {
                 writeln!(
