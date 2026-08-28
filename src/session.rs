@@ -575,6 +575,14 @@ impl Item {
         Ok(())
     }
 
+    pub fn update_json(conn: &mut SqliteConnection, id: i32, json: &str) -> AnyResult<()> {
+        use crate::schema::item::dsl;
+        diesel::update(dsl::item.filter(dsl::id.eq(id)))
+            .set(dsl::json.eq(json))
+            .execute(conn)?;
+        Ok(())
+    }
+
     pub fn set_raw_data(conn: &mut SqliteConnection, id: i32, raw_data: &Value) -> AnyResult<()> {
         use crate::schema::item::dsl;
         diesel::update(dsl::item.filter(dsl::id.eq(id)))

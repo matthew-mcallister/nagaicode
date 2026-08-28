@@ -113,6 +113,7 @@ impl Agent {
             InferenceEvent::OutputTextDelta(delta) => {
                 self.handle_delta(delta, ItemType::ResponseText, false)
             }
+            InferenceEvent::FunctionCallArgsDelta(delta) => self.handle_args_delta(delta),
             InferenceEvent::Completed(completed) => {
                 if let Some(response) = &self.response {
                     Response::finish(
@@ -156,22 +157,31 @@ impl Agent {
 
     fn handle_item_done(&mut self, done: OutputItemEvent) -> AnyResult<Option<AppEvent>> {
         if let Some(item) = self.items.get_mut(&done.output_index) {
+            if let Some(json) = item.json.as_deref() {
+                Item::update_json(&mut self.conn, item.id, json)?;
+            }
             Item::set_raw_data(&mut self.conn, item.id, &done.raw)?;
             item.raw_data = Some(done.raw.to_string());
         }
         Ok(None)
     }
 
+    fn ensure_item(&mut self, output_index: i64, ty: ItemType) -> AnyResult<()> {
+        if !self.items.contains_key(&output_index) {
+            // Lazily create a new item in case we receive out-of-order
+            self.create_item(output_index, ty, None, None, None)?;
+        }
+        Ok(())
+    }
+
+    // TODO: batch DB writes and flush on item completion
     fn handle_delta(
         &mut self,
         delta: ItemDelta,
         ty: ItemType,
         summary: bool,
     ) -> AnyResult<Option<AppEvent>> {
-        if !self.items.contains_key(&delta.output_index) {
-            // Lazily create a new item in case we receive out-of-order
-            self.create_item(delta.output_index, ty, None, None, None)?;
-        }
+        self.ensure_item(delta.output_index, ty)?;
         let item = self
             .items
             .get_mut(&delta.output_index)
@@ -186,6 +196,19 @@ impl Agent {
             item.text = Some(text);
         }
         Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))
+    }
+
+    /// Accumulates function call arguments in memory; the DB is only written
+    /// once the item is done, so partial JSON is never persisted.
+    fn handle_args_delta(&mut self, delta: ItemDelta) -> AnyResult<Option<AppEvent>> {
+        self.ensure_item(delta.output_index, ItemType::ToolCall)?;
+        let item = self
+            .items
+            .get_mut(&delta.output_index)
+            .expect("item exists");
+        let json = format!("{}{}", item.json.as_deref().unwrap_or(""), &delta.delta);
+        item.json = Some(json);
+        Ok(None)
     }
 
     fn create_item(

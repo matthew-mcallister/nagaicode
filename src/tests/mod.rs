@@ -631,6 +631,90 @@ async fn test_agent_history() {
 }
 
 #[tokio::test]
+async fn test_agent_tool_call() {
+    use crate::session::{Item, ItemType, Response, Turn, TurnType};
+
+    let mut app = App::new().unwrap();
+
+    let provider = Provider::create(
+        app.conn(),
+        "test",
+        InterfaceId::Openai,
+        "sk-test",
+        Some("https://example.test/v1"),
+    )
+    .expect("create provider");
+    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    app.switch_model(provider, model).unwrap();
+
+    let url = "https://example.test/v1/responses";
+
+    // The model requests a tool call. The arguments stream in as deltas and
+    // are only persisted once the item is done.
+    app.client_mut().add_response(
+        url,
+        ResponseData::Sse(QueueStream::from(vec![
+            Ok(SseEvent::Open),
+            Ok(create_message_event(
+                r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"add","call_id":"call_1","arguments":""}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"a\": 1"}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":", \"b\": 2}"}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"add","call_id":"call_1","arguments":"{\"a\": 1, \"b\": 2}"}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed"}}"#,
+            )),
+            Ok(create_message_event("[DONE]")),
+        ])),
+    );
+
+    for c in "call the add tool".chars() {
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
+            .await;
+    }
+    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
+    app.await_task().await.expect("await agent task");
+    app.process_pending_events().await;
+
+    let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+    let items = Item::list_by_session(app.conn(), session_id).unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
+
+    let tool_call = &items[1];
+    assert_eq!(tool_call.ty().unwrap(), ItemType::ToolCall);
+    assert_eq!(tool_call.upstream_id.as_deref(), Some("fc_1"));
+    assert_eq!(tool_call.upstream_type.as_deref(), Some("function_call"));
+    assert_eq!(tool_call.text, None);
+    assert_eq!(tool_call.summary, None);
+    assert_eq!(tool_call.json.as_deref(), Some(r#"{"a": 1, "b": 2}"#));
+    assert_eq!(tool_call.json().unwrap(), Some(json!({"a": 1, "b": 2})));
+    assert!(tool_call.raw_data.is_some());
+    let raw = serde_json::from_str::<serde_json::Value>(tool_call.raw_data.as_deref().unwrap())
+        .unwrap();
+    assert_eq!(raw["name"], "add");
+    assert_eq!(raw["call_id"], "call_1");
+    assert_eq!(raw["arguments"], r#"{"a": 1, "b": 2}"#);
+
+    let turns = Turn::list_by_session(app.conn(), session_id).unwrap();
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[0].ty().unwrap(), TurnType::User);
+    assert_eq!(turns[1].ty().unwrap(), TurnType::Assistant);
+    let responses = Response::list_by_turn(app.conn(), turns[1].id).unwrap();
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].upstream_status.as_deref(), Some("completed"));
+}
+
+#[tokio::test]
 async fn test_app_query() {
     let mut app = App::new().unwrap();
 

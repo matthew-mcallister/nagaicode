@@ -190,6 +190,7 @@ pub enum InferenceEvent {
     ReasoningTextDelta(ItemDelta),
     ReasoningSummaryDelta(ItemDelta),
     OutputTextDelta(ItemDelta),
+    FunctionCallArgsDelta(ItemDelta),
     Completed(ResponseCompleted),
     Failed(ResponseFailed),
 }

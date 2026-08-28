@@ -220,6 +220,12 @@ enum ResponseStreamEvent {
         output_index: i64,
         delta: String,
     },
+    #[serde(rename = "response.function_call_arguments.delta")]
+    FunctionCallArgsDelta {
+        #[serde(default)]
+        output_index: i64,
+        delta: String,
+    },
     #[serde(rename = "response.completed")]
     Completed { response: ResponsePayload },
     #[serde(rename = "response.incomplete")]
@@ -414,6 +420,15 @@ impl OpenaiInterface {
                                 delta,
                             } => {
                                 yield InferenceEvent::ReasoningSummaryDelta(ItemDelta {
+                                    output_index,
+                                    delta,
+                                });
+                            }
+                            ResponseStreamEvent::FunctionCallArgsDelta {
+                                output_index,
+                                delta,
+                            } => {
+                                yield InferenceEvent::FunctionCallArgsDelta(ItemDelta {
                                     output_index,
                                     delta,
                                 });
@@ -825,6 +840,101 @@ mod tests {
                     status: "completed".into(),
                     usage: None,
                     raw_response: json!({"id": "resp-think-1", "status": "completed"}),
+                }),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_fields() {
+        let mut client = DefaultClient::default();
+        client.add_response(
+            &format!("{BASE_URL}/responses"),
+            sse(vec![
+                Ok(create_message_event(
+                    r#"{"type":"response.created","response":{"id":"resp-tool-1","status":"in_progress"}}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"get_weather","call_id":"call_1","arguments":""}}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"city\":\"San Francisco\""}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"}"}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"get_weather","call_id":"call_1","arguments":"{\"city\":\"San Francisco\"}"}}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.completed","response":{"id":"resp-tool-1","status":"completed"}}"#,
+                )),
+                Ok(create_message_event("[DONE]")),
+            ]),
+        );
+
+        let iface = make_iface(client);
+        let params = InferenceParams {
+            model_id: "test-model",
+            system_prompt: "",
+            temperature: 0.0,
+            reasoning_effort: None,
+            input: &[],
+        };
+
+        let stream = iface.generate(params);
+        let events: Vec<InferenceEvent> = stream
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+
+        assert_eq!(
+            events,
+            vec![
+                InferenceEvent::Created(ResponseCreated {
+                    id: "resp-tool-1".into(),
+                    status: "in_progress".into(),
+                }),
+                InferenceEvent::OutputItemAdded(OutputItemEvent {
+                    output_index: 0,
+                    id: "fc_1".into(),
+                    ty: "function_call".into(),
+                    raw: json!({
+                        "id": "fc_1",
+                        "type": "function_call",
+                        "status": "in_progress",
+                        "name": "get_weather",
+                        "call_id": "call_1",
+                        "arguments": "",
+                    }),
+                }),
+                InferenceEvent::FunctionCallArgsDelta(ItemDelta {
+                    output_index: 0,
+                    delta: r#"{"city":"San Francisco""#.into(),
+                }),
+                InferenceEvent::FunctionCallArgsDelta(ItemDelta {
+                    output_index: 0,
+                    delta: "}".into(),
+                }),
+                InferenceEvent::OutputItemDone(OutputItemEvent {
+                    output_index: 0,
+                    id: "fc_1".into(),
+                    ty: "function_call".into(),
+                    raw: json!({
+                        "id": "fc_1",
+                        "type": "function_call",
+                        "status": "completed",
+                        "name": "get_weather",
+                        "call_id": "call_1",
+                        "arguments": r#"{"city":"San Francisco"}"#,
+                    }),
+                }),
+                InferenceEvent::Completed(ResponseCompleted {
+                    status: "completed".into(),
+                    usage: None,
+                    raw_response: json!({"id": "resp-tool-1", "status": "completed"}),
                 }),
             ]
         );
