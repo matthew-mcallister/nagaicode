@@ -15,7 +15,7 @@ use crate::model::Model;
 use crate::provider::Provider;
 use crate::schema::provider::dsl;
 use crate::tasks::{Task, TaskContext};
-use crate::tools::{DefaultToolServer, ToolResult, ToolServer};
+use crate::tools::{ToolResult, ToolServer};
 use serde_json::{Value, json};
 
 #[derive(Debug, Eq, PartialEq)]
@@ -393,19 +393,18 @@ pub fn run_model_command(
 /// Executes a host command via the `sh` tool, reporting the result to the UI.
 pub struct BangCommand {
     command: String,
-    tools: DefaultToolServer,
 }
 
 impl BangCommand {
     /// Creates a task that runs `command` on the host.
-    pub fn new(command: String, tools: DefaultToolServer) -> Self {
-        Self { command, tools }
+    pub fn new(command: String) -> Self {
+        Self { command }
     }
 
-    async fn process(mut self, context: &mut TaskContext) -> AnyResult<()> {
+    async fn process(self, context: &mut TaskContext) -> AnyResult<()> {
         context.send(AppEvent::CommandPrompt(format!("$ {}", self.command)));
-        let result = self
-            .tools
+        let result = context
+            .tools_mut()
             .call("sh", json!({ "command": self.command }))
             .await;
         match result {

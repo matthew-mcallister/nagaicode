@@ -319,6 +319,7 @@ impl App {
             Arc::clone(&self.tid_counter),
             self.send.clone(),
             self.db_url.clone(),
+            self.tools.clone(),
         )
     }
 
@@ -407,7 +408,6 @@ impl App {
             provider,
             model,
             self.client.clone(),
-            self.tools.clone(),
         );
         self.spawn_foreground(agent).await;
 
@@ -429,7 +429,7 @@ impl App {
                     self.chat.handle_update(Update::HelpMessage(&output));
                 }
             } else {
-                let task = crate::command::BangCommand::new(command.to_string(), self.tools.clone());
+                let task = crate::command::BangCommand::new(command.to_string());
                 self.spawn_foreground(task).await;
             }
         } else {

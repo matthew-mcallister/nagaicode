@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
+use crate::tools::DefaultToolServer;
 
 /// Unique identifier for a spawned task.
 pub type Tid = u64;
@@ -23,12 +24,15 @@ pub enum TaskError {
 }
 
 /// Handle passed to a running task.
+// TODO: Should probably expose some of these fields directly instead of hiding
+// behind methods to deal with conflicting borrows
 pub struct TaskContext {
     tid_counter: Arc<AtomicU64>,
     cancel: CancellationToken,
     sender: UnboundedSender<AppEvent>,
     db_url: String,
     connection: Option<SqliteConnection>,
+    tools: DefaultToolServer,
 }
 
 impl TaskContext {
@@ -37,6 +41,7 @@ impl TaskContext {
         tid_counter: Arc<AtomicU64>,
         sender: UnboundedSender<AppEvent>,
         db_url: String,
+        tools: DefaultToolServer,
     ) -> Self {
         Self {
             tid_counter,
@@ -44,6 +49,7 @@ impl TaskContext {
             sender,
             db_url,
             connection: None,
+            tools,
         }
     }
 
@@ -65,16 +71,32 @@ impl TaskContext {
         Ok(self.connection.as_mut().expect("connection opened"))
     }
 
-    /// Creates a Future out of a Task.
-    pub fn subtask<T: Task>(&self, task: T) -> impl Future<Output = T::Output> + Send {
-        let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
-        let mut context = Self {
+    /// Returns the tool server.
+    pub fn tools(&self) -> &DefaultToolServer {
+        &self.tools
+    }
+
+    /// Returns a mutable reference to the tool server.
+    pub fn tools_mut(&mut self) -> &mut DefaultToolServer {
+        &mut self.tools
+    }
+
+    /// Creates a child context sharing this context's state, using `cancel`.
+    pub fn fork(&self, cancel: CancellationToken) -> Self {
+        Self {
             tid_counter: Arc::clone(&self.tid_counter),
-            cancel: self.cancel.clone(),
+            cancel,
             sender: self.sender.clone(),
             db_url: self.db_url.clone(),
             connection: None,
-        };
+            tools: self.tools.clone(),
+        }
+    }
+
+    /// Creates a Future out of a Task.
+    pub fn subtask<T: Task>(&self, task: T) -> impl Future<Output = T::Output> + Send {
+        let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
+        let mut context = self.fork(self.cancel.clone());
         async move {
             let _ = context.sender.send(AppEvent::TaskStarted(tid));
             let output = task.run(&mut context).await;
@@ -88,13 +110,7 @@ impl TaskContext {
     pub fn spawn<T: Task>(&self, task: T) -> TaskHandle<T::Output> {
         let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
         let cancel = self.cancel.child_token();
-        let mut context = Self {
-            tid_counter: Arc::clone(&self.tid_counter),
-            cancel: cancel.clone(),
-            sender: self.sender.clone(),
-            db_url: self.db_url.clone(),
-            connection: None,
-        };
+        let mut context = self.fork(cancel.clone());
         let sender = self.sender.clone();
         let inner = cancel.clone();
         let join = tokio::spawn(async move {
@@ -161,7 +177,8 @@ mod tests {
     async fn test_spawn_cancels() {
         let (sender, mut recv) = unbounded_channel();
         let url = crate::db::db_url().unwrap();
-        let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender, url);
+        let tools = crate::tools::DefaultToolServer::default();
+        let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender, url, tools);
         let handle = context.spawn(DummyTask::new());
         handle.cancel();
         let result = handle.join().await.unwrap();

@@ -7,7 +7,6 @@ use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, Session};
 use crate::tasks::{Task, TaskContext};
-use crate::tools::DefaultToolServer;
 use self::execute_tool_call::ExecuteToolCall;
 use self::stream_response::StreamResponse;
 
@@ -19,7 +18,6 @@ pub struct Agent {
     pub provider: Provider,
     pub model: Model,
     pub client: DefaultClient,
-    pub tools: DefaultToolServer,
 }
 
 impl Agent {
@@ -28,14 +26,12 @@ impl Agent {
         provider: Provider,
         model: Model,
         client: DefaultClient,
-        tools: DefaultToolServer,
     ) -> Self {
         Self {
             session,
             provider,
             model,
             client,
-            tools,
         }
     }
 
@@ -49,7 +45,6 @@ impl Agent {
                     self.provider.clone(),
                     self.model.clone(),
                     self.client.clone(),
-                    self.tools.clone(),
                     turn_id,
                 ))
                 .await?;
@@ -63,9 +58,7 @@ impl Agent {
 
             let tool_calls: Vec<_> = tool_call_ids
                 .into_iter()
-                .map(|id| {
-                    Box::pin(context.subtask(ExecuteToolCall::new(id, self.tools.clone())))
-                })
+                .map(|id| Box::pin(context.subtask(ExecuteToolCall::new(id))))
                 .collect();
             for result in join_all(tool_calls).await {
                 result?;

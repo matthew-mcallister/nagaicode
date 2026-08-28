@@ -6,14 +6,12 @@ use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, Session};
 use crate::tasks::{Task, TaskContext};
-use crate::tools::DefaultToolServer;
 
 pub struct StreamResponse {
     session: Session,
     provider: Provider,
     model: Model,
     client: DefaultClient,
-    tools: DefaultToolServer,
 
     turn_id: Option<i32>,
 }
@@ -24,7 +22,6 @@ impl StreamResponse {
         provider: Provider,
         model: Model,
         client: DefaultClient,
-        tools: DefaultToolServer,
         turn_id: Option<i32>,
     ) -> Self {
         Self {
@@ -32,7 +29,6 @@ impl StreamResponse {
             provider,
             model,
             client,
-            tools,
             turn_id,
         }
     }
@@ -44,7 +40,7 @@ impl StreamResponse {
         let messages = build_history(&history, interface.supports_reasoning_input())?;
         let mut params = self.build_params();
         params.input = &messages;
-        let stream = interface.generate(params, &self.tools);
+        let stream = interface.generate(params, context.tools());
 
         let sender = context.sender().clone();
         let mut processor = StreamProcessor::new(

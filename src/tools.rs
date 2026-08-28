@@ -118,6 +118,8 @@ impl ToolServer for HostToolServer {
     }
 }
 
+// FIXME: tool server should not be mocked, this prevents testing tools.
+// Instead consider mocking or sandboxing subcommands and file I/O directly
 #[cfg(test)]
 pub mod mock {
     use std::collections::VecDeque;

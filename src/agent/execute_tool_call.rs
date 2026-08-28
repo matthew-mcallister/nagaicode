@@ -4,21 +4,20 @@ use crate::app::AppEvent;
 use crate::error::AnyResult;
 use crate::session::{Item, ItemType, NewItem};
 use crate::tasks::{Task, TaskContext};
-use crate::tools::{DefaultToolServer, ToolResult, ToolServer};
+use crate::tools::{ToolResult, ToolServer};
 
 /// Executes a tool call item and commits a matching tool output item.
 pub struct ExecuteToolCall {
     item_id: i32,
-    tools: DefaultToolServer,
 }
 
 impl ExecuteToolCall {
     /// Creates a task that executes the tool call item identified by `item_id`.
-    pub fn new(item_id: i32, tools: DefaultToolServer) -> Self {
-        Self { item_id, tools }
+    pub fn new(item_id: i32) -> Self {
+        Self { item_id }
     }
 
-    async fn process(mut self, context: &mut TaskContext) -> AnyResult<()> {
+    async fn process(self, context: &mut TaskContext) -> AnyResult<()> {
         let conn = context.connection()?;
         let item = Item::get_by_id(conn, self.item_id)?
             .ok_or_else(|| anyhow!("tool call item {} not found", self.item_id))?;
@@ -32,12 +31,13 @@ impl ExecuteToolCall {
         let args = item.json()?.unwrap_or_default();
         let call_id = item.upstream_call_id.as_deref();
 
-        let result = self.tools.call(name, args).await;
+        let result = context.tools_mut().call(name, args).await;
 
         let (text, json) = match &result {
             ToolResult::Text(text) => (Some(text.as_str()), None),
             ToolResult::Json(json) => (None, Some(json.to_string())),
         };
+        let conn = context.connection()?;
         let output = Item::create(
             conn,
             NewItem {
@@ -80,6 +80,7 @@ mod tests {
     use crate::db;
     use crate::session::{Session, Turn, TurnType};
     use crate::tasks::TaskContext;
+    use crate::tools::DefaultToolServer;
     use crate::tools::mock::ToolCall;
 
     #[tokio::test]
@@ -136,14 +137,20 @@ mod tests {
             Arc::clone(&tid_counter),
             sender.clone(),
             url.clone(),
+            tools.clone(),
         );
-        ExecuteToolCall::new(tool_call.id, tools.clone())
+        ExecuteToolCall::new(tool_call.id)
             .run(&mut context)
             .await
             .unwrap();
 
-        let mut context = TaskContext::root(Arc::clone(&tid_counter), sender.clone(), url);
-        ExecuteToolCall::new(text_tool_call.id, tools.clone())
+        let mut context = TaskContext::root(
+            Arc::clone(&tid_counter),
+            sender.clone(),
+            url.clone(),
+            tools.clone(),
+        );
+        ExecuteToolCall::new(text_tool_call.id)
             .run(&mut context)
             .await
             .unwrap();
