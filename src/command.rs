@@ -8,11 +8,15 @@ use diesel::RunQueryDsl;
 use diesel::expression_methods::ExpressionMethods;
 
 use crate::app::App;
-use crate::error::AnyError;
+use crate::app::AppEvent;
+use crate::error::{AnyError, AnyResult};
 use crate::interface::InterfaceId;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::schema::provider::dsl;
+use crate::tasks::{Task, TaskContext};
+use crate::tools::{DefaultToolServer, ToolResult, ToolServer};
+use serde_json::{Value, json};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Command {
@@ -352,8 +356,7 @@ pub fn run_provider_command(
 pub fn run_model_command(
     app: &mut App,
     command: ModelCommand,
-) -> Result<String, AnyError> {
-    match command {
+) -> Result<String, AnyError> {    match command {
         ModelCommand::Ls => {
             use crate::schema::model::dsl as model_dsl;
 
@@ -383,6 +386,59 @@ pub fn run_model_command(
                 .ok_or_else(|| anyhow!("No model '{provider}:{model}''"))?;
             app.switch_model(p, m)?;
             Ok(format!("Using '{provider}:{model}'"))
+        }
+    }
+}
+
+/// Executes a host command via the `sh` tool, reporting the result to the UI.
+pub struct BangCommand {
+    command: String,
+    tools: DefaultToolServer,
+}
+
+impl BangCommand {
+    /// Creates a task that runs `command` on the host.
+    pub fn new(command: String, tools: DefaultToolServer) -> Self {
+        Self { command, tools }
+    }
+
+    async fn process(mut self, context: &mut TaskContext) -> AnyResult<()> {
+        context.send(AppEvent::CommandPrompt(format!("$ {}", self.command)));
+        let result = self
+            .tools
+            .call("sh", json!({ "command": self.command }))
+            .await;
+        match result {
+            ToolResult::Text(msg) => Err(anyhow!(msg)),
+            ToolResult::Json(value) => {
+                let obj = value
+                    .as_object()
+                    .ok_or_else(|| anyhow!("invalid result for 'sh': expected an object"))?;
+                let stdout = obj.get("stdout").and_then(Value::as_str).unwrap_or("");
+                let stderr = obj.get("stderr").and_then(Value::as_str).unwrap_or("");
+                let return_code = obj
+                    .get("return_code")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(-1);
+                if return_code == 0 {
+                    context.send(AppEvent::CommandOutput(format!("{stdout}{stderr}")));
+                    Ok(())
+                } else {
+                    Err(anyhow!(
+                        "command exited with code {return_code}: {stdout}{stderr}"
+                    ))
+                }
+            }
+        }
+    }
+}
+
+impl Task for BangCommand {
+    type Output = ();
+
+    async fn run(self, context: &mut TaskContext) {
+        if let Err(e) = self.process(context).await {
+            context.send(AppEvent::ErrorMessage(e.to_string()));
         }
     }
 }

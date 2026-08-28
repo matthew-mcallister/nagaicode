@@ -208,6 +208,8 @@ async fn test_app_process_command() {
     );
 
     app.process_command("!echo test").await.unwrap();
+    app.await_task().await.unwrap();
+    app.process_pending_events().await;
 
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 1);
@@ -219,6 +221,18 @@ async fn test_app_process_command() {
         }
     );
 
+    let history = app
+        .query("/chat/stacked/inner/history/history/items")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .clone();
+    let last_two = &history[history.len() - 2..];
+    assert_eq!(last_two[0]["ty"], json!("command_prompt"));
+    assert_eq!(last_two[0]["content"], json!("$ echo test"));
+    assert_eq!(last_two[1]["ty"], json!("command_output"));
+    assert_eq!(last_two[1]["content"], json!("output line\n"));
+
     app.tools_mut().add_result(
         "sh",
         ToolResult::Json(json!({
@@ -228,6 +242,8 @@ async fn test_app_process_command() {
         })),
     );
     app.process_command("!pwd").await.unwrap();
+    app.await_task().await.unwrap();
+    app.process_pending_events().await;
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[1].args, json!({ "command": "pwd" }));
@@ -240,9 +256,18 @@ async fn test_app_process_command() {
             "return_code": 1,
         })),
     );
-    assert!(app.process_command("!false").await.is_err());
+    app.process_command("!false").await.unwrap();
+    app.await_task().await.unwrap();
+    app.process_pending_events().await;
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 3);
+
+    let history = app
+        .query("/chat/stacked/inner/history/history/items")
+        .unwrap();
+    let last = history.as_array().unwrap().last().unwrap();
+    assert_eq!(last["ty"], json!("error"));
+    assert_eq!(last["content"], json!("command exited with code 1: error message\n"));
 
     app.tools_mut().add_result(
         "sh",
@@ -253,14 +278,25 @@ async fn test_app_process_command() {
         })),
     );
     app.process_command("!true").await.unwrap();
+    app.await_task().await.unwrap();
+    app.process_pending_events().await;
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 4);
 
     app.tools_mut().add_result("sh", ToolResult::Text("tool error".to_owned()));
     app.process_event(AppEvent::Command("!failing_tool".to_string()))
         .await;
+    app.await_task().await.unwrap();
+    app.process_pending_events().await;
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 5);
+
+    let history = app
+        .query("/chat/stacked/inner/history/history/items")
+        .unwrap();
+    let last = history.as_array().unwrap().last().unwrap();
+    assert_eq!(last["ty"], json!("error"));
+    assert_eq!(last["content"], json!("tool error"));
 
     assert!(app.process_command("").await.is_ok());
     assert!(app.process_command("   ").await.is_ok());

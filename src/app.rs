@@ -13,7 +13,7 @@ use crossterm::terminal::{
 use diesel::SqliteConnection;
 use fnv::FnvHashSet;
 use futures::StreamExt;
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::agent::Agent;
@@ -28,7 +28,7 @@ use crate::session::{Item, ItemType, NewItem, Session, Turn, TurnType};
 use crate::settings::{ModelRef, Settings};
 use crate::tasks::{Task, TaskContext, TaskError, TaskHandle, Tid};
 use crate::terminal::{DefaultTerminal, Terminal};
-use crate::tools::{DefaultToolServer, ToolResult, ToolServer};
+use crate::tools::DefaultToolServer;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::chat::{Chat, Update};
@@ -38,6 +38,10 @@ use crate::ui::styled_string::StyledString;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
     Command(String),
+    /// Prompt shown in the history for a running host command.
+    CommandPrompt(String),
+    /// Output of a host command, rendered after its prompt.
+    CommandOutput(String),
     ItemCreated {
         item: Item,
     },
@@ -410,33 +414,6 @@ impl App {
         Ok(())
     }
 
-    // TODO eventually: execute these as an asynchronous and interruptable
-    // agent and stream stdout to history
-    async fn process_bang_command(&mut self, command: &str) -> AnyResult<String> {
-        let result = self.tools.call("sh", json!({ "command": command })).await;
-        match result {
-            ToolResult::Text(msg) => Err(anyhow!(msg)),
-            ToolResult::Json(value) => {
-                let obj = value.as_object().ok_or_else(|| {
-                    anyhow!("invalid result for 'sh': expected an object")
-                })?;
-                let stdout = obj.get("stdout").and_then(Value::as_str).unwrap_or("");
-                let stderr = obj.get("stderr").and_then(Value::as_str).unwrap_or("");
-                let return_code = obj
-                    .get("return_code")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(-1);
-                if return_code == 0 {
-                    Ok(format!("{stdout}{stderr}"))
-                } else {
-                    Err(anyhow!(
-                        "command exited with code {return_code}: {stdout}{stderr}"
-                    ))
-                }
-            }
-        }
-    }
-
     pub(crate) async fn process_command(&mut self, command: &str) -> AnyResult<()> {
         if command.trim().is_empty() {
             return Ok(());
@@ -452,10 +429,8 @@ impl App {
                     self.chat.handle_update(Update::HelpMessage(&output));
                 }
             } else {
-                let output = self.process_bang_command(command).await?;
-                let prompt = format!("$ {command}");
-                self.chat.handle_update(Update::CommandPrompt(&prompt));
-                self.chat.handle_update(Update::CommandOutput(&output));
+                let task = crate::command::BangCommand::new(command.to_string(), self.tools.clone());
+                self.spawn_foreground(task).await;
             }
         } else {
             self.submit_prompt(command).await?;
@@ -467,6 +442,14 @@ impl App {
     pub(crate) async fn process_event(&mut self, event: AppEvent) {
         let res = match event {
             AppEvent::Command(cmd) => self.process_command(&cmd).await,
+            AppEvent::CommandPrompt(prompt) => {
+                self.chat.handle_update(Update::CommandPrompt(&prompt));
+                Ok(())
+            }
+            AppEvent::CommandOutput(output) => {
+                self.chat.handle_update(Update::CommandOutput(&output));
+                Ok(())
+            }
             AppEvent::ItemCreated { item } => {
                 self.chat.handle_update(Update::ItemCreated { item: &item });
                 Ok(())
