@@ -20,7 +20,7 @@ use crate::agent::Agent;
 use crate::command::Command;
 use crate::error::AnyResult;
 use crate::model::Model;
-use crate::model::revalidate_models;
+use crate::model::RevalidateModelsTask;
 use crate::provider::Provider;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::DefaultClient;
@@ -64,24 +64,6 @@ pub enum AppEvent {
 enum Poll {
     Input(crossterm::event::Event),
     Event(Box<AppEvent>),
-}
-
-/// Background task that refreshes cached provider model lists.
-struct RevalidateModelsTask;
-
-impl Task for RevalidateModelsTask {
-    type Output = ();
-
-    async fn run(self, context: &mut TaskContext) {
-        match context.connection() {
-            Ok(conn) => {
-                if let Err(e) = revalidate_models(conn).await {
-                    log::error!("failed to revalidate models: {e}");
-                }
-            }
-            Err(e) => log::error!("failed to open db for revalidation: {e}"),
-        }
-    }
 }
 
 pub struct App {
