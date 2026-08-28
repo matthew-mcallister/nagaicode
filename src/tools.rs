@@ -1,5 +1,4 @@
 use std::process::Command;
-use std::sync::LazyLock;
 
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
@@ -53,37 +52,39 @@ pub trait ToolServer {
 }
 
 /// Executes tool calls on the host system.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct HostToolServer;
+#[derive(Clone, Debug, Default)]
+pub struct HostToolServer {
+    tools: Vec<ToolInfo>,
+}
 
 impl HostToolServer {
     /// Creates a new system tool server.
     pub fn new() -> Self {
-        Self
+        Self {
+            tools: vec![ToolInfo {
+                name: "sh".to_owned(),
+                description: "Run a shell command on the host system".to_owned(),
+                input_schema: json!({
+                    "type": "string",
+                    "additionalProperties": false,
+                    "required": [],
+                }),
+                output_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "stdout": { "type": "string" },
+                        "stderr": { "type": "string" },
+                        "return_code": { "type": "integer" },
+                    },
+                }),
+            }],
+        }
     }
 }
 
-static SH_TOOL: LazyLock<ToolInfo> = LazyLock::new(|| ToolInfo {
-    name: "sh".to_owned(),
-    description: "Run a shell command on the host system".to_owned(),
-    input_schema: json!({
-        "type": "string",
-        "additionalProperties": false,
-        "required": [],
-    }),
-    output_schema: json!({
-        "type": "object",
-        "properties": {
-            "stdout": { "type": "string" },
-            "stderr": { "type": "string" },
-            "return_code": { "type": "integer" },
-        },
-    }),
-});
-
 impl ToolServer for HostToolServer {
     fn list_tools(&self) -> impl Iterator<Item = &ToolInfo> {
-        std::iter::once(&*SH_TOOL)
+        self.tools.iter()
     }
 
     fn call(&mut self, name: &str, args: Value) -> AnyResult<ToolResult> {
