@@ -1,5 +1,4 @@
 use anyhow::anyhow;
-use diesel::SqliteConnection;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
@@ -11,21 +10,17 @@ use crate::tools::{DefaultToolServer, ToolResult, ToolServer};
 pub struct ExecuteToolCall {
     item_id: i32,
     tools: DefaultToolServer,
-    conn: SqliteConnection,
 }
 
 impl ExecuteToolCall {
     /// Creates a task that executes the tool call item identified by `item_id`.
-    pub fn new(item_id: i32, tools: DefaultToolServer, conn: SqliteConnection) -> Self {
-        Self {
-            item_id,
-            tools,
-            conn,
-        }
+    pub fn new(item_id: i32, tools: DefaultToolServer) -> Self {
+        Self { item_id, tools }
     }
 
-    async fn process(mut self, context: &TaskContext) -> AnyResult<()> {
-        let item = Item::get_by_id(&mut self.conn, self.item_id)?
+    async fn process(mut self, context: &mut TaskContext) -> AnyResult<()> {
+        let conn = context.connection()?;
+        let item = Item::get_by_id(conn, self.item_id)?
             .ok_or_else(|| anyhow!("tool call item {} not found", self.item_id))?;
         if item.ty()? != ItemType::ToolCall {
             anyhow::bail!("item {} is not a tool call", self.item_id);
@@ -44,7 +39,7 @@ impl ExecuteToolCall {
             ToolResult::Json(json) => (None, Some(json.to_string())),
         };
         let output = Item::create(
-            &mut self.conn,
+            conn,
             NewItem {
                 session_id: item.session_id,
                 turn_id: item.turn_id,
@@ -58,7 +53,7 @@ impl ExecuteToolCall {
             },
         )?;
         if let Some(json) = json {
-            Item::update_json(&mut self.conn, output.id, &json)?;
+            Item::update_json(conn, output.id, &json)?;
         }
         context.send(AppEvent::ItemCreated { item: output });
         Ok(())
@@ -134,20 +129,21 @@ mod tests {
         tools.add_result("echo", ToolResult::Text("hello".to_owned()));
         let tools_check = tools.clone();
 
-        let conn1 = db::open(&url).unwrap();
-        let conn2 = db::open(&url).unwrap();
-
         let (sender, mut recv) = unbounded_channel();
         let tid_counter = Arc::new(AtomicU64::new(0));
 
-        let mut context = TaskContext::root(Arc::clone(&tid_counter), sender.clone());
-        ExecuteToolCall::new(tool_call.id, tools.clone(), conn1)
+        let mut context = TaskContext::root(
+            Arc::clone(&tid_counter),
+            sender.clone(),
+            url.clone(),
+        );
+        ExecuteToolCall::new(tool_call.id, tools.clone())
             .run(&mut context)
             .await
             .unwrap();
 
-        let mut context = TaskContext::root(Arc::clone(&tid_counter), sender.clone());
-        ExecuteToolCall::new(text_tool_call.id, tools.clone(), conn2)
+        let mut context = TaskContext::root(Arc::clone(&tid_counter), sender.clone(), url);
+        ExecuteToolCall::new(text_tool_call.id, tools.clone())
             .run(&mut context)
             .await
             .unwrap();

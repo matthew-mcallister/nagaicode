@@ -1,5 +1,3 @@
-use diesel::SqliteConnection;
-
 use crate::error::AnyResult;
 use crate::interface::{InferenceParams, build_history};
 use crate::interface::stream::StreamProcessor;
@@ -16,7 +14,6 @@ pub struct StreamResponse {
     model: Model,
     client: DefaultClient,
     tools: DefaultToolServer,
-    conn: SqliteConnection,
 
     turn_id: Option<i32>,
 }
@@ -28,7 +25,6 @@ impl StreamResponse {
         model: Model,
         client: DefaultClient,
         tools: DefaultToolServer,
-        conn: SqliteConnection,
         turn_id: Option<i32>,
     ) -> Self {
         Self {
@@ -37,30 +33,30 @@ impl StreamResponse {
             model,
             client,
             tools,
-            conn,
             turn_id,
         }
     }
 
-    async fn process(mut self, context: &TaskContext) -> AnyResult<(i32, i32)> {
+    async fn process(self, context: &mut TaskContext) -> AnyResult<(i32, i32)> {
         let interface = self.provider.create_interface(&self.client)?;
 
-        let history = Item::list_by_session(&mut self.conn, self.session.id)?;
+        let history = Item::list_by_session(context.connection()?, self.session.id)?;
         let messages = build_history(&history, interface.supports_reasoning_input())?;
         let mut params = self.build_params();
         params.input = &messages;
         let stream = interface.generate(params, &self.tools);
 
+        let sender = context.sender().clone();
         let mut processor = StreamProcessor::new(
             self.session,
-            self.conn,
+            context.connection()?,
             self.turn_id,
             stream,
             self.provider.id,
             self.provider.name.clone(),
             self.model.id.clone(),
         );
-        processor.process(context.sender()).await
+        processor.process(&sender).await
     }
 
     fn build_params(&self) -> InferenceParams<'_> {

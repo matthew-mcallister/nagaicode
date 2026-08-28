@@ -67,23 +67,19 @@ enum Poll {
 }
 
 /// Background task that refreshes cached provider model lists.
-struct RevalidateModelsTask {
-    db_url: String,
-}
+struct RevalidateModelsTask;
 
 impl Task for RevalidateModelsTask {
     type Output = ();
 
-    async fn run(self, _context: &mut TaskContext) {
-        let mut conn = match crate::db::open(&self.db_url) {
-            Ok(conn) => conn,
-            Err(e) => {
-                log::error!("failed to open db for revalidation: {e}");
-                return;
+    async fn run(self, context: &mut TaskContext) {
+        match context.connection() {
+            Ok(conn) => {
+                if let Err(e) = revalidate_models(conn).await {
+                    log::error!("failed to revalidate models: {e}");
+                }
             }
-        };
-        if let Err(e) = revalidate_models(&mut conn).await {
-            log::error!("failed to revalidate models: {e}");
+            Err(e) => log::error!("failed to open db for revalidation: {e}"),
         }
     }
 }
@@ -262,9 +258,7 @@ impl App {
 
     /// Spawns a background task to revalidate stale model lists.
     fn spawn_revalidate_models(&mut self) {
-        self.spawn_background(RevalidateModelsTask {
-            db_url: self.db_url.clone(),
-        });
+        self.spawn_background(RevalidateModelsTask);
     }
 
     /// Runs the main event loop.
@@ -335,7 +329,11 @@ impl App {
 
     /// Returns a root task context for spawning tasks.
     fn context(&self) -> TaskContext {
-        TaskContext::root(Arc::clone(&self.tid_counter), self.send.clone())
+        TaskContext::root(
+            Arc::clone(&self.tid_counter),
+            self.send.clone(),
+            self.db_url.clone(),
+        )
     }
 
     /// Spawns a task as the current foreground task. Interrupts any currently
@@ -424,7 +422,6 @@ impl App {
             model,
             self.client.clone(),
             self.tools.clone(),
-            self.db_url.clone(),
         );
         self.spawn_foreground(agent).await;
 

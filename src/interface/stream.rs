@@ -12,10 +12,10 @@ use crate::interface::{InferenceEvent, ItemDelta, OutputItemEvent};
 use crate::session::{Item, ItemType, NewItem, Response, Session, Turn, TurnType};
 
 /// Consumes an inference event stream and persists it into a session.
-pub struct StreamProcessor<S> {
+pub struct StreamProcessor<'a, S> {
     stream: Pin<Box<S>>,
     session: Session,
-    conn: SqliteConnection,
+    conn: &'a mut SqliteConnection,
     provider_id: i32,
     provider_name: String,
     model_id: String,
@@ -24,11 +24,11 @@ pub struct StreamProcessor<S> {
     items: FnvHashMap<i64, Item>,
 }
 
-impl<S> StreamProcessor<S> {
+impl<'a, S> StreamProcessor<'a, S> {
     /// Creates a processor for `stream` targeting `session`.
     pub fn new(
         session: Session,
-        conn: SqliteConnection,
+        conn: &'a mut SqliteConnection,
         turn_id: Option<i32>,
         stream: S,
         provider_id: i32,
@@ -53,7 +53,7 @@ impl<S> StreamProcessor<S> {
             InferenceEvent::Created(created) => {
                 let turn_id = self.ensure_turn()?;
                 let response = Response::create(
-                    &mut self.conn,
+                    self.conn,
                     self.session.id,
                     turn_id,
                     Some(&created.id),
@@ -77,7 +77,7 @@ impl<S> StreamProcessor<S> {
             InferenceEvent::Completed(completed) => {
                 if let Some(response) = &self.response {
                     Response::finish(
-                        &mut self.conn,
+                        self.conn,
                         response.id,
                         &completed.status,
                         completed.usage.as_ref(),
@@ -89,7 +89,7 @@ impl<S> StreamProcessor<S> {
             InferenceEvent::Failed(failed) => {
                 if let Some(response) = &self.response {
                     Response::finish(
-                        &mut self.conn,
+                        self.conn,
                         response.id,
                         &failed.status,
                         failed.usage.as_ref(),
@@ -124,9 +124,9 @@ impl<S> StreamProcessor<S> {
     fn handle_item_done(&mut self, done: OutputItemEvent) -> AnyResult<Option<AppEvent>> {
         if let Some(item) = self.items.get_mut(&done.output_index) {
             if let Some(json) = item.json.as_deref() {
-                Item::update_json(&mut self.conn, item.id, json)?;
+                Item::update_json(self.conn, item.id, json)?;
             }
-            Item::set_raw_data(&mut self.conn, item.id, &done.raw)?;
+            Item::set_raw_data(self.conn, item.id, &done.raw)?;
             item.raw_data = Some(done.raw.to_string());
         }
         Ok(None)
@@ -154,11 +154,11 @@ impl<S> StreamProcessor<S> {
             .expect("item exists");
         if summary {
             let summary = format!("{}{}", item.summary.as_deref().unwrap_or(""), &delta.delta);
-            Item::update_summary(&mut self.conn, item.id, &summary)?;
+            Item::update_summary(self.conn, item.id, &summary)?;
             item.summary = Some(summary);
         } else {
             let text = format!("{}{}", item.text.as_deref().unwrap_or(""), &delta.delta);
-            Item::update_text(&mut self.conn, item.id, &text)?;
+            Item::update_text(self.conn, item.id, &text)?;
             item.text = Some(text);
         }
         Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))
@@ -187,7 +187,7 @@ impl<S> StreamProcessor<S> {
         let turn_id = self.ensure_turn()?;
         let response_id = self.response.as_ref().map(|r| r.id);
         let item = Item::create(
-            &mut self.conn,
+            self.conn,
             NewItem {
                 session_id: self.session.id,
                 turn_id,
@@ -209,7 +209,7 @@ impl<S> StreamProcessor<S> {
             return Ok(turn_id);
         }
         let turn = Turn::create(
-            &mut self.conn,
+            self.conn,
             self.session.id,
             TurnType::Assistant,
             Some(self.provider_id),
@@ -222,13 +222,13 @@ impl<S> StreamProcessor<S> {
 
     fn fail_response(&mut self) -> AnyResult<()> {
         if let Some(response) = &self.response {
-            Response::finish(&mut self.conn, response.id, "failed", None, None)?;
+            Response::finish(self.conn, response.id, "failed", None, None)?;
         }
         Ok(())
     }
 }
 
-impl<S> StreamProcessor<S>
+impl<'a, S> StreamProcessor<'a, S>
 where
     S: Stream<Item = AnyResult<InferenceEvent>>,
 {

@@ -4,11 +4,13 @@ use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use diesel::SqliteConnection;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::app::AppEvent;
+use crate::error::AnyResult;
 
 /// Unique identifier for a spawned task.
 pub type Tid = u64;
@@ -25,15 +27,23 @@ pub struct TaskContext {
     tid_counter: Arc<AtomicU64>,
     cancel: CancellationToken,
     sender: UnboundedSender<AppEvent>,
+    db_url: String,
+    connection: Option<SqliteConnection>,
 }
 
 impl TaskContext {
     /// Creates a root context for spawning top-level tasks.
-    pub(crate) fn root(tid_counter: Arc<AtomicU64>, sender: UnboundedSender<AppEvent>) -> Self {
+    pub(crate) fn root(
+        tid_counter: Arc<AtomicU64>,
+        sender: UnboundedSender<AppEvent>,
+        db_url: String,
+    ) -> Self {
         Self {
             tid_counter,
             cancel: CancellationToken::new(),
             sender,
+            db_url,
+            connection: None,
         }
     }
 
@@ -47,6 +57,14 @@ impl TaskContext {
         &self.sender
     }
 
+    /// Returns the task's database connection, opening it on first use.
+    pub fn connection(&mut self) -> AnyResult<&mut SqliteConnection> {
+        if self.connection.is_none() {
+            self.connection = Some(crate::db::open(&self.db_url)?);
+        }
+        Ok(self.connection.as_mut().expect("connection opened"))
+    }
+
     /// Creates a Future out of a Task.
     pub fn subtask<T: Task>(&self, task: T) -> impl Future<Output = T::Output> + Send {
         let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
@@ -54,6 +72,8 @@ impl TaskContext {
             tid_counter: Arc::clone(&self.tid_counter),
             cancel: self.cancel.clone(),
             sender: self.sender.clone(),
+            db_url: self.db_url.clone(),
+            connection: None,
         };
         async move {
             let _ = context.sender.send(AppEvent::TaskStarted(tid));
@@ -72,6 +92,8 @@ impl TaskContext {
             tid_counter: Arc::clone(&self.tid_counter),
             cancel: cancel.clone(),
             sender: self.sender.clone(),
+            db_url: self.db_url.clone(),
+            connection: None,
         };
         let sender = self.sender.clone();
         let inner = cancel.clone();
@@ -138,7 +160,8 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_cancels() {
         let (sender, mut recv) = unbounded_channel();
-        let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender);
+        let url = crate::db::db_url().unwrap();
+        let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender, url);
         let handle = context.spawn(DummyTask::new());
         handle.cancel();
         let result = handle.join().await.unwrap();

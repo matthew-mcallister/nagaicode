@@ -20,7 +20,6 @@ pub struct Agent {
     pub model: Model,
     pub client: DefaultClient,
     pub tools: DefaultToolServer,
-    pub db_url: String,
 }
 
 impl Agent {
@@ -30,7 +29,6 @@ impl Agent {
         model: Model,
         client: DefaultClient,
         tools: DefaultToolServer,
-        db_url: String,
     ) -> Self {
         Self {
             session,
@@ -38,7 +36,6 @@ impl Agent {
             model,
             client,
             tools,
-            db_url,
         }
     }
 
@@ -53,29 +50,23 @@ impl Agent {
                     self.model.clone(),
                     self.client.clone(),
                     self.tools.clone(),
-                    crate::db::open(&self.db_url)?,
                     turn_id,
                 ))
                 .await?;
             turn_id = Some(next_turn_id);
 
-            let tool_call_ids = {
-                let mut conn = crate::db::open(&self.db_url)?;
-                Item::tool_call_ids_by_response(&mut conn, response_id)?
-            };
+            let tool_call_ids =
+                Item::tool_call_ids_by_response(context.connection()?, response_id)?;
             if tool_call_ids.is_empty() {
                 return Ok(());
             }
 
-            let mut tool_calls = Vec::with_capacity(tool_call_ids.len());
-            for id in tool_call_ids {
-                let conn = crate::db::open(&self.db_url)?;
-                tool_calls.push(Box::pin(context.subtask(ExecuteToolCall::new(
-                    id,
-                    self.tools.clone(),
-                    conn,
-                ))));
-            }
+            let tool_calls: Vec<_> = tool_call_ids
+                .into_iter()
+                .map(|id| {
+                    Box::pin(context.subtask(ExecuteToolCall::new(id, self.tools.clone())))
+                })
+                .collect();
             for result in join_all(tool_calls).await {
                 result?;
             }
