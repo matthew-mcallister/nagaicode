@@ -81,7 +81,7 @@ impl Agent {
         InferenceParams {
             model_id: &self.model.id,
             system_prompt: "",
-            temperature: 0.7,
+            temperature: 1.0,
             reasoning_effort: None,
             input: &[],
         }
