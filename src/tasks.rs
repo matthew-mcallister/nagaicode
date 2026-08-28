@@ -47,24 +47,40 @@ impl TaskContext {
         &self.sender
     }
 
+    /// Creates a Future out of a Task.
+    pub fn subtask<T: Task>(&self, task: T) -> impl Future<Output = T::Output> + Send {
+        let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
+        let mut context = Self {
+            tid_counter: Arc::clone(&self.tid_counter),
+            cancel: self.cancel.clone(),
+            sender: self.sender.clone(),
+        };
+        async move {
+            let _ = context.sender.send(AppEvent::TaskStarted(tid));
+            let output = task.run(&mut context).await;
+            let _ = context.sender.send(AppEvent::TaskEnded(tid));
+            output
+        }
+    }
+
     /// Spawns `task` as a child of this context. Canceling the parent
     /// cancels all descendants transitively.
     pub fn spawn<T: Task>(&self, task: T) -> TaskHandle<T::Output> {
         let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
         let cancel = self.cancel.child_token();
-        let context = Self {
+        let mut context = Self {
             tid_counter: Arc::clone(&self.tid_counter),
             cancel: cancel.clone(),
             sender: self.sender.clone(),
         };
         let sender = self.sender.clone();
-        let watch = cancel.clone();
+        let inner = cancel.clone();
         let join = tokio::spawn(async move {
             let _ = sender.send(AppEvent::TaskStarted(tid));
             let result = tokio::select! {
                 biased;
-                _ = watch.cancelled() => Err(TaskError::Canceled),
-                output = task.run(context) => Ok(output),
+                _ = inner.cancelled() => Err(TaskError::Canceled),
+                output = task.run(&mut context) => Ok(output),
             };
             let _ = sender.send(AppEvent::TaskEnded(tid));
             result
@@ -97,13 +113,14 @@ impl<R> TaskHandle<R> {
     }
 }
 
-/// Unit of async work.
+/// Light wrapper for helping with cancelation and statistic tracking. In
+/// future will help with status bar messages.
 pub trait Task: Send + 'static {
     type Output: Send + 'static;
 
     /// Runs the task. The task may be canceled at any time, so expect early
     /// return at all await points.
-    fn run(self, context: TaskContext) -> impl Future<Output = Self::Output> + Send;
+    fn run(self, context: &mut TaskContext) -> impl Future<Output = Self::Output> + Send;
 }
 
 #[cfg(test)]

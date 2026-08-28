@@ -77,7 +77,7 @@ impl StreamResponse {
 impl Task for StreamResponse {
     type Output = AnyResult<(i32, i32)>;
 
-    async fn run(self, context: TaskContext) -> AnyResult<(i32, i32)> {
+    async fn run(self, context: &mut TaskContext) -> AnyResult<(i32, i32)> {
         self.process(&context).await
     }
 }

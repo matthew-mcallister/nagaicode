@@ -6,7 +6,7 @@ use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::Session;
-use crate::tasks::{Task, TaskContext, TaskError};
+use crate::tasks::{Task, TaskContext};
 use crate::tools::DefaultToolServer;
 use self::stream_response::StreamResponse;
 
@@ -42,7 +42,7 @@ impl Agent {
     }
 
     async fn process(self, context: &TaskContext) -> AnyResult<()> {
-        let handle = context.spawn(StreamResponse::new(
+        let (_turn_id, _response_id) = context.subtask(StreamResponse::new(
             self.session,
             self.provider,
             self.model,
@@ -50,21 +50,15 @@ impl Agent {
             self.tools,
             self.conn,
             None,
-        ));
-        match handle.join().await? {
-            Ok(result) => {
-                result?;
-                Ok(())
-            }
-            Err(TaskError::Canceled) => Ok(()),
-        }
+        )).await?;
+        Ok(())
     }
 }
 
 impl Task for Agent {
     type Output = ();
 
-    async fn run(self, context: TaskContext) {
+    async fn run(self, context: &mut TaskContext) {
         if let Err(e) = self.process(&context).await {
             log::error!("agent task failed: {e}");
             context.send(AppEvent::ErrorMessage(e.to_string()));

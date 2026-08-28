@@ -74,7 +74,7 @@ struct RevalidateModelsTask {
 impl Task for RevalidateModelsTask {
     type Output = ();
 
-    async fn run(self, _context: TaskContext) {
+    async fn run(self, _context: &mut TaskContext) {
         let mut conn = match crate::db::open(&self.db_url) {
             Ok(conn) => conn,
             Err(e) => {

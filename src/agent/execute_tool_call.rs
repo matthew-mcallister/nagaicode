@@ -68,7 +68,7 @@ impl ExecuteToolCall {
 impl Task for ExecuteToolCall {
     type Output = AnyResult<()>;
 
-    async fn run(self, context: TaskContext) -> AnyResult<()> {
+    async fn run(self, context: &mut TaskContext) -> AnyResult<()> {
         self.process(&context).await
     }
 }
@@ -140,15 +140,15 @@ mod tests {
         let (sender, mut recv) = unbounded_channel();
         let tid_counter = Arc::new(AtomicU64::new(0));
 
-        let context = TaskContext::root(Arc::clone(&tid_counter), sender.clone());
+        let mut context = TaskContext::root(Arc::clone(&tid_counter), sender.clone());
         ExecuteToolCall::new(tool_call.id, tools.clone(), conn1)
-            .run(context)
+            .run(&mut context)
             .await
             .unwrap();
 
-        let context = TaskContext::root(Arc::clone(&tid_counter), sender.clone());
+        let mut context = TaskContext::root(Arc::clone(&tid_counter), sender.clone());
         ExecuteToolCall::new(text_tool_call.id, tools.clone(), conn2)
-            .run(context)
+            .run(&mut context)
             .await
             .unwrap();
 
