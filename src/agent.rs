@@ -7,9 +7,11 @@ use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, Session};
 use crate::tasks::{Task, TaskContext};
+use self::backfill_tool_outputs::backfill_tool_outputs;
 use self::execute_tool_call::ExecuteToolCall;
 use self::stream_response::StreamResponse;
 
+mod backfill_tool_outputs;
 mod execute_tool_call;
 mod stream_response;
 
@@ -37,6 +39,7 @@ impl Agent {
 
     /// Runs the model/tool loop until the model stops requesting tools.
     async fn process(self, context: &mut TaskContext) -> AnyResult<()> {
+        backfill_tool_outputs(context.connection()?, self.session.id)?;
         let mut turn_id = None;
         loop {
             let (next_turn_id, response_id) = context
