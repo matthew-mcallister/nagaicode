@@ -1,17 +1,13 @@
-use anyhow::anyhow;
 use diesel::SqliteConnection;
-use fnv::FnvHashMap;
-use futures::StreamExt;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
-use crate::interface::{
-    InferenceEvent, InferenceParams, ItemDelta, OutputItemEvent, build_history,
-};
+use crate::interface::stream::StreamProcessor;
+use crate::interface::{InferenceParams, build_history};
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
-use crate::session::{Item, ItemType, NewItem, Response, Session, Turn, TurnType};
+use crate::session::{Item, Session};
 use crate::tasks::{Task, TaskContext, TaskError};
 use crate::tools::DefaultToolServer;
 
@@ -78,8 +74,6 @@ struct StreamResponse {
     conn: SqliteConnection,
 
     turn_id: Option<i32>,
-    response: Option<Response>,
-    items: FnvHashMap<i64, Item>,
 }
 
 impl StreamResponse {
@@ -100,48 +94,28 @@ impl StreamResponse {
             tools,
             conn,
             turn_id,
-            response: None,
-            items: FnvHashMap::default(),
         }
     }
 
-    async fn process(&mut self, context: &TaskContext) -> AnyResult<(i32, i32)> {
+    async fn process(mut self, context: &TaskContext) -> AnyResult<(i32, i32)> {
         let interface = self.provider.create_interface(&self.client)?;
 
-        let history = self.load_history()?;
+        let history = Item::list_by_session(&mut self.conn, self.session.id)?;
         let messages = build_history(&history, interface.supports_reasoning_input())?;
         let mut params = self.build_params();
         params.input = &messages;
         let stream = interface.generate(params, &self.tools);
-        tokio::pin!(stream);
 
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(event) => {
-                    if let Some(event) = self.handle_event(event)? {
-                        context.send(event);
-                    }
-                }
-                Err(e) => {
-                    let e = match self.fail_response() {
-                        Ok(()) => e,
-                        Err(f) => f.context(e),
-                    };
-                    log::error!("agent failed: {e}");
-                    return Err(e);
-                }
-            }
-        }
-
-        let turn_id = self
-            .turn_id
-            .ok_or_else(|| anyhow!("no turn created"))?;
-        let response_id = self
-            .response
-            .as_ref()
-            .map(|r| r.id)
-            .ok_or_else(|| anyhow!("no response created"))?;
-        Ok((turn_id, response_id))
+        let mut processor = StreamProcessor::new(
+            self.session,
+            self.conn,
+            self.turn_id,
+            stream,
+            self.provider.id,
+            self.provider.name.clone(),
+            self.model.id.clone(),
+        );
+        processor.process(context.sender()).await
     }
 
     fn build_params(&self) -> InferenceParams<'_> {
@@ -153,199 +127,12 @@ impl StreamResponse {
             input: &[],
         }
     }
-
-    /// Loads the session's items sorted by item id.
-    fn load_history(&mut self) -> AnyResult<Vec<Item>> {
-        Item::list_by_session(&mut self.conn, self.session.id)
-    }
-
-    fn handle_event(&mut self, event: InferenceEvent) -> AnyResult<Option<AppEvent>> {
-        match event {
-            InferenceEvent::Created(created) => {
-                let turn_id = self.ensure_turn()?;
-                let response = Response::create(
-                    &mut self.conn,
-                    self.session.id,
-                    turn_id,
-                    Some(&created.id),
-                    Some(&created.status),
-                )?;
-                self.response = Some(response);
-                Ok(None)
-            }
-            InferenceEvent::OutputItemAdded(added) => self.handle_item_added(added),
-            InferenceEvent::OutputItemDone(done) => self.handle_item_done(done),
-            InferenceEvent::ReasoningTextDelta(delta) => {
-                self.handle_delta(delta, ItemType::Reasoning, false)
-            }
-            InferenceEvent::ReasoningSummaryDelta(delta) => {
-                self.handle_delta(delta, ItemType::Reasoning, true)
-            }
-            InferenceEvent::OutputTextDelta(delta) => {
-                self.handle_delta(delta, ItemType::ResponseText, false)
-            }
-            InferenceEvent::FunctionCallArgsDelta(delta) => self.handle_args_delta(delta),
-            InferenceEvent::Completed(completed) => {
-                if let Some(response) = &self.response {
-                    Response::finish(
-                        &mut self.conn,
-                        response.id,
-                        &completed.status,
-                        completed.usage.as_ref(),
-                        Some(&completed.raw_response),
-                    )?;
-                }
-                Ok(None)
-            }
-            InferenceEvent::Failed(failed) => {
-                if let Some(response) = &self.response {
-                    Response::finish(
-                        &mut self.conn,
-                        response.id,
-                        &failed.status,
-                        failed.usage.as_ref(),
-                        Some(&failed.raw_response),
-                    )?;
-                }
-                Ok(Some(AppEvent::ErrorMessage(failed.error_message)))
-            }
-        }
-    }
-
-    fn handle_item_added(&mut self, added: OutputItemEvent) -> AnyResult<Option<AppEvent>> {
-        let Some(ty) = ItemType::from_upstream(&added.ty) else {
-            return Ok(None);
-        };
-        let name = if ty == ItemType::ToolCall {
-            added.raw["name"].as_str()
-        } else {
-            None
-        };
-        let item = self.create_item(
-            added.output_index,
-            ty,
-            (!added.id.is_empty()).then_some(added.id.as_str()),
-            Some(added.ty.as_str()),
-            added.call_id.as_deref(),
-            name,
-        )?;
-        Ok(Some(AppEvent::ItemCreated { item }))
-    }
-
-    fn handle_item_done(&mut self, done: OutputItemEvent) -> AnyResult<Option<AppEvent>> {
-        if let Some(item) = self.items.get_mut(&done.output_index) {
-            if let Some(json) = item.json.as_deref() {
-                Item::update_json(&mut self.conn, item.id, json)?;
-            }
-            Item::set_raw_data(&mut self.conn, item.id, &done.raw)?;
-            item.raw_data = Some(done.raw.to_string());
-        }
-        Ok(None)
-    }
-
-    fn ensure_item(&mut self, output_index: i64, ty: ItemType) -> AnyResult<()> {
-        if !self.items.contains_key(&output_index) {
-            // Lazily create a new item in case we receive out-of-order
-            self.create_item(output_index, ty, None, None, None, None)?;
-        }
-        Ok(())
-    }
-
-    // TODO: batch DB writes and flush on item completion
-    fn handle_delta(
-        &mut self,
-        delta: ItemDelta,
-        ty: ItemType,
-        summary: bool,
-    ) -> AnyResult<Option<AppEvent>> {
-        self.ensure_item(delta.output_index, ty)?;
-        let item = self
-            .items
-            .get_mut(&delta.output_index)
-            .expect("item exists");
-        if summary {
-            let summary = format!("{}{}", item.summary.as_deref().unwrap_or(""), &delta.delta);
-            Item::update_summary(&mut self.conn, item.id, &summary)?;
-            item.summary = Some(summary);
-        } else {
-            let text = format!("{}{}", item.text.as_deref().unwrap_or(""), &delta.delta);
-            Item::update_text(&mut self.conn, item.id, &text)?;
-            item.text = Some(text);
-        }
-        Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))
-    }
-
-    /// Appends args but does not write to DB until item is fully finished
-    /// so we don't commit incomplete JSON
-    fn handle_args_delta(&mut self, delta: ItemDelta) -> AnyResult<Option<AppEvent>> {
-        self.ensure_item(delta.output_index, ItemType::ToolCall)?;
-        let item = self
-            .items
-            .get_mut(&delta.output_index)
-            .expect("item exists");
-        let json = format!("{}{}", item.json.as_deref().unwrap_or(""), &delta.delta);
-        item.json = Some(json);
-        Ok(None)
-    }
-
-    fn create_item(
-        &mut self,
-        output_index: i64,
-        ty: ItemType,
-        upstream_id: Option<&str>,
-        upstream_type: Option<&str>,
-        upstream_call_id: Option<&str>,
-        text: Option<&str>,
-    ) -> AnyResult<Item> {
-        let turn_id = self.ensure_turn()?;
-        let response_id = self.response.as_ref().map(|r| r.id);
-        let item = Item::create(
-            &mut self.conn,
-            NewItem {
-                session_id: self.session.id,
-                turn_id,
-                response_id,
-                provider_id: Some(self.provider.id),
-                ty,
-                upstream_id,
-                upstream_type,
-                upstream_call_id,
-                text,
-            },
-        )?;
-        self.items.insert(output_index, item.clone());
-        Ok(item)
-    }
-
-    fn ensure_turn(&mut self) -> AnyResult<i32> {
-        if let Some(turn_id) = self.turn_id {
-            return Ok(turn_id);
-        }
-        let turn = Turn::create(
-            &mut self.conn,
-            self.session.id,
-            TurnType::Assistant,
-            Some(self.provider.id),
-            Some(&self.provider.name),
-            Some(&self.model.id),
-        )?;
-        self.turn_id = Some(turn.id);
-        Ok(turn.id)
-    }
-
-    /// Marks the active response as failed
-    fn fail_response(&mut self) -> AnyResult<()> {
-        if let Some(response) = &self.response {
-            Response::finish(&mut self.conn, response.id, "failed", None, None)?;
-        }
-        Ok(())
-    }
 }
 
 impl Task for StreamResponse {
     type Output = AnyResult<(i32, i32)>;
 
-    async fn run(mut self, context: TaskContext) -> AnyResult<(i32, i32)> {
+    async fn run(self, context: TaskContext) -> AnyResult<(i32, i32)> {
         self.process(&context).await
     }
 }

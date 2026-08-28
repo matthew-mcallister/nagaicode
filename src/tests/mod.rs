@@ -3,6 +3,8 @@ use reqwest::{Method, Request};
 use reqwest_eventsource::Event as SseEvent;
 use serde_json::json;
 
+use anyhow::anyhow;
+
 use crate::app::{App, AppEvent};
 use crate::error::AnyResult;
 use crate::interface::InterfaceId;
@@ -433,6 +435,79 @@ async fn test_app_prompt_agent() {
             .unwrap()["status"],
         "completed"
     );
+}
+
+#[tokio::test]
+async fn test_agent_stream_error() {
+    use crate::session::{Item, ItemType, Response, Turn, TurnType};
+
+    let mut app = App::new().unwrap();
+
+    let provider = Provider::create(
+        app.conn(),
+        "test",
+        InterfaceId::Openai,
+        "sk-test",
+        Some("https://example.test/v1"),
+    )
+    .expect("create provider");
+    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    app.switch_model(provider, model).unwrap();
+
+    let url = "https://example.test/v1/responses";
+
+    // The stream fails mid-response after some output has been emitted.
+    app.client_mut().add_response(
+        url,
+        ResponseData::Sse(QueueStream::from(vec![
+            Ok(SseEvent::Open),
+            Ok(create_message_event(
+                r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"Hello"}"#,
+            )),
+            Err(anyhow!("network error")),
+        ])),
+    );
+
+    for c in "hello".chars() {
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
+            .await;
+    }
+    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
+    app.await_task().await.expect("await agent task");
+    app.process_pending_events().await;
+
+    // The error should be reported in the chat history.
+    let history = app
+        .query("/chat/stacked/inner/history/history/items")
+        .unwrap();
+    let history = history.as_array().unwrap();
+    let last = history.last().unwrap();
+    assert_eq!(last["ty"], json!("error"));
+    assert_eq!(last["content"], json!("network error"));
+
+    // The partial output should be persisted and the response marked failed.
+    let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+
+    let turns = Turn::list_by_session(app.conn(), session_id).unwrap();
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[0].ty().unwrap(), TurnType::User);
+    assert_eq!(turns[1].ty().unwrap(), TurnType::Assistant);
+
+    let responses = Response::list_by_turn(app.conn(), turns[1].id).unwrap();
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].upstream_status.as_deref(), Some("failed"));
+
+    let items = Item::list_by_session(app.conn(), session_id).unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
+    assert_eq!(items[1].ty().unwrap(), ItemType::ResponseText);
+    assert_eq!(items[1].text.as_deref(), Some("Hello"));
 }
 
 #[tokio::test]

@@ -1,4 +1,5 @@
 pub mod openai;
+pub mod stream;
 
 use std::str::FromStr;
 

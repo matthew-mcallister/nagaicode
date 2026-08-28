@@ -42,6 +42,11 @@ impl TaskContext {
         let _ = self.sender.send(event);
     }
 
+    /// Returns the channel used to send events to the app.
+    pub fn sender(&self) -> &UnboundedSender<AppEvent> {
+        &self.sender
+    }
+
     /// Spawns `task` as a child of this context. Canceling the parent
     /// cancels all descendants transitively.
     pub fn spawn<T: Task>(&self, task: T) -> TaskHandle<T::Output> {
