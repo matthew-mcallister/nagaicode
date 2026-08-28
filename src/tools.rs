@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::sync::Arc;
 
 use anyhow::anyhow;
 use tokio::process::Command;
@@ -59,14 +60,14 @@ pub trait ToolServer {
 /// Executes tool calls on the host system.
 #[derive(Clone, Debug, Default)]
 pub struct HostToolServer {
-    tools: Vec<ToolInfo>,
+    tools: Arc<Vec<ToolInfo>>,
 }
 
 impl HostToolServer {
     /// Creates a new system tool server.
     pub fn new() -> Self {
         Self {
-            tools: vec![ToolInfo {
+            tools: Arc::new(vec![ToolInfo {
                 name: "sh".to_owned(),
                 description: "Run a shell command on the host system".to_owned(),
                 input_schema: json!({
@@ -82,7 +83,7 @@ impl HostToolServer {
                         "return_code": { "type": "integer" },
                     },
                 }),
-            }],
+            }]),
         }
     }
 }
