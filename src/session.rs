@@ -304,6 +304,7 @@ pub struct Response {
     pub reasoning_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
     // Raw event data
+    // TODO: There needs to be a config item to disable storing this
     pub raw_request: Option<String>,
     pub raw_response: Option<String>,
     pub created_at: NaiveDateTime,

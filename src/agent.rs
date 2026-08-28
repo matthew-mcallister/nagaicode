@@ -67,10 +67,12 @@ impl Agent {
                     }
                 }
                 Err(e) => {
-                    match self.fail_response() {
-                        Ok(()) => return Err(e),
-                        Err(f) => return Err(f.context(e)),
-                    }
+                    let e = match self.fail_response() {
+                        Ok(()) => e,
+                        Err(f) => f.context(e),
+                    };
+                    log::error!("agent failed: {e}");
+                    return Err(e);
                 }
             }
         }
