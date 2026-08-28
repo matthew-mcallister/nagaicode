@@ -105,3 +105,28 @@ pub trait Task: Send + 'static {
     /// return at all await points.
     fn run(self, context: TaskContext) -> impl Future<Output = Self::Output> + Send;
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+
+    use tokio::sync::mpsc::unbounded_channel;
+
+    use crate::tasks::{TaskContext, TaskError};
+    use crate::testing::DummyTask;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_spawn_cancels() {
+        let (sender, mut recv) = unbounded_channel();
+        let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender);
+        let handle = context.spawn(DummyTask::new());
+        handle.cancel();
+        let result = handle.join().await.unwrap();
+        assert_eq!(result, Err(TaskError::Canceled));
+        assert_eq!(recv.try_recv().unwrap(), AppEvent::TaskStarted(0));
+        assert_eq!(recv.try_recv().unwrap(), AppEvent::TaskEnded(0));
+    }
+}
