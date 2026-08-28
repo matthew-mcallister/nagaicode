@@ -423,6 +423,7 @@ impl App {
             provider,
             model,
             self.client.clone(),
+            self.tools.clone(),
             crate::db::open(&self.db_url)?,
         );
         self.spawn_foreground(agent).await;

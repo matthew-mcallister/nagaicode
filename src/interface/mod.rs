@@ -12,6 +12,7 @@ use crate::interface::openai::OpenaiInterface;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, ItemType};
+use crate::tools::ToolServer;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum InterfaceId {
@@ -270,9 +271,10 @@ impl Interface {
     pub fn generate(
         &self,
         params: InferenceParams<'_>,
+        tools: &dyn ToolServer,
     ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<> {
         match self {
-            Self::Openai(iface) => iface.generate(params),
+            Self::Openai(iface) => iface.generate(params, tools),
         }
     }
 

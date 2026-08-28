@@ -3,6 +3,7 @@ use log::debug;
 use reqwest_eventsource::Event;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::error::AnyResult;
 use crate::interface::{
@@ -10,6 +11,7 @@ use crate::interface::{
     ReasoningEffort, ResponseCompleted, ResponseCreated, ResponseFailed, Usage,
 };
 use crate::request::DefaultClient;
+use crate::tools::ToolServer;
 #[allow(unused_imports)]
 use crate::request::{Client as _, Response as _};
 
@@ -152,11 +154,25 @@ struct CreateResponseRequest<'a> {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<RequestReasoning>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<Value>,
     stream: bool,
 }
 
+fn build_tools(tools: &dyn ToolServer) -> Vec<Value> {
+    tools
+        .list_tools()
+        .iter()
+        .map(|tool| {
+            let mut value = serde_json::to_value(tool).unwrap();
+            value["type"] = json!("function");
+            value
+        })
+        .collect()
+}
+
 impl<'a> CreateResponseRequest<'a> {
-    fn from_params(params: &InferenceParams<'a>) -> Self {
+    fn from_params(params: &InferenceParams<'a>, tools: &dyn ToolServer) -> Self {
         let input = params
             .input
             .iter()
@@ -208,6 +224,7 @@ impl<'a> CreateResponseRequest<'a> {
             reasoning: params.reasoning_effort.map(|effort| RequestReasoning {
                 effort: effort.into(),
             }),
+            tools: build_tools(tools),
             stream: true,
         }
     }
@@ -384,8 +401,10 @@ impl OpenaiInterface {
     pub fn generate(
         &self,
         params: InferenceParams<'_>,
+        tools: &dyn ToolServer,
     ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<> {
-        let req_body = serde_json::to_value(CreateResponseRequest::from_params(&params)).unwrap();
+        let req_body =
+            serde_json::to_value(CreateResponseRequest::from_params(&params, tools)).unwrap();
         let client = self.client.clone();
 
         async_stream::try_stream! {
@@ -520,6 +539,7 @@ mod tests {
     use crate::request::DefaultClient;
     use crate::request::test_client::{Response, ResponseData};
     use crate::testing::QueueStream;
+    use crate::tools::{DefaultToolServer, ToolInfo};
     use reqwest::StatusCode;
     use reqwest::header::HeaderMap;
     use reqwest_eventsource::Event;
@@ -623,7 +643,15 @@ mod tests {
             ],
         };
 
-        let stream = iface.generate(params);
+        let tools = DefaultToolServer::default();
+        tools.set_tools(vec![ToolInfo {
+            name: "sh".to_owned(),
+            description: "Run a shell command".to_owned(),
+            input_schema: json!({ "type": "string" }),
+            output_schema: json!({ "type": "object" }),
+        }]);
+
+        let stream = iface.generate(params, &tools);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -715,6 +743,18 @@ mod tests {
                 {"role": "user", "content": "How are you?"}
             ])
         );
+        assert_eq!(
+            body["tools"],
+            json!([
+                {
+                    "type": "function",
+                    "name": "sh",
+                    "description": "Run a shell command",
+                    "input_schema": { "type": "string" },
+                    "output_schema": { "type": "object" },
+                }
+            ])
+        );
     }
 
     #[tokio::test]
@@ -731,6 +771,7 @@ mod tests {
         );
 
         let iface = make_iface(client);
+        let tools = DefaultToolServer::default();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -739,7 +780,7 @@ mod tests {
             input: &[],
         };
 
-        let stream = iface.generate(params);
+        let stream = iface.generate(params, &tools);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -755,6 +796,10 @@ mod tests {
                 raw_response: json!({"id": "resp-custom-1"}),
             })]
         );
+
+        let requests = iface.client().inner().get_requests();
+        let body = request_body_value(&requests[0]);
+        assert!(body.get("tools").is_none());
     }
 
     #[tokio::test]
@@ -795,6 +840,7 @@ mod tests {
         );
 
         let iface = make_iface(client);
+        let tools = DefaultToolServer::default();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -803,7 +849,7 @@ mod tests {
             input: &[],
         };
 
-        let stream = iface.generate(params);
+        let stream = iface.generate(params, &tools);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -912,6 +958,7 @@ mod tests {
         );
 
         let iface = make_iface(client);
+        let tools = DefaultToolServer::default();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -920,7 +967,7 @@ mod tests {
             input: &[],
         };
 
-        let stream = iface.generate(params);
+        let stream = iface.generate(params, &tools);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -989,6 +1036,7 @@ mod tests {
         );
 
         let iface = make_iface(client);
+        let tools = DefaultToolServer::default();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -1007,7 +1055,7 @@ mod tests {
             ],
         };
 
-        let stream = iface.generate(params);
+        let stream = iface.generate(params, &tools);
         let events: Vec<AnyResult<InferenceEvent>> = stream.collect().await;
         assert!(events.is_empty());
 
@@ -1037,6 +1085,7 @@ mod tests {
         let mut client = DefaultClient::default();
         let iface = make_iface(client.clone());
         let url = format!("{BASE_URL}/responses");
+        let tools = DefaultToolServer::default();
 
         // A top-level error event surfaces as a stream error.
         client.add_response(&url, sse(vec![Ok(create_message_event(
@@ -1051,7 +1100,7 @@ mod tests {
             input: &[],
         };
 
-        let stream = iface.generate(params);
+        let stream = iface.generate(params, &tools);
         let results: Vec<_> = stream.collect().await;
         assert_eq!(results.len(), 1);
         assert!(results[0].is_err());
@@ -1074,7 +1123,7 @@ mod tests {
             input: &[],
         };
 
-        let stream = iface.generate(params);
+        let stream = iface.generate(params, &tools);
         let results: Vec<_> = stream.collect().await;
         assert_eq!(results.len(), 1);
         match results[0].as_ref().unwrap() {

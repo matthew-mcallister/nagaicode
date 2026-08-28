@@ -1,6 +1,7 @@
 use std::process::Command;
 
 use anyhow::anyhow;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::error::AnyResult;
@@ -11,7 +12,7 @@ pub type DefaultToolServer = HostToolServer;
 pub use self::mock::MockToolServer as DefaultToolServer;
 
 /// Describes a tool in human- and model-readable format.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInfo {
     pub name: String,
     pub description: String,
@@ -38,6 +39,9 @@ impl ToolResult {
 
 /// Trait implemented by tool servers.
 pub trait ToolServer {
+    /// Returns a description of every available tool.
+    fn list_tools(&self) -> Vec<ToolInfo>;
+
     /// Attempts to execute a tool call and return the result.
     ///
     /// If the tool call was completed, then `Ok(_)` is returned, even if the
@@ -59,6 +63,22 @@ impl HostToolServer {
 }
 
 impl ToolServer for HostToolServer {
+    fn list_tools(&self) -> Vec<ToolInfo> {
+        vec![ToolInfo {
+            name: "sh".to_owned(),
+            description: "Run a shell command on the host system".to_owned(),
+            input_schema: json!({ "type": "string" }),
+            output_schema: json!({
+                "type": "object",
+                "properties": {
+                    "stdout": { "type": "string" },
+                    "stderr": { "type": "string" },
+                    "return_code": { "type": "integer" },
+                },
+            }),
+        }]
+    }
+
     fn call(&mut self, name: &str, args: Value) -> AnyResult<ToolResult> {
         match name {
             "sh" => {
@@ -96,7 +116,7 @@ pub mod mock {
     use serde_json::Value;
 
     use crate::error::AnyResult;
-    use super::{ToolResult, ToolServer};
+    use super::{ToolInfo, ToolResult, ToolServer};
 
     /// Recorded tool call.
     #[derive(Clone, Debug, PartialEq)]
@@ -109,6 +129,7 @@ pub mod mock {
     struct MockToolServerInner {
         results: FnvHashMap<String, VecDeque<AnyResult<ToolResult>>>,
         calls: Vec<ToolCall>,
+        tools: Vec<ToolInfo>,
     }
 
     /// Mock tool server for tests.
@@ -159,9 +180,18 @@ pub mod mock {
             let mut inner = self.inner.lock().unwrap();
             inner.calls.clear();
         }
+
+        /// Replaces the advertised tool list.
+        pub fn set_tools(&self, tools: Vec<ToolInfo>) {
+            self.inner.lock().unwrap().tools = tools;
+        }
     }
 
     impl ToolServer for MockToolServer {
+        fn list_tools(&self) -> Vec<ToolInfo> {
+            self.inner.lock().unwrap().tools.clone()
+        }
+
         fn call(&mut self, name: &str, args: Value) -> AnyResult<ToolResult> {
             let mut inner = self.inner.lock().unwrap();
             inner.calls.push(ToolCall {
@@ -190,6 +220,30 @@ mod tests {
     #[test]
     fn test_mock_tool_server() {
         let mut server = MockToolServer::default();
+        assert!(server.list_tools().is_empty());
+
+        let tool = ToolInfo {
+            name: "sh".to_owned(),
+            description: "Run a shell command".to_owned(),
+            input_schema: json!({ "type": "string" }),
+            output_schema: json!({ "type": "object" }),
+        };
+        server.set_tools(vec![tool.clone()]);
+        assert_eq!(server.list_tools(), vec![tool.clone()]);
+
+        let mut value = serde_json::to_value(&tool).unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "name": "sh",
+                "description": "Run a shell command",
+                "input_schema": { "type": "string" },
+                "output_schema": { "type": "object" },
+            })
+        );
+        value["type"] = json!("function");
+        let parsed: ToolInfo = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed, tool);
 
         server.add_result("sh", Ok(ToolResult::success(json!("output 1"))));
 
@@ -239,6 +293,10 @@ mod tests {
         assert_eq!(res.content, json!("fresh"));
 
         let mut sys_server = HostToolServer::new();
+        let sys_tools = sys_server.list_tools();
+        assert_eq!(sys_tools.len(), 1);
+        assert_eq!(sys_tools[0].name, "sh");
+
         let sys_res = sys_server.call("sh", json!("printf 'hello'")).unwrap();
         assert_eq!(
             sys_res.content,

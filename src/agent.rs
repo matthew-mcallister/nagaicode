@@ -12,12 +12,14 @@ use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, ItemType, NewItem, Response, Session, Turn, TurnType};
 use crate::tasks::{Task, TaskContext};
+use crate::tools::DefaultToolServer;
 
 pub struct Agent {
     pub session: Session,
     pub provider: Provider,
     pub model: Model,
     pub client: DefaultClient,
+    pub tools: DefaultToolServer,
     pub conn: SqliteConnection,
 
     turn: Option<Turn>,
@@ -31,6 +33,7 @@ impl Agent {
         provider: Provider,
         model: Model,
         client: DefaultClient,
+        tools: DefaultToolServer,
         conn: SqliteConnection,
     ) -> Self {
         Self {
@@ -38,6 +41,7 @@ impl Agent {
             provider,
             model,
             client,
+            tools,
             conn,
             turn: None,
             response: None,
@@ -52,7 +56,7 @@ impl Agent {
         let messages = build_history(&history, interface.supports_reasoning_input())?;
         let mut params = self.build_params();
         params.input = &messages;
-        let stream = interface.generate(params);
+        let stream = interface.generate(params, &self.tools);
         tokio::pin!(stream);
 
         while let Some(item) = stream.next().await {
@@ -311,6 +315,7 @@ mod tests {
             provider,
             model,
             DefaultClient::default(),
+            DefaultToolServer::default(),
             conn,
         ));
         handle.cancel();
