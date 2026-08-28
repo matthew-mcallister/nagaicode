@@ -1,4 +1,5 @@
 use std::process::Command;
+use std::sync::LazyLock;
 
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
@@ -40,7 +41,7 @@ impl ToolResult {
 /// Trait implemented by tool servers.
 pub trait ToolServer {
     /// Returns a description of every available tool.
-    fn list_tools(&self) -> Vec<ToolInfo>;
+    fn list_tools(&self) -> impl Iterator<Item = &ToolInfo>;
 
     /// Attempts to execute a tool call and return the result.
     ///
@@ -62,21 +63,27 @@ impl HostToolServer {
     }
 }
 
+static SH_TOOL: LazyLock<ToolInfo> = LazyLock::new(|| ToolInfo {
+    name: "sh".to_owned(),
+    description: "Run a shell command on the host system".to_owned(),
+    input_schema: json!({
+        "type": "string",
+        "additionalProperties": false,
+        "required": [],
+    }),
+    output_schema: json!({
+        "type": "object",
+        "properties": {
+            "stdout": { "type": "string" },
+            "stderr": { "type": "string" },
+            "return_code": { "type": "integer" },
+        },
+    }),
+});
+
 impl ToolServer for HostToolServer {
-    fn list_tools(&self) -> Vec<ToolInfo> {
-        vec![ToolInfo {
-            name: "sh".to_owned(),
-            description: "Run a shell command on the host system".to_owned(),
-            input_schema: json!({ "type": "string" }),
-            output_schema: json!({
-                "type": "object",
-                "properties": {
-                    "stdout": { "type": "string" },
-                    "stderr": { "type": "string" },
-                    "return_code": { "type": "integer" },
-                },
-            }),
-        }]
+    fn list_tools(&self) -> impl Iterator<Item = &ToolInfo> {
+        std::iter::once(&*SH_TOOL)
     }
 
     fn call(&mut self, name: &str, args: Value) -> AnyResult<ToolResult> {
@@ -129,13 +136,13 @@ pub mod mock {
     struct MockToolServerInner {
         results: FnvHashMap<String, VecDeque<AnyResult<ToolResult>>>,
         calls: Vec<ToolCall>,
-        tools: Vec<ToolInfo>,
     }
 
     /// Mock tool server for tests.
     #[derive(Clone, Debug, Default)]
     pub struct MockToolServer {
         inner: Arc<Mutex<MockToolServerInner>>,
+        tools: Vec<ToolInfo>,
     }
 
     impl MockToolServer {
@@ -182,14 +189,14 @@ pub mod mock {
         }
 
         /// Replaces the advertised tool list.
-        pub fn set_tools(&self, tools: Vec<ToolInfo>) {
-            self.inner.lock().unwrap().tools = tools;
+        pub fn set_tools(&mut self, tools: Vec<ToolInfo>) {
+            self.tools = tools;
         }
     }
 
     impl ToolServer for MockToolServer {
-        fn list_tools(&self) -> Vec<ToolInfo> {
-            self.inner.lock().unwrap().tools.clone()
+        fn list_tools(&self) -> impl Iterator<Item = &ToolInfo> {
+            self.tools.iter()
         }
 
         fn call(&mut self, name: &str, args: Value) -> AnyResult<ToolResult> {
@@ -220,7 +227,7 @@ mod tests {
     #[test]
     fn test_mock_tool_server() {
         let mut server = MockToolServer::default();
-        assert!(server.list_tools().is_empty());
+        assert!(server.list_tools().next().is_none());
 
         let tool = ToolInfo {
             name: "sh".to_owned(),
@@ -229,7 +236,7 @@ mod tests {
             output_schema: json!({ "type": "object" }),
         };
         server.set_tools(vec![tool.clone()]);
-        assert_eq!(server.list_tools(), vec![tool.clone()]);
+        assert_eq!(server.list_tools().collect::<Vec<_>>(), vec![&tool]);
 
         let mut value = serde_json::to_value(&tool).unwrap();
         assert_eq!(
@@ -293,7 +300,7 @@ mod tests {
         assert_eq!(res.content, json!("fresh"));
 
         let mut sys_server = HostToolServer::new();
-        let sys_tools = sys_server.list_tools();
+        let sys_tools: Vec<&ToolInfo> = sys_server.list_tools().collect();
         assert_eq!(sys_tools.len(), 1);
         assert_eq!(sys_tools[0].name, "sh");
 

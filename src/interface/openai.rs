@@ -3,7 +3,7 @@ use log::debug;
 use reqwest_eventsource::Event;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::error::AnyResult;
 use crate::interface::{
@@ -11,7 +11,7 @@ use crate::interface::{
     ReasoningEffort, ResponseCompleted, ResponseCreated, ResponseFailed, Usage,
 };
 use crate::request::DefaultClient;
-use crate::tools::ToolServer;
+use crate::tools::{ToolInfo, ToolServer};
 #[allow(unused_imports)]
 use crate::request::{Client as _, Response as _};
 
@@ -145,6 +145,39 @@ struct ReasoningSummary<'a> {
 }
 
 #[derive(Debug, Serialize)]
+struct RequestToolInfo<'a> {
+    name: &'a str,
+    description: &'a str,
+    parameters: &'a Value,
+    output_schema: &'a Value,
+    strict: bool,
+}
+
+impl<'a> From<&'a ToolInfo> for RequestToolInfo<'a> {
+    fn from(tool: &'a ToolInfo) -> Self {
+        Self {
+            name: &tool.name,
+            description: &tool.description,
+            parameters: &tool.input_schema,
+            output_schema: &tool.output_schema,
+            strict: true,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum RequestTool<'a> {
+    Function(RequestToolInfo<'a>),
+}
+
+impl<'a> From<&'a ToolInfo> for RequestTool<'a> {
+    fn from(tool: &'a ToolInfo) -> Self {
+        Self::Function(tool.into())
+    }
+}
+
+#[derive(Debug, Serialize)]
 struct CreateResponseRequest<'a> {
     model: &'a str,
     input: Vec<InputItem<'a>>,
@@ -155,24 +188,15 @@ struct CreateResponseRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<RequestReasoning>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<Value>,
+    tools: Vec<RequestTool<'a>>,
     stream: bool,
 }
 
-fn build_tools(tools: &dyn ToolServer) -> Vec<Value> {
-    tools
-        .list_tools()
-        .iter()
-        .map(|tool| {
-            let mut value = serde_json::to_value(tool).unwrap();
-            value["type"] = json!("function");
-            value
-        })
-        .collect()
-}
-
 impl<'a> CreateResponseRequest<'a> {
-    fn from_params(params: &InferenceParams<'a>, tools: &dyn ToolServer) -> Self {
+    fn from_params(
+        params: &InferenceParams<'a>,
+        tools: impl Iterator<Item = &'a ToolInfo>,
+    ) -> Self {
         let input = params
             .input
             .iter()
@@ -224,7 +248,7 @@ impl<'a> CreateResponseRequest<'a> {
             reasoning: params.reasoning_effort.map(|effort| RequestReasoning {
                 effort: effort.into(),
             }),
-            tools: build_tools(tools),
+            tools: tools.map(RequestTool::from).collect(),
             stream: true,
         }
     }
@@ -398,13 +422,16 @@ impl OpenaiInterface {
     // causing the UI to display reasoning *after* the response. Need to do
     // some field study to determine how we can reorder these by buffering here
     // and if that's a better design than reordering on UI side.
-    pub fn generate(
+    pub fn generate<T: ToolServer + ?Sized>(
         &self,
         params: InferenceParams<'_>,
-        tools: &dyn ToolServer,
-    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<> {
-        let req_body =
-            serde_json::to_value(CreateResponseRequest::from_params(&params, tools)).unwrap();
+        tools: &T,
+    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<T> {
+        let req_body = serde_json::to_value(CreateResponseRequest::from_params(
+            &params,
+            tools.list_tools(),
+        ))
+        .unwrap();
         let client = self.client.clone();
 
         async_stream::try_stream! {
@@ -643,13 +670,36 @@ mod tests {
             ],
         };
 
-        let tools = DefaultToolServer::default();
-        tools.set_tools(vec![ToolInfo {
-            name: "sh".to_owned(),
-            description: "Run a shell command".to_owned(),
-            input_schema: json!({ "type": "string" }),
-            output_schema: json!({ "type": "object" }),
-        }]);
+        let mut tools = DefaultToolServer::default();
+        tools.set_tools(vec![
+            ToolInfo {
+                name: "sh".to_owned(),
+                description: "Run a shell command".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string" },
+                    },
+                    "required": ["command"],
+                    "additionalProperties": false,
+                }),
+                output_schema: json!({ "type": "object" }),
+            },
+            ToolInfo {
+                name: "noop".to_owned(),
+                description: "Does nothing".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "a": { "type": "integer" },
+                        "b": { "type": "integer" },
+                    },
+                    "required": ["a"],
+                    "additionalProperties": true,
+                }),
+                output_schema: json!({ "type": "object" }),
+            },
+        ]);
 
         let stream = iface.generate(params, &tools);
         let events: Vec<InferenceEvent> = stream
@@ -750,9 +800,31 @@ mod tests {
                     "type": "function",
                     "name": "sh",
                     "description": "Run a shell command",
-                    "input_schema": { "type": "string" },
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "command": { "type": "string" } },
+                        "required": ["command"],
+                        "additionalProperties": false,
+                    },
                     "output_schema": { "type": "object" },
-                }
+                    "strict": true,
+                },
+                {
+                    "type": "function",
+                    "name": "noop",
+                    "description": "Does nothing",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "a": { "type": "integer" },
+                            "b": { "type": "integer" },
+                        },
+                        "required": ["a"],
+                        "additionalProperties": true,
+                    },
+                    "output_schema": { "type": "object" },
+                    "strict": true,
+                },
             ])
         );
     }

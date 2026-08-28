@@ -268,11 +268,11 @@ impl Interface {
         }
     }
 
-    pub fn generate(
+    pub fn generate<T: ToolServer + ?Sized>(
         &self,
         params: InferenceParams<'_>,
-        tools: &dyn ToolServer,
-    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<> {
+        tools: &T,
+    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<T> {
         match self {
             Self::Openai(iface) => iface.generate(params, tools),
         }
