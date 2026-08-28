@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use diesel::SqliteConnection;
 use fnv::FnvHashMap;
 use futures::StreamExt;
@@ -11,7 +12,7 @@ use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, ItemType, NewItem, Response, Session, Turn, TurnType};
-use crate::tasks::{Task, TaskContext};
+use crate::tasks::{Task, TaskContext, TaskError};
 use crate::tools::DefaultToolServer;
 
 pub struct Agent {
@@ -21,10 +22,6 @@ pub struct Agent {
     pub client: DefaultClient,
     pub tools: DefaultToolServer,
     pub conn: SqliteConnection,
-
-    turn: Option<Turn>,
-    response: Option<Response>,
-    items: FnvHashMap<i64, Item>,
 }
 
 impl Agent {
@@ -43,13 +40,72 @@ impl Agent {
             client,
             tools,
             conn,
-            turn: None,
+        }
+    }
+}
+
+impl Task for Agent {
+    type Output = ();
+
+    async fn run(self, context: TaskContext) {
+        let handle = context.spawn(StreamResponse::new(
+            self.session,
+            self.provider,
+            self.model,
+            self.client,
+            self.tools,
+            self.conn,
+            None,
+        ));
+        match handle.join().await {
+            Ok(Ok(result)) => {
+                if let Err(e) = result {
+                    context.send(AppEvent::ErrorMessage(e.to_string()));
+                }
+            }
+            Ok(Err(TaskError::Canceled)) => {}
+            Err(e) => log::error!("agent task failed: {e}"),
+        }
+    }
+}
+
+struct StreamResponse {
+    session: Session,
+    provider: Provider,
+    model: Model,
+    client: DefaultClient,
+    tools: DefaultToolServer,
+    conn: SqliteConnection,
+
+    turn_id: Option<i32>,
+    response: Option<Response>,
+    items: FnvHashMap<i64, Item>,
+}
+
+impl StreamResponse {
+    fn new(
+        session: Session,
+        provider: Provider,
+        model: Model,
+        client: DefaultClient,
+        tools: DefaultToolServer,
+        conn: SqliteConnection,
+        turn_id: Option<i32>,
+    ) -> Self {
+        Self {
+            session,
+            provider,
+            model,
+            client,
+            tools,
+            conn,
+            turn_id,
             response: None,
             items: FnvHashMap::default(),
         }
     }
 
-    async fn run(mut self, context: &TaskContext) -> AnyResult<()> {
+    async fn process(&mut self, context: &TaskContext) -> AnyResult<(i32, i32)> {
         let interface = self.provider.create_interface(&self.client)?;
 
         let history = self.load_history()?;
@@ -76,7 +132,16 @@ impl Agent {
                 }
             }
         }
-        Ok(())
+
+        let turn_id = self
+            .turn_id
+            .ok_or_else(|| anyhow!("no turn created"))?;
+        let response_id = self
+            .response
+            .as_ref()
+            .map(|r| r.id)
+            .ok_or_else(|| anyhow!("no response created"))?;
+        Ok((turn_id, response_id))
     }
 
     fn build_params(&self) -> InferenceParams<'_> {
@@ -97,11 +162,11 @@ impl Agent {
     fn handle_event(&mut self, event: InferenceEvent) -> AnyResult<Option<AppEvent>> {
         match event {
             InferenceEvent::Created(created) => {
-                let turn = self.ensure_turn()?;
+                let turn_id = self.ensure_turn()?;
                 let response = Response::create(
                     &mut self.conn,
                     self.session.id,
-                    turn.id,
+                    turn_id,
                     Some(&created.id),
                     Some(&created.status),
                 )?;
@@ -232,13 +297,13 @@ impl Agent {
         upstream_call_id: Option<&str>,
         text: Option<&str>,
     ) -> AnyResult<Item> {
-        let turn = self.ensure_turn()?;
+        let turn_id = self.ensure_turn()?;
         let response_id = self.response.as_ref().map(|r| r.id);
         let item = Item::create(
             &mut self.conn,
             NewItem {
                 session_id: self.session.id,
-                turn_id: turn.id,
+                turn_id,
                 response_id,
                 provider_id: Some(self.provider.id),
                 ty,
@@ -252,9 +317,9 @@ impl Agent {
         Ok(item)
     }
 
-    fn ensure_turn(&mut self) -> AnyResult<Turn> {
-        if let Some(turn) = &self.turn {
-            return Ok(turn.clone());
+    fn ensure_turn(&mut self) -> AnyResult<i32> {
+        if let Some(turn_id) = self.turn_id {
+            return Ok(turn_id);
         }
         let turn = Turn::create(
             &mut self.conn,
@@ -264,8 +329,8 @@ impl Agent {
             Some(&self.provider.name),
             Some(&self.model.id),
         )?;
-        self.turn = Some(turn.clone());
-        Ok(turn)
+        self.turn_id = Some(turn.id);
+        Ok(turn.id)
     }
 
     /// Marks the active response as failed
@@ -277,13 +342,11 @@ impl Agent {
     }
 }
 
-impl Task for Agent {
-    type Output = ();
+impl Task for StreamResponse {
+    type Output = AnyResult<(i32, i32)>;
 
-    async fn run(self, context: TaskContext) {
-        if let Err(e) = self.run(&context).await {
-            context.send(AppEvent::ErrorMessage(e.to_string()));
-        }
+    async fn run(mut self, context: TaskContext) -> AnyResult<(i32, i32)> {
+        self.process(&context).await
     }
 }
 
