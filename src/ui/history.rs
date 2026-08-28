@@ -172,6 +172,14 @@ fn render(
             let result = render_thought(theme, width, content);
             (result.rows, result.resume_point)
         }
+        HistoryItemType::ToolCall => (
+            render_command_prompt(theme, width, content),
+            ResumePoint { offset: 0, row: 0 },
+        ),
+        HistoryItemType::ToolOutput => (
+            render_command_output(theme, width, content),
+            ResumePoint { offset: 0, row: 0 },
+        ),
         _ => {
             let result = render_markdown(theme, width, content);
             (result.rows, result.resume_point)
@@ -184,6 +192,8 @@ fn get_item_type(item: &Item) -> HistoryItemType {
         ItemType::UserText => HistoryItemType::User,
         ItemType::ResponseText => HistoryItemType::Response,
         ItemType::Reasoning => HistoryItemType::Thought,
+        ItemType::ToolCall => HistoryItemType::ToolCall,
+        ItemType::ToolOutput => HistoryItemType::ToolOutput,
     }
 }
 
@@ -271,6 +281,8 @@ pub enum HistoryItemType {
     User,
     Thought,
     Response,
+    ToolCall,
+    ToolOutput,
     CommandPrompt,
     CommandOutput,
 }
@@ -283,6 +295,8 @@ impl HistoryItemType {
             HistoryItemType::User => "user",
             HistoryItemType::Thought => "thought",
             HistoryItemType::Response => "response",
+            HistoryItemType::ToolCall => "tool_call",
+            HistoryItemType::ToolOutput => "tool_output",
             HistoryItemType::CommandPrompt => "command_prompt",
             HistoryItemType::CommandOutput => "command_output",
         }

@@ -42,6 +42,8 @@ pub enum ItemType {
     UserText,
     ResponseText,
     Reasoning,
+    ToolCall,
+    ToolOutput,
 }
 
 impl fmt::Display for ItemType {
@@ -50,6 +52,8 @@ impl fmt::Display for ItemType {
             ItemType::UserText => write!(f, "user_text"),
             ItemType::ResponseText => write!(f, "response_text"),
             ItemType::Reasoning => write!(f, "reasoning"),
+            ItemType::ToolCall => write!(f, "tool_call"),
+            ItemType::ToolOutput => write!(f, "tool_output"),
         }
     }
 }
@@ -61,6 +65,8 @@ impl FromStr for ItemType {
             "user_text" => Ok(ItemType::UserText),
             "response_text" => Ok(ItemType::ResponseText),
             "reasoning" => Ok(ItemType::Reasoning),
+            "tool_call" => Ok(ItemType::ToolCall),
+            "tool_output" => Ok(ItemType::ToolOutput),
             other => Err(anyhow!("unknown item type: {other}")),
         }
     }
@@ -71,6 +77,8 @@ impl ItemType {
         match ty {
             "message" => Some(ItemType::ResponseText),
             "reasoning" => Some(ItemType::Reasoning),
+            "function_call" => Some(ItemType::ToolCall),
+            "function_call_output" => Some(ItemType::ToolOutput),
             _ => None,
         }
     }
@@ -832,17 +840,58 @@ mod tests {
         )
         .expect("create answer item");
 
+        let tool_call = Item::create(
+            &mut conn,
+            NewItem {
+                session_id: session.id,
+                turn_id: assistant_turn.id,
+                response_id: Some(response.id),
+                provider_id: Some(999),
+                ty: ItemType::ToolCall,
+                upstream_id: Some("fc_1"),
+                upstream_type: Some("function_call"),
+                upstream_call_id: Some("call_1"),
+                text: Some("read_file"),
+            },
+        )
+        .expect("create tool call item");
+        assert_eq!(tool_call.ty, "tool_call");
+        assert_eq!(tool_call.ty().unwrap(), ItemType::ToolCall);
+        assert_eq!(tool_call.upstream_call_id.as_deref(), Some("call_1"));
+
+        let tool_output = Item::create(
+            &mut conn,
+            NewItem {
+                session_id: session.id,
+                turn_id: assistant_turn.id,
+                response_id: None,
+                provider_id: Some(999),
+                ty: ItemType::ToolOutput,
+                upstream_id: Some("fco_1"),
+                upstream_type: Some("function_call_output"),
+                upstream_call_id: Some("call_1"),
+                text: Some("file contents"),
+            },
+        )
+        .expect("create tool output item");
+        assert_eq!(tool_output.ty, "tool_output");
+        assert_eq!(tool_output.ty().unwrap(), ItemType::ToolOutput);
+
         let session_items =
             Item::list_by_session(&mut conn, session.id).expect("list session items");
-        assert_eq!(session_items.len(), 3);
+        assert_eq!(session_items.len(), 5);
         assert_eq!(session_items[0].id, prompt.id);
         assert_eq!(session_items[1].id, reasoning.id);
         assert_eq!(session_items[2].id, answer.id);
+        assert_eq!(session_items[3].id, tool_call.id);
+        assert_eq!(session_items[4].id, tool_output.id);
 
         let turn_items = Item::list_by_turn(&mut conn, assistant_turn.id).expect("list turn items");
-        assert_eq!(turn_items.len(), 2);
+        assert_eq!(turn_items.len(), 4);
         assert_eq!(turn_items[0].id, reasoning.id);
         assert_eq!(turn_items[1].id, answer.id);
+        assert_eq!(turn_items[2].id, tool_call.id);
+        assert_eq!(turn_items[3].id, tool_output.id);
 
         let turn_responses =
             Response::list_by_turn(&mut conn, assistant_turn.id).expect("list turn responses");
@@ -853,7 +902,9 @@ mod tests {
         assert!(Response::delete_by_id(&mut conn, response.id).expect("delete response"));
         assert!(Item::get_by_id(&mut conn, reasoning.id).unwrap().is_none());
         assert!(Item::get_by_id(&mut conn, answer.id).unwrap().is_none());
+        assert!(Item::get_by_id(&mut conn, tool_call.id).unwrap().is_none());
         assert!(Item::get_by_id(&mut conn, prompt.id).unwrap().is_some());
+        assert!(Item::get_by_id(&mut conn, tool_output.id).unwrap().is_some());
         assert!(
             Turn::get_by_id(&mut conn, assistant_turn.id)
                 .unwrap()
@@ -891,6 +942,7 @@ mod tests {
                 .is_none()
         );
         assert!(Item::get_by_id(&mut conn, orphan.id).unwrap().is_none());
+        assert!(Item::get_by_id(&mut conn, tool_output.id).unwrap().is_none());
 
         // Deleting the session cascades to remaining turns and items
         assert!(Session::delete_by_id(&mut conn, session.id).expect("delete session"));
@@ -905,7 +957,22 @@ mod tests {
             ItemType::from_upstream("reasoning"),
             Some(ItemType::Reasoning)
         );
-        assert_eq!(ItemType::from_upstream("function_call"), None);
+        assert_eq!(
+            ItemType::from_upstream("function_call"),
+            Some(ItemType::ToolCall)
+        );
+        assert_eq!(
+            ItemType::from_upstream("function_call_output"),
+            Some(ItemType::ToolOutput)
+        );
+        assert_eq!(
+            "tool_call".parse::<ItemType>().unwrap(),
+            ItemType::ToolCall
+        );
+        assert_eq!(
+            "tool_output".parse::<ItemType>().unwrap(),
+            ItemType::ToolOutput
+        );
         assert!("bogus".parse::<ItemType>().is_err());
         assert!("bogus".parse::<TurnType>().is_err());
     }

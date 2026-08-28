@@ -79,6 +79,7 @@ pub enum ChatMessage<'a> {
 ///
 /// Text items are always included; reasoning items are only included when
 /// `include_reasoning` is true, preferring the summary over the raw text.
+/// Tool call and output items are ignored for now.
 pub fn build_history<'a>(
     items: &'a [Item],
     include_reasoning: bool,
@@ -105,6 +106,7 @@ pub fn build_history<'a>(
                     messages.push(ChatMessage::Reasoning { content });
                 }
             }
+            ItemType::ToolCall | ItemType::ToolOutput => {}
         }
     }
     Ok(messages)
