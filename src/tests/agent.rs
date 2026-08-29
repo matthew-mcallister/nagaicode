@@ -328,6 +328,92 @@ async fn test_agent_stream_without_item_events() {
 }
 
 #[tokio::test]
+async fn test_agent_out_of_order_items() {
+    use crate::session::{Item, ItemType};
+
+    let mut app = App::new().unwrap();
+
+    let provider = Provider::create(
+        app.conn(),
+        "test",
+        InterfaceId::Openai,
+        "sk-test",
+        Some("https://example.test/v1"),
+    )
+    .expect("create provider");
+    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    app.switch_model(provider, model).unwrap();
+
+    let url = "https://example.test/v1/responses";
+
+    app.client_mut().add_response(
+        url,
+        ResponseData::Sse(QueueStream::from(vec![
+            Ok(SseEvent::Open),
+            Ok(create_message_event(
+                r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"delta":"The answer is 2."}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The answer is 2."}]}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.reasoning_text.delta","item_id":"rs_1","output_index":0,"delta":"I should add."}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#,
+            )),
+            Ok(create_message_event(
+                r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed"}}"#,
+            )),
+            Ok(create_message_event("[DONE]")),
+        ])),
+    );
+
+    for c in "what is 1+1?".chars() {
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
+            .await;
+    }
+    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
+    app.await_task().await.expect("await agent task");
+    app.process_pending_events().await;
+
+    let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+    let items = Item::list_by_session(app.conn(), session_id).unwrap();
+    assert_eq!(items.len(), 3);
+    assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
+
+    let reasoning = &items[1];
+    assert_eq!(reasoning.ty().unwrap(), ItemType::Reasoning);
+    assert_eq!(reasoning.upstream_id.as_deref(), Some("rs_1"));
+    assert_eq!(reasoning.text.as_deref(), Some("I should add."));
+
+    let answer = &items[2];
+    assert_eq!(answer.ty().unwrap(), ItemType::ResponseText);
+    assert_eq!(answer.upstream_id.as_deref(), Some("msg_1"));
+    assert_eq!(answer.text.as_deref(), Some("The answer is 2."));
+
+    assert!(
+        answer.id < reasoning.id,
+        "expected items inserted in arrival order"
+    );
+    assert_eq!(
+        reasoning.seqno,
+        items[0].seqno + 1,
+        "expected seqno to follow output_index, not arrival order"
+    );
+    assert_eq!(answer.seqno, reasoning.seqno + 1);
+}
+
+#[tokio::test]
 async fn test_agent_history() {
     use crate::session::{Item, ItemType, Turn, TurnType};
 

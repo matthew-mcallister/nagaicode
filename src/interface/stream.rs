@@ -20,6 +20,7 @@ pub struct StreamProcessor<'a, S> {
     provider_name: String,
     model_id: String,
     turn_id: Option<i32>,
+    base_seqno: i64,
     response: Option<Response>,
     items: FnvHashMap<i64, Item>,
 }
@@ -30,6 +31,7 @@ impl<'a, S> StreamProcessor<'a, S> {
         session: Session,
         conn: &'a mut SqliteConnection,
         turn_id: Option<i32>,
+        base_seqno: i64,
         stream: S,
         provider_id: i32,
         provider_name: String,
@@ -43,6 +45,7 @@ impl<'a, S> StreamProcessor<'a, S> {
             provider_name,
             model_id,
             turn_id,
+            base_seqno,
             response: None,
             items: FnvHashMap::default(),
         }
@@ -198,7 +201,7 @@ impl<'a, S> StreamProcessor<'a, S> {
                 upstream_type,
                 upstream_call_id,
                 text,
-                seqno: None,
+                seqno: Some(self.base_seqno + output_index),
                 completed: Some(true),
             },
         )?;

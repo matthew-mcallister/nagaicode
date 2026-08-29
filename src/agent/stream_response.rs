@@ -43,10 +43,12 @@ impl StreamResponse {
         let stream = interface.generate(params, context.tools());
 
         let sender = context.sender().clone();
+        let base_seqno = Item::max_seqno(context.connection()?, self.session.id)?.unwrap_or(0) + 1;
         let mut processor = StreamProcessor::new(
             self.session,
             context.connection()?,
             self.turn_id,
+            base_seqno,
             stream,
             self.provider.id,
             self.provider.name.clone(),
