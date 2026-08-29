@@ -56,15 +56,15 @@ struct Marker {
 }
 
 #[derive(Debug)]
-struct PhrasingBuilder {
-    theme: &'static Theme,
+struct PhrasingBuilder<'a> {
+    theme: &'a Theme,
     plain_text: String,
     markers: Vec<Marker>,
     cur_style: Style,
 }
 
-impl PhrasingBuilder {
-    fn new(theme: &'static Theme, base_style: Style) -> Self {
+impl<'a> PhrasingBuilder<'a> {
+    fn new(theme: &'a Theme, base_style: Style) -> Self {
         Self {
             theme,
             plain_text: String::new(),
@@ -243,8 +243,8 @@ impl PhrasingBuilder {
 
 /// High-level renderer for dealing with flow layout constructs
 #[derive(Debug)]
-struct FlowBuilder {
-    theme: &'static Theme,
+struct FlowBuilder<'a> {
+    theme: &'a Theme,
     /// Total render width in columns. Every completed row is exactly this
     /// wide. Less-than-full lines must be padded with spaces.
     width: usize,
@@ -261,8 +261,8 @@ struct FlowBuilder {
     resume_point: ResumePoint,
 }
 
-impl FlowBuilder {
-    fn new(theme: &'static Theme, width: usize) -> Self {
+impl<'a> FlowBuilder<'a> {
+    fn new(theme: &'a Theme, width: usize) -> Self {
         Self {
             theme,
             width,
@@ -317,7 +317,7 @@ impl FlowBuilder {
     }
 }
 
-fn push_rows(fb: &mut FlowBuilder, rows: &[Row]) {
+fn push_rows(fb: &mut FlowBuilder<'_>, rows: &[Row]) {
     for row in rows {
         for g in &row.graphemes {
             // Newline added by the wrapping routine, not part of the source
@@ -333,7 +333,7 @@ fn push_rows(fb: &mut FlowBuilder, rows: &[Row]) {
 /// Renders phrasing content (the inline children of a paragraph or heading).
 /// The returned iterator is owned, so `children` need only live for the
 /// duration of this call.
-fn push_phrasing(flow: &mut FlowBuilder, children: &[Node]) {
+fn push_phrasing(flow: &mut FlowBuilder<'_>, children: &[Node]) {
     let mut phrasing = PhrasingBuilder::new(flow.theme, flow.prefix.cur_style());
     phrasing.push_all(children);
     let PhrasingBuilder {
@@ -381,7 +381,7 @@ fn push_phrasing(flow: &mut FlowBuilder, children: &[Node]) {
     }
 }
 
-fn heading_to_rows(flow: &mut FlowBuilder, heading: &Heading) {
+fn heading_to_rows(flow: &mut FlowBuilder<'_>, heading: &Heading) {
     let mut children = Vec::with_capacity(heading.children.len() + 1);
     children.push(Node::Text(Text {
         value: format!("{} ", "#".repeat(heading.depth as usize)),
@@ -396,7 +396,7 @@ fn heading_to_rows(flow: &mut FlowBuilder, heading: &Heading) {
     flow.restore(restore_point);
 }
 
-fn push_preformatted(flow: &mut FlowBuilder, style: Style, value: &str) {
+fn push_preformatted(flow: &mut FlowBuilder<'_>, style: Style, value: &str) {
     let restore = flow.save();
     flow.prefix.set_style(style);
     flow.prefix.freeze_style(true);
@@ -412,7 +412,7 @@ fn push_preformatted(flow: &mut FlowBuilder, style: Style, value: &str) {
 }
 
 /// Renders a thematic break as a row of `width` hyphens.
-fn thematic_break(flow: &mut FlowBuilder) {
+fn thematic_break(flow: &mut FlowBuilder<'_>) {
     let count = flow.remaining_width();
     let restore = flow.save();
     flow.row.set_text(flow.theme.text_subtle);
@@ -421,7 +421,7 @@ fn thematic_break(flow: &mut FlowBuilder) {
     flow.restore(restore);
 }
 
-fn blockquote(flow: &mut FlowBuilder, quote: &Blockquote) {
+fn blockquote(flow: &mut FlowBuilder<'_>, quote: &Blockquote) {
     let restore = flow.save();
     let border_style = flow.theme.text_quote;
 
@@ -438,7 +438,7 @@ fn blockquote(flow: &mut FlowBuilder, quote: &Blockquote) {
     flow.restore(restore);
 }
 
-fn push_flow_children(flow: &mut FlowBuilder, spread: bool, children: &[Node]) {
+fn push_flow_children(flow: &mut FlowBuilder<'_>, spread: bool, children: &[Node]) {
     flow.depth += 1;
     for (i, child) in children.iter().enumerate() {
         if i > 0 && spread {
@@ -462,7 +462,7 @@ fn push_flow_children(flow: &mut FlowBuilder, spread: bool, children: &[Node]) {
     flow.depth -= 1;
 }
 
-fn footnote_definition(flow: &mut FlowBuilder, footnote: &FootnoteDefinition) {
+fn footnote_definition(flow: &mut FlowBuilder<'_>, footnote: &FootnoteDefinition) {
     let header = format!("[^{}]:", footnote.identifier);
     let rows = wrap_line_naive(flow.remaining_width(), &header);
     push_rows(flow, &rows);
@@ -474,7 +474,7 @@ fn footnote_definition(flow: &mut FlowBuilder, footnote: &FootnoteDefinition) {
     flow.restore(restore);
 }
 
-fn definition(flow: &mut FlowBuilder, definition: &Definition) {
+fn definition(flow: &mut FlowBuilder<'_>, definition: &Definition) {
     let line = format!("[{}]: {}", definition.identifier, definition.url);
     let rows = wrap_line_naive(flow.remaining_width(), &line);
     push_rows(flow, &rows);
@@ -484,7 +484,7 @@ fn definition(flow: &mut FlowBuilder, definition: &Definition) {
 /// "- ", ordered lists with a left-aligned number. Continuation rows are
 /// indented to align with the item content. When the list is spread, a blank
 /// line separates the children.
-fn list(flow: &mut FlowBuilder, list: &List) {
+fn list(flow: &mut FlowBuilder<'_>, list: &List) {
     // The number prefix is padded so all items share a common width
     let prefix_width = if list.ordered {
         3 + (list.children.len().max(1)).ilog10() as usize
@@ -523,13 +523,13 @@ fn list(flow: &mut FlowBuilder, list: &List) {
     }
 }
 
-fn push_flow_node(flow: &mut FlowBuilder, node: &Node) {
+fn push_flow_node(flow: &mut FlowBuilder<'_>, node: &Node) {
     match node {
         Node::Root(root) => push_flow_children(flow, true, &root.children),
 
         Node::Table(_)
         | Node::TableRow(_)
-        | Node::TableCell(_) => todo!(),
+        | Node::TableCell(_) => {}, // TODO!
 
         Node::Paragraph(paragraph) => push_phrasing(flow, &paragraph.children),
         Node::Blockquote(quote) => blockquote(flow, quote),
@@ -571,12 +571,21 @@ fn push_flow_node(flow: &mut FlowBuilder, node: &Node) {
 }
 
 /// Place to begin at next Markdown rerender
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ResumePoint {
     /// Byte offset in source
     pub offset: usize,
     /// Row in rendered output
     pub row: usize,
+}
+
+impl ResumePoint {
+    pub fn add(self, other: Self) -> Self {
+        Self {
+            offset: self.offset + other.offset,
+            row: self.row + other.row,
+        }
+    }
 }
 
 /// Exposed fields:
@@ -608,7 +617,7 @@ pub struct MarkdownResult {
 /// Converts a markdown document into preformatted lines ready to be printed
 /// to stdout. Every row is exactly `width` columns wide.
 pub fn render_markdown(
-    theme: &'static Theme,
+    theme: &Theme,
     width: usize,
     text: &str,
 ) -> MarkdownResult {
@@ -631,7 +640,7 @@ pub fn render_markdown(
 }
 
 pub fn render_mdast(
-    theme: &'static Theme,
+    theme: &Theme,
     width: usize,
     node: &Node,
 ) -> MarkdownResult {

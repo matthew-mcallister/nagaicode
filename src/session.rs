@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use chrono::NaiveDateTime;
 use diesel::backend::Backend;
 use diesel::deserialize::{self, FromSql};
@@ -15,6 +15,7 @@ use crate::error::{AnyError, AnyResult};
 use crate::interface::Usage;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::schema::{item, response, session, turn};
+use crate::tools::ToolResult;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, diesel::AsExpression, diesel::FromSqlRow)]
 #[diesel(sql_type = Text)]
@@ -466,6 +467,26 @@ impl DataQuery for Response {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ToolCallArgs {
+    pub name: String,
+    pub args: Value,
+}
+
+impl DataQuery for ToolCallArgs {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "name": self.query("/name")?,
+                "args": self.query("/args")?,
+            }))),
+            "name" => Ok(QueryField::Value(self.name.clone().into())),
+            "args" => Ok(QueryField::Value(self.args.clone())),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
 /// Basic datum in human/agent/tool loop history.
 #[derive(Debug, Clone, Eq, PartialEq, Queryable, Selectable)]
 #[diesel(table_name = item)]
@@ -658,6 +679,31 @@ impl Item {
             .map(serde_json::from_str)
             .transpose()
             .map_err(Into::into)
+    }
+
+    pub fn tool_args(&self) -> AnyResult<Option<ToolCallArgs>> {
+        if self.ty()? != ItemType::ToolOutput {
+            Ok(None)
+        } else if let Some(name) = self.text.clone()
+            && let Some(args) = self.json()?.clone()
+        {
+            Ok(Some(ToolCallArgs { name, args }))
+        } else {
+            bail!("tool output item {} has no output", self.id);
+        }
+    }
+
+    /// For tool output items, returns the output content, if present.
+    pub fn tool_output(&self) -> AnyResult<Option<ToolResult>> {
+        Ok(if !self.completed || self.ty()? != ItemType::ToolOutput {
+            None
+        } else if let Some(json) = self.json()? {
+            Some(ToolResult::Json(json))
+        } else if let Some(text) = self.text.clone() {
+            Some(ToolResult::Text(text))
+        } else {
+            bail!("tool output item {} has no output", self.id);
+        })
     }
 }
 

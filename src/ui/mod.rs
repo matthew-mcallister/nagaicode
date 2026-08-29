@@ -10,11 +10,12 @@ pub mod history;
 pub mod history_view;
 pub mod markdown;
 pub mod padded;
+pub mod history_item_content;
 pub mod scroll_bar;
 pub mod stacked_view;
 pub mod style;
 pub mod styled_string;
 pub mod text;
-pub mod tool_output;
+pub mod tool_render_item;
 
 pub use component::Component;

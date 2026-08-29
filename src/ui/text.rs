@@ -7,7 +7,7 @@ use unicode_width::UnicodeWidthStr;
 
 pub const TAB_WIDTH: usize = 4;
 pub const SPACES: &str = const {
-    let Ok(s) = std::str::from_utf8(&[b' '; 1024]) else { panic!() };
+    let Ok(s) = std::str::from_utf8(&[b' '; 2048]) else { panic!() };
     s
 };
 

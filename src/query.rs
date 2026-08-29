@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::hash::BuildHasher;
+
 use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 
@@ -101,8 +104,27 @@ impl<T> DataQuery for &[T]
     }
 }
 
+impl<V: DataQuery, S: BuildHasher> DataQuery for HashMap<String, V, S> {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => {
+                let mut map = serde_json::Map::new();
+                for (k, v) in self.into_iter() {
+                    map.insert(k.clone(), v.query("")?);
+                }
+                Ok(QueryField::Value(Value::Object(map)))
+            },
+            key => {
+                let v = self.get(key).ok_or_else(|| QueryError::InvalidField(field.to_string()))?;
+                Ok(QueryField::DataQuery(v))
+            }
+        }
+    }
+}
+
 /// Trait for converting types to JSON. Mainly intended for primitive values
 /// like strings and ints.
+// TODO: Replace nontrivial uses of ToJson with DataQuery
 pub trait ToJson {
     fn to_json(self) -> Value;
 }

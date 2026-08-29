@@ -7,6 +7,8 @@ use tokio::process::Command;
 
 #[cfg(not(test))]
 pub type DefaultToolServer = HostToolServer;
+use crate::query::ToJson;
+
 #[cfg(test)]
 pub use self::mock::MockToolServer as DefaultToolServer;
 
@@ -31,6 +33,39 @@ impl ToolResult {
     /// Creates a text error result.
     pub fn error(msg: impl Into<String>) -> Self {
         Self::Text(msg.into())
+    }
+
+    pub fn into_text(self) -> Option<String> {
+        if let Self::Text(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_json(self) -> Option<Value> {
+        if let Self::Json(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_json(&self) -> Option<&Value> {
+        if let Self::Json(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+}
+
+impl ToJson for ToolResult {
+    fn to_json(self) -> Value {
+        match self {
+            ToolResult::Text(s) => s.into(),
+            ToolResult::Json(v) => v,
+        }
     }
 }
 

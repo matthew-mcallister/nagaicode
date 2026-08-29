@@ -93,6 +93,10 @@ impl<T> Entry<T> {
         self.generation.is_multiple_of(2)
     }
 
+    fn into_inner(mut self) -> Option<T> {
+        self.take(self.generation, 0)
+    }
+
     fn get(&self, generation: u32) -> Option<&T> {
         if self.generation == generation {
             self.payload()
@@ -324,6 +328,13 @@ impl<T> Arena<T> {
                 entry.get_mut(entry.generation).map(|v| (id, v))
             }
         })
+    }
+
+    /// Returns an draining iterator over the elements contained in the arena,
+    /// in no particular order.
+    pub fn drain(&mut self) -> impl Iterator<Item = T> + '_ {
+        self.entries.drain(..)
+            .filter_map(|entry| Some(entry.into_inner()?))
     }
 }
 
