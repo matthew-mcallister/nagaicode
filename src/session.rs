@@ -1,6 +1,11 @@
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
+use diesel::backend::Backend;
+use diesel::deserialize::{self, FromSql};
 use diesel::prelude::*;
+use diesel::serialize::{self, IsNull, ToSql};
+use diesel::sql_types::Text;
+use diesel::sqlite::Sqlite;
 use diesel::sqlite::SqliteConnection;
 use serde_json::{Value, json};
 use std::fmt;
@@ -11,7 +16,8 @@ use crate::interface::Usage;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::schema::{item, response, session, turn};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, diesel::AsExpression, diesel::FromSqlRow)]
+#[diesel(sql_type = Text)]
 pub enum TurnType {
     User,
     Assistant,
@@ -37,7 +43,22 @@ impl FromStr for TurnType {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+impl ToSql<Text, Sqlite> for TurnType {
+    fn to_sql<'b>(&'b self, out: &mut serialize::Output<'b, '_, Sqlite>) -> serialize::Result {
+        out.set_value(self.to_string());
+        Ok(IsNull::No)
+    }
+}
+
+impl FromSql<Text, Sqlite> for TurnType {
+    fn from_sql(bytes: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
+        let value = <String as FromSql<Text, Sqlite>>::from_sql(bytes)?;
+        value.parse().map_err(Into::into)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, diesel::AsExpression, diesel::FromSqlRow)]
+#[diesel(sql_type = Text)]
 pub enum ItemType {
     UserText,
     ResponseText,
@@ -69,6 +90,20 @@ impl FromStr for ItemType {
             "tool_output" => Ok(ItemType::ToolOutput),
             other => Err(anyhow!("unknown item type: {other}")),
         }
+    }
+}
+
+impl ToSql<Text, Sqlite> for ItemType {
+    fn to_sql<'b>(&'b self, out: &mut serialize::Output<'b, '_, Sqlite>) -> serialize::Result {
+        out.set_value(self.to_string());
+        Ok(IsNull::No)
+    }
+}
+
+impl FromSql<Text, Sqlite> for ItemType {
+    fn from_sql(bytes: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
+        let value = <String as FromSql<Text, Sqlite>>::from_sql(bytes)?;
+        value.parse().map_err(Into::into)
     }
 }
 
@@ -173,33 +208,14 @@ pub struct Turn {
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Insertable)]
+#[diesel(table_name = turn)]
 pub struct NewTurn<'a> {
     pub session_id: i32,
     pub ty: TurnType,
     pub provider_id: Option<i32>,
     pub provider_name: Option<&'a str>,
     pub model_id: Option<&'a str>,
-}
-
-impl<'a> diesel::insertable::Insertable<turn::table> for NewTurn<'a> {
-    type Values = <(
-        Option<diesel::dsl::Eq<turn::session_id, i32>>,
-        Option<diesel::dsl::Eq<turn::ty, String>>,
-        Option<diesel::dsl::Eq<turn::provider_id, i32>>,
-        Option<diesel::dsl::Eq<turn::provider_name, &'a str>>,
-        Option<diesel::dsl::Eq<turn::model_id, &'a str>>,
-    ) as diesel::insertable::Insertable<turn::table>>::Values;
-
-    fn values(self) -> Self::Values {
-        diesel::insertable::Insertable::<turn::table>::values((
-            Some(turn::session_id.eq(self.session_id)),
-            Some(turn::ty.eq(self.ty.to_string())),
-            self.provider_id.map(|x| turn::provider_id.eq(x)),
-            self.provider_name.map(|x| turn::provider_name.eq(x)),
-            self.model_id.map(|x| turn::model_id.eq(x)),
-        ))
-    }
 }
 
 impl Turn {
@@ -485,7 +501,8 @@ pub struct Item {
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Insertable)]
+#[diesel(table_name = item)]
 pub struct NewItem<'a> {
     pub session_id: Option<i32>,
     pub turn_id: Option<i32>,
@@ -499,38 +516,6 @@ pub struct NewItem<'a> {
     /// Explicit seqno, or `None` to autoincrement
     pub seqno: Option<i64>,
     pub completed: Option<bool>,
-}
-
-impl<'a> diesel::insertable::Insertable<item::table> for NewItem<'a> {
-    type Values = <(
-        Option<diesel::dsl::Eq<item::session_id, i32>>,
-        Option<diesel::dsl::Eq<item::turn_id, i32>>,
-        Option<diesel::dsl::Eq<item::response_id, i32>>,
-        Option<diesel::dsl::Eq<item::provider_id, i32>>,
-        Option<diesel::dsl::Eq<item::ty, String>>,
-        Option<diesel::dsl::Eq<item::upstream_id, &'a str>>,
-        Option<diesel::dsl::Eq<item::upstream_type, &'a str>>,
-        Option<diesel::dsl::Eq<item::upstream_call_id, &'a str>>,
-        Option<diesel::dsl::Eq<item::text, &'a str>>,
-        Option<diesel::dsl::Eq<item::seqno, i64>>,
-        Option<diesel::dsl::Eq<item::completed, bool>>,
-    ) as diesel::insertable::Insertable<item::table>>::Values;
-
-    fn values(self) -> Self::Values {
-        diesel::insertable::Insertable::<item::table>::values((
-            self.session_id.map(|x| item::session_id.eq(x)),
-            self.turn_id.map(|x| item::turn_id.eq(x)),
-            self.response_id.map(|x| item::response_id.eq(x)),
-            self.provider_id.map(|x| item::provider_id.eq(x)),
-            self.ty.map(|x| item::ty.eq(x.to_string())),
-            self.upstream_id.map(|x| item::upstream_id.eq(x)),
-            self.upstream_type.map(|x| item::upstream_type.eq(x)),
-            self.upstream_call_id.map(|x| item::upstream_call_id.eq(x)),
-            self.text.map(|x| item::text.eq(x)),
-            self.seqno.map(|x| item::seqno.eq(x)),
-            self.completed.map(|x| item::completed.eq(x)),
-        ))
-    }
 }
 
 impl Item {
@@ -793,6 +778,12 @@ mod tests {
         assert_eq!(user_turn.provider_id, None);
         assert_eq!(user_turn.provider_name, None);
         assert_eq!(user_turn.model_id, None);
+        let turn_ty = turn::table
+            .filter(turn::id.eq(user_turn.id))
+            .select(turn::ty)
+            .first::<TurnType>(&mut conn)
+            .expect("read turn type");
+        assert_eq!(turn_ty, TurnType::User);
 
         let assistant_turn = Turn::create(
             &mut conn,
@@ -874,6 +865,12 @@ mod tests {
         assert_eq!(prompt.ty().unwrap(), ItemType::UserText);
         assert_eq!(prompt.text.as_deref(), Some("hello"));
         assert_eq!(prompt.response_id, None);
+        let item_ty = item::table
+            .filter(item::id.eq(prompt.id))
+            .select(item::ty)
+            .first::<ItemType>(&mut conn)
+            .expect("read item type");
+        assert_eq!(item_ty, ItemType::UserText);
 
         let reasoning = Item::create(
             &mut conn,
