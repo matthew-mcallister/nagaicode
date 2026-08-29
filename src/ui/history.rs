@@ -316,6 +316,7 @@ pub struct HistoryItem {
     ty: HistoryItemType,
     resume_point: ResumePoint,
     item_id: Option<i32>,
+    seqno: Option<i64>,
     first_row: Id<HistoryRow>,
     last_row: Id<HistoryRow>,
     num_rows: usize,
@@ -366,6 +367,7 @@ impl HistoryItem {
             ty,
             resume_point,
             item_id,
+            seqno: None,
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 0,
@@ -472,6 +474,7 @@ impl HistoryItem {
 ///   - offset: number
 ///   - row: number
 /// - item_id: number | null
+/// - seqno: number | null
 /// - first_row: id
 /// - last_row: id
 /// - num_rows: number
@@ -483,6 +486,7 @@ impl DataQuery for HistoryItem {
                 "ty": self.query("/ty")?,
                 "resume_point": self.query("/resume_point")?,
                 "item_id": self.query("/item_id")?,
+                "seqno": self.query("/seqno")?,
                 "first_row": self.query("/first_row")?,
                 "last_row": self.query("/last_row")?,
                 "num_rows": self.query("/num_rows")?,
@@ -491,6 +495,7 @@ impl DataQuery for HistoryItem {
             "ty" => Ok(QueryField::Value(json!(self.ty.as_str()))),
             "resume_point" => Ok(QueryField::DataQuery(&self.resume_point)),
             "item_id" => Ok(QueryField::Value(json!(self.item_id))),
+            "seqno" => Ok(QueryField::Value(json!(self.seqno))),
             "first_row" => Ok(QueryField::Value(self.first_row.to_json())),
             "last_row" => Ok(QueryField::Value(self.last_row.to_json())),
             "num_rows" => Ok(QueryField::Value(json!(self.num_rows))),
@@ -673,10 +678,10 @@ impl History {
         }
         self.width = width;
 
-        let saved: Vec<(HistoryItemType, String, Option<i32>)> = self
+        let saved: Vec<(HistoryItemType, String, Option<i64>, Option<i32>)> = self
             .item
             .iter()
-            .map(|(_, item)| (item.ty, item.content.clone(), item.item_id))
+            .map(|(_, item)| (item.ty, item.content.clone(), item.seqno, item.item_id))
             .collect();
 
         self.item.clear();
@@ -697,7 +702,7 @@ impl History {
         self.viewport_top_pos = 0;
         self.viewport_bottom_pos = 0;
 
-        for (ty, content, item_id) in saved {
+        for (ty, content, seqno, item_id) in saved {
             let prev = self.last_row();
             let id = HistoryItem::new(
                 self.theme,
@@ -709,6 +714,7 @@ impl History {
                 content,
                 item_id,
             );
+            self.item[id].seqno = seqno;
             if let Some(id2) = item_id {
                 self.by_item_id.insert(id2, id);
             }
@@ -740,7 +746,16 @@ impl History {
         }
 
         let ty = get_item_type(item);
-        let prev = self.last_row();
+        let mut prev = self.head;
+        let mut row = self.last_row();
+        while row != self.head {
+            let other = self.rows[row].item;
+            if self.item[other].seqno.is_none_or(|seqno| seqno < item.seqno) {
+                prev = row;
+                break;
+            }
+            row = self.rows[row].prev;
+        }
         let id = HistoryItem::new(
             self.theme,
             &mut self.item,
@@ -751,6 +766,7 @@ impl History {
             item_text(item).to_string(),
             Some(item.id),
         );
+        self.item[id].seqno = Some(item.seqno);
         self.by_item_id.insert(item.id, id);
         self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
@@ -992,6 +1008,7 @@ mod tests {
     use crate::ui::canvas::render_canvas;
     use crate::ui::style::THEME_DARK;
     use crate::ui::style::testing::SetItalic;
+    use chrono::{DateTime, Utc};
     use serde_json::json;
 
     fn history(width: usize, max_height: usize) -> History {
@@ -1311,6 +1328,7 @@ mod tests {
             ty: HistoryItemType::Response,
             resume_point: ResumePoint { offset: 0, row: 0 },
             item_id: None,
+            seqno: Some(7),
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 0,
@@ -1320,6 +1338,7 @@ mod tests {
             "ty": "response",
             "resume_point": item.resume_point.query("/").unwrap(),
             "item_id": null,
+            "seqno": 7,
             "first_row": item.first_row.to_json(),
             "last_row": item.last_row.to_json(),
             "num_rows": 0,
@@ -1332,9 +1351,88 @@ mod tests {
             item.resume_point.query("/").unwrap()
         );
         assert_eq!(item.query("/item_id").unwrap(), json!(null));
+        assert_eq!(item.query("/seqno").unwrap(), json!(7));
         assert_eq!(item.query("/first_row").unwrap(), item.first_row.to_json());
         assert_eq!(item.query("/last_row").unwrap(), item.last_row.to_json());
         assert_eq!(item.query("/num_rows").unwrap(), json!(0));
+    }
+
+    fn make_item(id: i32, seqno: i64) -> Item {
+        Item {
+            id,
+            session_id: 1,
+            turn_id: 1,
+            response_id: None,
+            provider_id: None,
+            ty: ItemType::ResponseText.to_string(),
+            upstream_id: None,
+            upstream_type: None,
+            upstream_call_id: None,
+            text: Some(format!("message {seqno}")),
+            summary: None,
+            encrypted_text: None,
+            json: None,
+            raw_data: None,
+            seqno,
+            completed: true,
+            created_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
+            updated_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
+        }
+    }
+
+    fn item_contents(history: &History) -> Vec<String> {
+        history
+            .query("/items")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["content"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_item_created_order() {
+        let mut h = history(80, 10);
+        for (id, seqno) in [(1, 3), (2, 1), (3, 2)] {
+            let item = make_item(id, seqno);
+            h.handle_update(Update::ItemCreated { item: &item });
+        }
+
+        let seqnos: Vec<i64> = h
+            .query("/items")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["seqno"].as_i64().unwrap())
+            .collect();
+        assert_eq!(seqnos, [1, 2, 3]);
+        assert_eq!(item_contents(&h), ["message 1", "message 2", "message 3"]);
+
+        // UI-only items keep appending at the tail.
+        h.handle_update(Update::HelpMessage("help"));
+        assert_eq!(
+            item_contents(&h),
+            ["message 1", "message 2", "message 3", "help"]
+        );
+
+        // Later session items land after the help item.
+        let item = make_item(4, 4);
+        h.handle_update(Update::ItemCreated { item: &item });
+        assert_eq!(
+            item_contents(&h),
+            ["message 1", "message 2", "message 3", "help", "message 4"]
+        );
+
+        // Updated items are rerendered in place.
+        let mut item = make_item(3, 2);
+        item.text = Some("updated".into());
+        h.handle_update(Update::ItemUpdated { item: &item });
+        assert_eq!(
+            item_contents(&h),
+            ["message 1", "updated", "message 3", "help", "message 4"]
+        );
     }
 
     #[test]
