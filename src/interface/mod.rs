@@ -90,7 +90,8 @@ pub enum ChatMessage<'a> {
 /// Text items are always included; reasoning items are only included when
 /// `include_reasoning` is true, preferring the summary over the raw text.
 /// Tool call and output items are only included when they carry an upstream
-/// call id, which the API requires to correlate them.
+/// call id, which the API requires to correlate them. Incomplete tool outputs
+/// render with a fixed tool-call-interrupted error message.
 pub fn build_history<'a>(
     items: &'a [Item],
     include_reasoning: bool,
@@ -133,7 +134,11 @@ pub fn build_history<'a>(
                 let Some(call_id) = item.upstream_call_id.as_deref() else {
                     continue;
                 };
-                let output = item.json.as_deref().or(item.text.as_deref()).unwrap_or("");
+                let output = if item.completed {
+                    item.json.as_deref().or(item.text.as_deref()).unwrap_or("")
+                } else {
+                    "error: tool call interrupted"
+                };
                 messages.push(ChatMessage::ToolOutput { call_id, output });
             }
         }
@@ -368,6 +373,26 @@ mod tests {
             create_item(&mut conn, session.id, turn.id, ItemType::ToolCall, Some("add"), None);
         let orphan_output =
             create_item(&mut conn, session.id, turn.id, ItemType::ToolOutput, Some("add"), None);
+        let interrupted_call = create_item(
+            &mut conn,
+            session.id,
+            turn.id,
+            ItemType::ToolCall,
+            Some("rm"),
+            Some("call_3"),
+        );
+        let interrupted_output = Item::create(
+            &mut conn,
+            NewItem {
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
+                ty: Some(ItemType::ToolOutput),
+                upstream_call_id: Some("call_3"),
+                completed: Some(false),
+                ..Default::default()
+            },
+        )
+        .expect("create item");
 
         let ids = [
             user_text.id,
@@ -379,6 +404,8 @@ mod tests {
             text_tool_output.id,
             orphan_call.id,
             orphan_output.id,
+            interrupted_call.id,
+            interrupted_output.id,
         ];
         let items: Vec<Item> = ids
             .iter()
@@ -415,6 +442,15 @@ mod tests {
                     call_id: "call_2",
                     output: "file contents",
                 },
+                ChatMessage::ToolCall {
+                    call_id: "call_3",
+                    name: "rm",
+                    arguments: "",
+                },
+                ChatMessage::ToolOutput {
+                    call_id: "call_3",
+                    output: "error: tool call interrupted",
+                },
             ]
         );
 
@@ -440,6 +476,15 @@ mod tests {
                 ChatMessage::ToolOutput {
                     call_id: "call_2",
                     output: "file contents",
+                },
+                ChatMessage::ToolCall {
+                    call_id: "call_3",
+                    name: "rm",
+                    arguments: "",
+                },
+                ChatMessage::ToolOutput {
+                    call_id: "call_3",
+                    output: "error: tool call interrupted",
                 },
             ]
         );

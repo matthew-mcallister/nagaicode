@@ -531,10 +531,10 @@ async fn test_agent_history() {
     assert_eq!(
         body["input"],
         json!([
-            {"role": "user", "content": "what is 1+1?"},
-            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "I should add."}]},
-            {"role": "assistant", "content": "The answer is 2."},
-            {"role": "user", "content": "thanks!"}
+            {"type": "message", "role": "user", "content": "what is 1+1?"},
+            {"type": "reasoning", "content": [{"type": "reasoning_text", "text": "I should add."}]},
+            {"type": "message", "role": "assistant", "content": "The answer is 2."},
+            {"type": "message", "role": "user", "content": "thanks!"}
         ])
     );
 }
@@ -632,7 +632,7 @@ async fn test_agent_tool_call_loop() {
     assert_eq!(
         body["input"],
         json!([
-            {"role": "user", "content": "call the add tool"},
+            {"type": "message", "role": "user", "content": "call the add tool"},
             {
                 "type": "function_call",
                 "call_id": "call_1",

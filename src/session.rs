@@ -576,18 +576,17 @@ impl Item {
         Ok(items)
     }
 
-    pub fn tool_call_ids_by_response(
+    pub fn tool_calls_by_response(
         conn: &mut SqliteConnection,
         response_id: i32,
-    ) -> AnyResult<Vec<i32>> {
+    ) -> AnyResult<Vec<Item>> {
         use crate::schema::item::dsl;
-        let ids = dsl::item
+        let items = dsl::item
             .filter(dsl::response_id.eq(response_id))
             .filter(dsl::ty.eq(ItemType::ToolCall.to_string()))
             .order(dsl::seqno.asc())
-            .select(dsl::id)
-            .load::<i32>(conn)?;
-        Ok(ids)
+            .load::<Item>(conn)?;
+        Ok(items)
     }
 
     pub fn delete_by_id(conn: &mut SqliteConnection, id: i32) -> AnyResult<bool> {

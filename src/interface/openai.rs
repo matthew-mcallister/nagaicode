@@ -114,13 +114,15 @@ struct RequestReasoning {
 #[serde(untagged)]
 enum InputItem<'a> {
     Message {
+        #[serde(rename = "type")]
+        r#type: &'static str,
         role: &'static str,
         content: &'a str,
     },
     Reasoning {
         #[serde(rename = "type")]
         r#type: &'static str,
-        summary: Vec<ReasoningSummary<'a>>,
+        content: Vec<ReasoningText<'a>>,
     },
     FunctionCall {
         #[serde(rename = "type")]
@@ -138,7 +140,7 @@ enum InputItem<'a> {
 }
 
 #[derive(Debug, Serialize)]
-struct ReasoningSummary<'a> {
+struct ReasoningText<'a> {
     #[serde(rename = "type")]
     r#type: &'static str,
     text: &'a str,
@@ -200,17 +202,19 @@ impl<'a> CreateResponseRequest<'a> {
             .iter()
             .map(|msg| match msg {
                 ChatMessage::Message { content } => InputItem::Message {
+                    r#type: "message",
                     role: "user",
                     content,
                 },
                 ChatMessage::Response { content } => InputItem::Message {
+                    r#type: "message",
                     role: "assistant",
                     content,
                 },
                 ChatMessage::Reasoning { content } => InputItem::Reasoning {
                     r#type: "reasoning",
-                    summary: vec![ReasoningSummary {
-                        r#type: "summary_text",
+                    content: vec![ReasoningText {
+                        r#type: "reasoning_text",
                         text: content,
                     }],
                 },
@@ -418,10 +422,6 @@ impl OpenaiInterface {
             .collect())
     }
 
-    // FIXME: Some providers emit output text events before reasoning events
-    // causing the UI to display reasoning *after* the response. Need to do
-    // some field study to determine how we can reorder these by buffering here
-    // and if that's a better design than reordering on UI side.
     pub fn generate<T: ToolServer + ?Sized>(
         &self,
         params: InferenceParams<'_>,
@@ -783,9 +783,9 @@ mod tests {
         assert_eq!(
             body["input"],
             serde_json::json!([
-                {"role": "user", "content": "Hello"},
-                {"role": "assistant", "content": "Hi there!"},
-                {"role": "user", "content": "How are you?"}
+                {"type": "message", "role": "user", "content": "Hello"},
+                {"type": "message", "role": "assistant", "content": "Hi there!"},
+                {"type": "message", "role": "user", "content": "How are you?"}
             ])
         );
         assert_eq!(
