@@ -53,10 +53,10 @@ impl DataQuery for HistoryItemContent {
         match field {
             "" => Ok(QueryField::Value(json!({
                 "type": ty,
-                "content": content,
+                "value": content,
             }))),
             "type" => Ok(QueryField::Value(json!(ty))),
-            "content" => Ok(QueryField::Value(content.clone().into())),
+            "value" => Ok(QueryField::Value(content.clone().into())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -416,13 +416,13 @@ mod tests {
         use crate::ui::tool_render_item::load_tool_renderers;
 
         let user = HistoryItemContent::User("hello".into());
-        assert_eq!(user.query("/").unwrap(), json!({"type": "user", "content": "hello"}));
+        assert_eq!(user.query("/").unwrap(), json!({"type": "user", "value": "hello"}));
         assert_eq!(user.query("/type").unwrap(), json!("user"));
-        assert_eq!(user.query("/content").unwrap(), json!("hello"));
+        assert_eq!(user.query("/value").unwrap(), json!("hello"));
         assert!(matches!(user.query("/missing"), Err(QueryError::InvalidField(_))));
 
         let command = HistoryItemContent::CommandPrompt("!foo".into());
-        assert_eq!(command.query("/").unwrap(), json!({"type": "command_prompt", "content": "!foo"}));
+        assert_eq!(command.query("/").unwrap(), json!({"type": "command_prompt", "value": "!foo"}));
 
         let tools = load_tool_renderers();
         let item = tools.build_render_item(

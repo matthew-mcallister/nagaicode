@@ -413,8 +413,8 @@ impl History {
                 saved.item_id,
             );
             self.item[id].seqno = saved.seqno;
-            if let Some(id2) = saved.item_id {
-                self.by_item_id.insert(id2, id);
+            if let Some(item_id) = saved.item_id {
+                self.by_item_id.insert(item_id, id);
             }
             self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
         }
@@ -902,7 +902,7 @@ mod tests {
             num_rows: 0,
         };
         let expected = json!({
-            "content": {"type": "response", "content": "hello"},
+            "content": {"type": "response", "value": "hello"},
             "resume_point": item.resume_point.query("/").unwrap(),
             "item_id": null,
             "seqno": 7,
@@ -911,9 +911,9 @@ mod tests {
             "num_rows": 0,
         });
         assert_eq!(item.query("/").unwrap(), expected);
-        assert_eq!(item.query("/content").unwrap(), json!({"type": "response", "content": "hello"}));
+        assert_eq!(item.query("/content").unwrap(), json!({"type": "response", "value": "hello"}));
         assert_eq!(item.query("/content/type").unwrap(), json!("response"));
-        assert_eq!(item.query("/content/content").unwrap(), json!("hello"));
+        assert_eq!(item.query("/content/value").unwrap(), json!("hello"));
         assert_eq!(
             item.query("/resume_point").unwrap(),
             item.resume_point.query("/").unwrap()
@@ -1060,7 +1060,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|item| item["content"]["content"].as_str().unwrap().to_string())
+            .map(|item| item["content"]["value"].as_str().unwrap().to_string())
             .collect()
     }
 

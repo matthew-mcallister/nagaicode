@@ -67,7 +67,7 @@ fn interrupted_count(app: &App) -> usize {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|item| item["content"]["content"].as_str() == Some("Interrupted."))
+        .filter(|item| item["content"]["value"].as_str() == Some("Interrupted."))
         .count()
 }
 
@@ -229,9 +229,9 @@ async fn test_app_process_command() {
         .clone();
     let last_two = &history[history.len() - 2..];
     assert_eq!(last_two[0]["content"]["type"], json!("command_prompt"));
-    assert_eq!(last_two[0]["content"]["content"], json!("$ echo test"));
+    assert_eq!(last_two[0]["content"]["value"], json!("$ echo test"));
     assert_eq!(last_two[1]["content"]["type"], json!("command_output"));
-    assert_eq!(last_two[1]["content"]["content"], json!("output line\n"));
+    assert_eq!(last_two[1]["content"]["value"], json!("output line\n"));
 
     app.tools_mut().add_result(
         "sh",
@@ -267,7 +267,7 @@ async fn test_app_process_command() {
         .unwrap();
     let last = history.as_array().unwrap().last().unwrap();
     assert_eq!(last["content"]["type"], json!("error"));
-    assert_eq!(last["content"]["content"], json!("command exited with code 1: error message\n"));
+    assert_eq!(last["content"]["value"], json!("command exited with code 1: error message\n"));
 
     app.tools_mut().add_result(
         "sh",
@@ -296,7 +296,7 @@ async fn test_app_process_command() {
         .unwrap();
     let last = history.as_array().unwrap().last().unwrap();
     assert_eq!(last["content"]["type"], json!("error"));
-    assert_eq!(last["content"]["content"], json!("tool error"));
+    assert_eq!(last["content"]["value"], json!("tool error"));
 
     assert!(app.process_command("").await.is_ok());
     assert!(app.process_command("   ").await.is_ok());

@@ -332,6 +332,7 @@ impl<T> Arena<T> {
 
     /// Returns an draining iterator over the elements contained in the arena,
     /// in no particular order.
+    // XXX: Would be nice if this implemented ExactSizeIterator
     pub fn drain(&mut self) -> impl Iterator<Item = T> + '_ {
         self.entries.drain(..)
             .filter_map(|entry| Some(entry.into_inner()?))
