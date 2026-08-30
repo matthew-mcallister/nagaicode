@@ -1,8 +1,8 @@
 use fnv::FnvHashMap;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::error::AnyResult;
-use crate::query::ToJson;
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::session::{Item, ItemType};
 use crate::session::ToolCallArgs;
 use crate::ui::markdown::{MarkdownResult, ResumePoint};
@@ -11,8 +11,12 @@ use crate::ui::styled_string::StyledString;
 use crate::ui::text::{SPACES, wrap_line, wrap_line_naive};
 use crate::ui::tool_render_item::ToolRenderer;
 
-/// Dynamic renderable content
-pub trait RenderItem: std::fmt::Debug {
+/// Dynamic renderable content.
+///
+/// The DataQuery impl for each RenderItem should expose a field "type" which
+/// identifies the RenderItem implementation being used, in addition to its
+/// inner fields.
+pub trait RenderItem: std::fmt::Debug + DataQuery {
     fn render(
         &self,
         theme: &Theme,
@@ -21,6 +25,7 @@ pub trait RenderItem: std::fmt::Debug {
     ) -> (Vec<StyledString>, ResumePoint);
 }
 
+// Transitional type, to be replaced entirely by RenderItem
 #[derive(Debug)]
 pub enum HistoryItemContent {
     Help(String),
@@ -33,18 +38,32 @@ pub enum HistoryItemContent {
     Dynamic(Box<dyn RenderItem>),
 }
 
-impl ToJson for HistoryItemContent {
-    fn to_json(self) -> Value {
-        match self {
-            Self::Help(s)
-            | Self::Error(s)
-            | Self::User(s)
-            | Self::Thought(s)
-            | Self::Response(s)
-            | Self::CommandPrompt(s)
-            | Self::CommandOutput(s) =>
-                s.into(),
-            Self::Dynamic(_) => json!({}),
+/// Exposed fields:
+/// - type: string, one of: help, error, user, thought, response,
+///   command_prompt, command_output
+/// - content: string
+///
+/// Dynamic content delegates all queries to the inner RenderItem.
+impl DataQuery for HistoryItemContent {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        let (ty, content) = match self {
+            Self::Help(content) => ("help", content),
+            Self::Error(content) => ("error", content),
+            Self::User(content) => ("user", content),
+            Self::Thought(content) => ("thought", content),
+            Self::Response(content) => ("response", content),
+            Self::CommandPrompt(content) => ("command_prompt", content),
+            Self::CommandOutput(content) => ("command_output", content),
+            Self::Dynamic(render_item) => return render_item.query_field(field),
+        };
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "type": ty,
+                "content": content,
+            }))),
+            "type" => Ok(QueryField::Value(json!(ty))),
+            "content" => Ok(QueryField::Value(content.clone().into())),
+            _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
 }
@@ -315,7 +334,7 @@ mod tests {
         let transition = UpdateStyle(thought_style, base_style);
 
         fn render(content: &str, width: usize) -> String {
-            let mut lines = super::render_thought(&THEME_DARK, width, content).rows;
+            let mut lines = super::render_thought(&THEME_DARK, width, content, Default::default()).rows;
             render_canvas(&mut lines[..])
         }
 
@@ -393,5 +412,36 @@ mod tests {
         );
         assert_eq!(render_prompt("", 8), "");
         assert_eq!(render_output("", 8), "");
+    }
+
+    #[test]
+    fn test_history_item_content_query() {
+        use super::*;
+        use crate::query::QueryError;
+        use crate::tools::ToolResult;
+        use crate::ui::tool_render_item::load_tool_renderers;
+
+        let user = HistoryItemContent::User("hello".into());
+        assert_eq!(user.query("/").unwrap(), json!({"type": "user", "content": "hello"}));
+        assert_eq!(user.query("/type").unwrap(), json!("user"));
+        assert_eq!(user.query("/content").unwrap(), json!("hello"));
+        assert!(matches!(user.query("/missing"), Err(QueryError::InvalidField(_))));
+
+        let command = HistoryItemContent::CommandPrompt("!foo".into());
+        assert_eq!(command.query("/").unwrap(), json!({"type": "command_prompt", "content": "!foo"}));
+
+        let tools = load_tool_renderers();
+        let item = tools.build_render_item(
+            "sh",
+            &json!({"command": "echo hi"}),
+            &ToolResult::Json(json!({"stdout": "hi\n", "stderr": "", "return_code": 0})),
+        ).unwrap();
+        let dynamic = HistoryItemContent::Dynamic(item);
+        assert_eq!(
+            dynamic.query("/").unwrap(),
+            json!({"type": "sh", "cmd_line": "echo hi", "stdout": "hi\n"})
+        );
+        assert_eq!(dynamic.query("/type").unwrap(), json!("sh"));
+        assert_eq!(dynamic.query("/stdout").unwrap(), json!("hi\n"));
     }
 }

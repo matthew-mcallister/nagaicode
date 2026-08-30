@@ -10,7 +10,7 @@ pub mod history;
 pub mod history_view;
 pub mod markdown;
 pub mod padded;
-pub mod history_item_content;
+pub mod render_item;
 pub mod scroll_bar;
 pub mod stacked_view;
 pub mod style;

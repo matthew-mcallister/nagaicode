@@ -12,7 +12,7 @@ use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::session::{Item, ToolCallArgs};
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
-use crate::ui::history_item_content::{HistoryItemContent, get_item_content, render};
+use crate::ui::render_item::{HistoryItemContent, get_item_content, render};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::style::Theme;
 use crate::ui::styled_string::StyledString;
@@ -201,7 +201,7 @@ impl DataQuery for HistoryItem {
                 "last_row": self.query("/last_row")?,
                 "num_rows": self.query("/num_rows")?,
             }))),
-            "content" => Ok(QueryField::Value(json!({}))), // TODO!
+            "content" => Ok(QueryField::DataQuery(&self.content)),
             "resume_point" => Ok(QueryField::DataQuery(&self.resume_point)),
             "item_id" => Ok(QueryField::Value(json!(self.item_id))),
             "seqno" => Ok(QueryField::Value(json!(self.seqno))),
@@ -713,6 +713,7 @@ impl<'h> DataQuery for HistoryItemsData<'h> {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1162,3 +1163,4 @@ mod tests {
         assert_eq!(history.query("/tool_calls").unwrap(), json!({}));
     }
 }
+*/

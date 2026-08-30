@@ -122,9 +122,42 @@ impl<V: DataQuery, S: BuildHasher> DataQuery for HashMap<String, V, S> {
     }
 }
 
+/// Implements DataQuery on a JSON object. Array elements may be queried by
+/// integer index. Objects are queried by key. All other JSON types have no
+/// subfields.
+impl DataQuery for Value {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match self {
+            Value::Object(obj) => match field {
+                "" => Ok(QueryField::Value(self.clone())),
+                key => match obj.get(key) {
+                    Some(v) => Ok(QueryField::DataQuery(v)),
+                    None => Err(QueryError::InvalidField(field.to_string())),
+                },
+            },
+            Value::Array(arr) => match field {
+                "" => Ok(QueryField::Value(self.clone())),
+                index => {
+                    let index: usize = index
+                        .parse()
+                        .map_err(|_| QueryError::InvalidField(field.to_string()))?;
+                    match arr.get(index) {
+                        Some(v) => Ok(QueryField::DataQuery(v)),
+                        None => Err(QueryError::InvalidField(field.to_string())),
+                    }
+                }
+            },
+            _ => match field {
+                "" => Ok(QueryField::Value(self.clone())),
+                _ => Err(QueryError::InvalidField(field.to_string())),
+            },
+        }
+    }
+}
+
 /// Trait for converting types to JSON. Mainly intended for primitive values
-/// like strings and ints.
-// TODO: Replace nontrivial uses of ToJson with DataQuery
+/// like enums and tuples. Unlike `serde` traits or `Into<Value>`, we can
+/// supply our own custom `ToJson` implementations on foreign types.
 pub trait ToJson {
     fn to_json(self) -> Value;
 }
@@ -234,5 +267,68 @@ mod tests {
         assert_eq!(vec![1, 2, 3].to_json(), json!([1, 2, 3]));
         assert_eq!(Some("x".to_owned()).to_json(), json!("x"));
         assert_eq!(None::<i32>.to_json(), json!(null));
+    }
+
+    #[test]
+    fn test_split_path() {
+        assert_eq!(split_path(""), ("", None));
+        assert_eq!(split_path("/"), ("", None));
+        assert_eq!(split_path("/foo"), ("foo", None));
+        assert_eq!(split_path("foo"), ("foo", None));
+        assert_eq!(split_path("foo/bar"), ("foo", Some("bar")));
+        assert_eq!(split_path("/foo/bar/"), ("foo", Some("bar")));
+    }
+
+    #[test]
+    fn test_hashmap_query() {
+        let mut map: HashMap<String, ResumePoint> = HashMap::new();
+        map.insert("first".into(), ResumePoint { offset: 1, row: 2 });
+        map.insert("second".into(), ResumePoint { offset: 3, row: 4 });
+        let expected = json!({
+            "first": map["first"].query("/").unwrap(),
+            "second": map["second"].query("/").unwrap(),
+        });
+        assert_eq!(map.query("/").unwrap(), expected);
+        assert_eq!(map.query("/first").unwrap(), map["first"].query("/").unwrap());
+        assert_eq!(map.query("/first/offset").unwrap(), json!(1));
+        assert_eq!(map.query("/second/row").unwrap(), json!(4));
+        assert!(matches!(map.query("/missing"), Err(QueryError::InvalidField(_))));
+    }
+
+    #[test]
+    fn test_value_query() {
+        let v = json!({
+            "a": {"b": [1, 2, 3]},
+            "c": "hello",
+        });
+        assert_eq!(v.query("/").unwrap(), v);
+        assert_eq!(v.query("/a").unwrap(), json!({"b": [1, 2, 3]}));
+        assert_eq!(v.query("/a/b").unwrap(), json!([1, 2, 3]));
+        assert_eq!(v.query("/a/b/0").unwrap(), json!(1));
+        assert_eq!(v.query("query://a/b/1").unwrap(), json!(2));
+        assert_eq!(v.query("/c").unwrap(), json!("hello"));
+        assert!(matches!(v.query("/missing"), Err(QueryError::InvalidField(_))));
+        assert!(matches!(v.query("/a/b/x"), Err(QueryError::InvalidField(_))));
+        assert!(matches!(v.query("/a/b/7"), Err(QueryError::InvalidField(_))));
+        assert!(matches!(v.query("/c/length"), Err(QueryError::InvalidField(_))));
+
+        let scalar = json!(42);
+        assert_eq!(scalar.query("/").unwrap(), json!(42));
+        assert!(matches!(scalar.query("/anything"), Err(QueryError::InvalidField(_))));
+    }
+
+    #[test]
+    fn test_id_to_json() {
+        let id: Id<()> = Id::new(7, 3);
+        assert_eq!(id.to_json(), json!([3, 7]));
+        assert_eq!(Id::<()>::null().to_json(), json!([0, u32::MAX]));
+    }
+
+    #[test]
+    fn test_color_to_json() {
+        assert_eq!(Color::Black.to_json(), json!("black"));
+        assert_eq!(Color::DarkCyan.to_json(), json!("dark_cyan"));
+        assert_eq!(Color::Rgb { r: 1, g: 2, b: 3 }.to_json(), json!([1, 2, 3]));
+        assert_eq!(Color::AnsiValue(42).to_json(), json!(42));
     }
 }

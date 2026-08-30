@@ -2,12 +2,13 @@
 //! own rendering logic.
 
 use fnv::FnvHashMap;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::error::AnyResult;
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::ToolResult;
 use crate::ui::markdown::ResumePoint;
-use crate::ui::history_item_content::RenderItem;
+use crate::ui::render_item::RenderItem;
 use crate::ui::style::{Style, Theme};
 use crate::ui::styled_string::StyledString;
 use crate::ui::text::{Row, SPACES, wrap_line_naive};
@@ -91,6 +92,26 @@ impl ToolRenderItemBuilder for ShRenderItemBuilder {
             cmd_line,
             stdout,
         }))
+    }
+}
+
+/// Exposed fields:
+/// - type: string ("sh")
+/// - cmd_line: string
+/// - stdout: string
+impl DataQuery for ShRenderItem {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "type": self.query("/type")?,
+                "cmd_line": self.query("/cmd_line")?,
+                "stdout": self.query("/stdout")?,
+            }))),
+            "type" => Ok(QueryField::Value(json!("sh"))),
+            "cmd_line" => Ok(QueryField::Value(self.cmd_line.clone().into())),
+            "stdout" => Ok(QueryField::Value(self.stdout.clone().into())),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
     }
 }
 
@@ -199,6 +220,24 @@ mod tests {
         let item = tools.build_render_item(name, args, output)?;
         let (mut lines, _) = item.render(&THEME_DARK, width, Default::default());
         Ok(render_canvas(&mut lines[..]))
+    }
+
+    #[test]
+    fn test_sh_render_item_query() {
+        let item = ShRenderItem {
+            cmd_line: "echo hi".into(),
+            stdout: "hello\n".into(),
+        };
+        let expected = json!({
+            "type": "sh",
+            "cmd_line": "echo hi",
+            "stdout": "hello\n",
+        });
+        assert_eq!(item.query("/").unwrap(), expected);
+        assert_eq!(item.query("/type").unwrap(), json!("sh"));
+        assert_eq!(item.query("/cmd_line").unwrap(), json!("echo hi"));
+        assert_eq!(item.query("/stdout").unwrap(), json!("hello\n"));
+        assert!(matches!(item.query("/missing"), Err(crate::query::QueryError::InvalidField(_))));
     }
 
     #[test]
