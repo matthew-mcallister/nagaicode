@@ -110,7 +110,7 @@ async fn test_app_prompt_agent() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|item| item["content"].as_str().unwrap().to_owned())
+        .map(|item| item["content"]["content"].as_str().unwrap().to_owned())
         .collect();
     assert!(history.iter().any(|c| c == "hello"));
     assert_eq!(
@@ -231,8 +231,8 @@ async fn test_agent_stream_error() {
         .unwrap();
     let history = history.as_array().unwrap();
     let last = history.last().unwrap();
-    assert_eq!(last["ty"], json!("error"));
-    assert_eq!(last["content"], json!("network error"));
+    assert_eq!(last["content"]["type"], json!("error"));
+    assert_eq!(last["content"]["content"], json!("network error"));
 
     // The partial output should be persisted and the response marked failed.
     let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;

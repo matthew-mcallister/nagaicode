@@ -67,7 +67,7 @@ fn interrupted_count(app: &App) -> usize {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|item| item["content"].as_str() == Some("Interrupted."))
+        .filter(|item| item["content"]["content"].as_str() == Some("Interrupted."))
         .count()
 }
 
@@ -228,10 +228,10 @@ async fn test_app_process_command() {
         .unwrap()
         .clone();
     let last_two = &history[history.len() - 2..];
-    assert_eq!(last_two[0]["ty"], json!("command_prompt"));
-    assert_eq!(last_two[0]["content"], json!("$ echo test"));
-    assert_eq!(last_two[1]["ty"], json!("command_output"));
-    assert_eq!(last_two[1]["content"], json!("output line\n"));
+    assert_eq!(last_two[0]["content"]["type"], json!("command_prompt"));
+    assert_eq!(last_two[0]["content"]["content"], json!("$ echo test"));
+    assert_eq!(last_two[1]["content"]["type"], json!("command_output"));
+    assert_eq!(last_two[1]["content"]["content"], json!("output line\n"));
 
     app.tools_mut().add_result(
         "sh",
@@ -266,8 +266,8 @@ async fn test_app_process_command() {
         .query("/chat/stacked/inner/history/history/items")
         .unwrap();
     let last = history.as_array().unwrap().last().unwrap();
-    assert_eq!(last["ty"], json!("error"));
-    assert_eq!(last["content"], json!("command exited with code 1: error message\n"));
+    assert_eq!(last["content"]["type"], json!("error"));
+    assert_eq!(last["content"]["content"], json!("command exited with code 1: error message\n"));
 
     app.tools_mut().add_result(
         "sh",
@@ -295,8 +295,8 @@ async fn test_app_process_command() {
         .query("/chat/stacked/inner/history/history/items")
         .unwrap();
     let last = history.as_array().unwrap().last().unwrap();
-    assert_eq!(last["ty"], json!("error"));
-    assert_eq!(last["content"], json!("tool error"));
+    assert_eq!(last["content"]["type"], json!("error"));
+    assert_eq!(last["content"]["content"], json!("tool error"));
 
     assert!(app.process_command("").await.is_ok());
     assert!(app.process_command("   ").await.is_ok());

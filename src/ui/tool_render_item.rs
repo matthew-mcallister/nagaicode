@@ -238,6 +238,36 @@ mod tests {
 
     #[test]
     fn test_sh_renderer() {
-        todo!()
+        let tools = load_tool_renderers();
+        let theme = &THEME_DARK;
+        let style = Style::new(theme.text_base, theme.bg_prompt);
+        let ok_output = || ToolResult::Json(json!({"stdout": "", "stderr": "", "return_code": 0}));
+
+        let output = ToolResult::Json(json!({"stdout": "hello\n", "stderr": "", "return_code": 0}));
+        assert_eq!(
+            render(&tools, 14, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
+            format!(
+                "{style}              \n{style}  echo hi  \n{style}  hello  \n{style}              "
+            )
+        );
+        let output = ToolResult::Json(json!({"stdout": "hi\n", "stderr": "", "return_code": 0}));
+        assert_eq!(
+            render(&tools, 14, "sh", &json!({"command": "echo hello world"}), &output).unwrap(),
+            format!(
+                "{style}              \n{style}  echo hello  \n{style}   world  \n{style}  hi  \n{style}              "
+            )
+        );
+
+        assert_eq!(
+            render(&tools, 14, "sh", &json!({"command": "echo hi"}), &ok_output()).unwrap(),
+            ""
+        );
+        assert_eq!(
+            render(&tools, 7, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
+            ""
+        );
+
+        assert!(render(&tools, 14, "sh", &json!({}), &ok_output()).is_err());
+        assert!(render(&tools, 14, "sh", &json!({"command": "echo hi"}), &ToolResult::Json(json!({}))).is_err());
     }
 }

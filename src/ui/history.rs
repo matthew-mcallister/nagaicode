@@ -689,11 +689,11 @@ impl<'h> DataQuery for HistoryItemsData<'h> {
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use crate::session::ItemType;
     use crate::ui::canvas::render_canvas;
     use crate::ui::style::{Style, THEME_DARK};
     use crate::ui::style::testing::SetItalic;
@@ -708,7 +708,14 @@ mod tests {
         let id = history.item.id_at(index);
         let theme = history.theme;
         let width = history.width;
-        history.item[id].update(theme, &mut history.rows, history.head, width, delta);
+        let content = match &mut history.item[id].content {
+            HistoryItemContent::Response(content) => {
+                content.push_str(delta);
+                HistoryItemContent::Response(content.clone())
+            }
+            _ => panic!("expected response item"),
+        };
+        history.item[id].update(theme, &mut history.rows, history.head, width, content);
         history.set_viewport_bottom_at(history.last_row(), history.num_rows() - 1);
     }
 
@@ -788,7 +795,7 @@ mod tests {
     fn test_scroll() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemType::Response, format!("message {i}"));
+            history.add_item(HistoryItemContent::Response(format!("message {i}")));
         }
         assert_eq!(history.num_rows(), 20);
 
@@ -829,7 +836,7 @@ mod tests {
     fn test_set_viewport_top_pos() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemType::Response, format!("message {i}"));
+            history.add_item(HistoryItemContent::Response(format!("message {i}")));
         }
 
         let row = history.row_offset(history.first_row(), 5).unwrap();
@@ -843,7 +850,7 @@ mod tests {
     fn test_home_end() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemType::Response, format!("message {i}"));
+            history.add_item(HistoryItemContent::Response(format!("message {i}")));
         }
 
         // Start at the bottom; scroll up so we're not at either extreme.
@@ -871,14 +878,14 @@ mod tests {
         let full = "# Title\n\nfirst\n\nsecond\n\nthird";
 
         let mut incremental = history(20, 20);
-        incremental.add_item(HistoryItemType::Response, "# Title".into());
+        incremental.add_item(HistoryItemContent::Response("# Title".into()));
         update_item(&mut incremental, 0, "\n\nfirst");
         update_item(&mut incremental, 0, "\n\nsecond");
         update_item(&mut incremental, 0, "\n\nthird");
         assert_eq!(incremental.num_rows(), 8);
 
         let mut whole = history(20, 20);
-        whole.add_item(HistoryItemType::Response, full.into());
+        whole.add_item(HistoryItemContent::Response(full.into()));
 
         assert_eq!(render_draw(&incremental), render_draw(&whole));
     }
@@ -886,19 +893,16 @@ mod tests {
     #[test]
     fn test_history_item_query() {
         let item = HistoryItem {
-            content: "hello".into(),
-            ty: HistoryItemType::Response,
+            content: HistoryItemContent::Response("hello".into()),
             resume_point: ResumePoint { offset: 0, row: 0 },
             item_id: None,
             seqno: Some(7),
-            call_args: None,
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 0,
         };
         let expected = json!({
-            "content": "hello",
-            "ty": "response",
+            "content": {"type": "response", "content": "hello"},
             "resume_point": item.resume_point.query("/").unwrap(),
             "item_id": null,
             "seqno": 7,
@@ -907,8 +911,9 @@ mod tests {
             "num_rows": 0,
         });
         assert_eq!(item.query("/").unwrap(), expected);
-        assert_eq!(item.query("/content").unwrap(), json!("hello"));
-        assert_eq!(item.query("/ty").unwrap(), json!("response"));
+        assert_eq!(item.query("/content").unwrap(), json!({"type": "response", "content": "hello"}));
+        assert_eq!(item.query("/content/type").unwrap(), json!("response"));
+        assert_eq!(item.query("/content/content").unwrap(), json!("hello"));
         assert_eq!(
             item.query("/resume_point").unwrap(),
             item.resume_point.query("/").unwrap()
@@ -1018,17 +1023,17 @@ mod tests {
 
         // Rendered with the prompt background and padding, plus the item's
         // own trailing padding row.
-        assert_eq!(h.num_rows(), 4);
+        assert_eq!(h.num_rows(), 5);
         assert_eq!(
             render_draw(&h),
             format!(
-                "{style}              \n{style}  hello       \n{style}              \n{base_style}              "
+                "{style}              \n{style}  echo hi  \n{style}  hello  \n{style}              \n{base_style}              "
             )
         );
-        // The item stores the raw output; the renderer handles formatting.
+        // The item stores the parsed output; the renderer handles formatting.
         assert_eq!(
-            item_contents(&h),
-            [json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 }).to_string()]
+            h.query("/items/0/content").unwrap(),
+            json!({"type": "sh", "cmd_line": "echo hi", "stdout": "hello\n"})
         );
     }
 
@@ -1055,7 +1060,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|item| item["content"].as_str().unwrap().to_string())
+            .map(|item| item["content"]["content"].as_str().unwrap().to_string())
             .collect()
     }
 
@@ -1139,4 +1144,3 @@ mod tests {
         assert_eq!(history.query("/tool_calls").unwrap(), json!({}));
     }
 }
-*/
