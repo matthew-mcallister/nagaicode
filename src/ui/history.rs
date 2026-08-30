@@ -12,7 +12,10 @@ use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::session::{Item, ToolCallArgs};
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
-use crate::ui::render_item::{HistoryItemContent, get_item_content};
+use crate::ui::render_item::{
+    CommandOutputRenderItem, CommandPromptRenderItem, ErrorRenderItem, HelpRenderItem,
+    RenderItem, get_item_content,
+};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::style::Theme;
 use crate::ui::styled_string::StyledString;
@@ -89,7 +92,7 @@ fn insert_rows(
 
 #[derive(Debug)]
 pub struct HistoryItem {
-    content: HistoryItemContent,
+    content: Box<dyn RenderItem>,
     resume_point: ResumePoint,
     item_id: Option<i32>,
     seqno: Option<i64>,
@@ -102,13 +105,13 @@ impl HistoryItem {
     fn render(
         theme: &Theme,
         width: usize,
-        content: &HistoryItemContent,
+        content: &dyn RenderItem,
         resume: ResumePoint,
     ) -> (Vec<StyledString>, ResumePoint) {
         let (mut rendered, resume_point) = content.render(theme, width, resume);
 
         // TODO: smarter padding system
-        if !matches!(content, HistoryItemContent::CommandPrompt(_)) {
+        if content.trailing_padding() {
             // Add vertical padding row
             let mut padding = StyledString::new(theme.base_style(), width);
             padding.pad_to_width(width);
@@ -132,10 +135,10 @@ impl HistoryItem {
         rows: &mut Arena<HistoryRow>,
         prev: Id<HistoryRow>,
         width: usize,
-        content: HistoryItemContent,
+        content: Box<dyn RenderItem>,
         item_id: Option<i32>,
     ) -> Id<Self> {
-        let (rendered, resume_point) = Self::render(theme, width, &content, Default::default());
+        let (rendered, resume_point) = Self::render(theme, width, &*content, Default::default());
 
         let item = items.insert(Self {
             content,
@@ -168,12 +171,12 @@ impl HistoryItem {
         rows: &mut Arena<HistoryRow>,
         head: Id<HistoryRow>,
         width: usize,
-        content: HistoryItemContent,
+        content: Box<dyn RenderItem>,
     ) {
         let item_id = rows[self.first_row].item;  // Bit of a hack
 
         self.content = content;
-        let (rendered, new_resume_point) = Self::render(theme, width, &self.content, self.resume_point);
+        let (rendered, new_resume_point) = Self::render(theme, width, &*self.content, self.resume_point);
         debug_assert!(!rendered.is_empty());
 
         let prev = rows[self.first_row].prev;
@@ -206,7 +209,7 @@ impl DataQuery for HistoryItem {
                 "last_row": self.query("/last_row")?,
                 "num_rows": self.query("/num_rows")?,
             }))),
-            "content" => Ok(QueryField::DataQuery(&self.content)),
+            "content" => Ok(QueryField::DataQuery(&*self.content)),
             "resume_point" => Ok(QueryField::DataQuery(&self.resume_point)),
             "item_id" => Ok(QueryField::Value(json!(self.item_id))),
             "seqno" => Ok(QueryField::Value(json!(self.seqno))),
@@ -437,7 +440,7 @@ impl History {
         }
     }
 
-    fn add_content(&mut self, content: HistoryItemContent) {
+    fn add_content(&mut self, content: Box<dyn RenderItem>) {
         self.add_item(content, None, None)
     }
 
@@ -461,7 +464,7 @@ impl History {
 
     fn add_item(
         &mut self,
-        content: HistoryItemContent,
+        content: Box<dyn RenderItem>,
         item_id: Option<i32>,
         seqno: Option<i64>,
     ) {
@@ -551,13 +554,13 @@ impl History {
         match update {
             Update::ItemCreated { item } => self.on_item_created(item)?,
             Update::ItemUpdated { item } => self.on_item_updated(item)?,
-            Update::HelpMessage(content) => self.add_content(HistoryItemContent::Help(content.into())),
-            Update::ErrorMessage(content) => self.add_content(HistoryItemContent::Error(content.into())),
+            Update::HelpMessage(content) => self.add_content(Box::new(HelpRenderItem::new(content))),
+            Update::ErrorMessage(content) => self.add_content(Box::new(ErrorRenderItem::new(content))),
             Update::CommandPrompt(content) => {
-                self.add_content(HistoryItemContent::CommandPrompt(content.into()))
+                self.add_content(Box::new(CommandPromptRenderItem::new(content)))
             }
             Update::CommandOutput(content) => {
-                self.add_content(HistoryItemContent::CommandOutput(content.into()))
+                self.add_content(Box::new(CommandOutputRenderItem::new(content)))
             }
         }
         Ok(())
@@ -749,6 +752,7 @@ mod tests {
 
     use crate::session::ItemType;
     use crate::ui::canvas::render_canvas;
+    use crate::ui::render_item::ResponseRenderItem;
     use crate::ui::style::{Style, THEME_DARK};
     use crate::ui::style::testing::SetItalic;
     use chrono::{DateTime, Utc};
@@ -762,13 +766,10 @@ mod tests {
         let id = history.item.id_at(index);
         let theme = history.theme;
         let width = history.width;
-        let content = match &mut history.item[id].content {
-            HistoryItemContent::Response(content) => {
-                content.push_str(delta);
-                HistoryItemContent::Response(content.clone())
-            }
-            _ => panic!("expected response item"),
-        };
+        let mut text = history.item[id].content.query("/value").unwrap()
+            .as_str().expect("response value").to_string();
+        text.push_str(delta);
+        let content = Box::new(ResponseRenderItem::new(text));
         history.item[id].update(theme, &mut history.rows, history.head, width, content);
         history.set_viewport_bottom_at(history.last_row(), history.num_rows() - 1);
     }
@@ -849,7 +850,7 @@ mod tests {
     fn test_scroll() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_content(HistoryItemContent::Response(format!("message {i}")));
+            history.add_content(Box::new(ResponseRenderItem::new(format!("message {i}"))));
         }
         assert_eq!(history.num_rows(), 20);
 
@@ -890,7 +891,7 @@ mod tests {
     fn test_set_viewport_top_pos() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_content(HistoryItemContent::Response(format!("message {i}")));
+            history.add_content(Box::new(ResponseRenderItem::new(format!("message {i}"))));
         }
 
         let row = history.row_offset(history.first_row(), 5).unwrap();
@@ -904,7 +905,7 @@ mod tests {
     fn test_home_end() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_content(HistoryItemContent::Response(format!("message {i}")));
+            history.add_content(Box::new(ResponseRenderItem::new(format!("message {i}"))));
         }
 
         // Start at the bottom; scroll up so we're not at either extreme.
@@ -932,7 +933,7 @@ mod tests {
         let full = "# Title\n\nfirst\n\nsecond\n\nthird";
 
         let mut incremental = history(20, 20);
-        incremental.add_content(HistoryItemContent::Response("# Title".into()));
+        incremental.add_content(Box::new(ResponseRenderItem::new("# Title")));
         assert_eq!(incremental.num_rows(), 2);
         update_item(&mut incremental, 0, "\n\nfirst");
         assert_eq!(incremental.num_rows(), 4);
@@ -942,7 +943,7 @@ mod tests {
         assert_eq!(incremental.num_rows(), 8);
 
         let mut whole = history(20, 20);
-        whole.add_content(HistoryItemContent::Response(full.into()));
+        whole.add_content(Box::new(ResponseRenderItem::new(full)));
 
         assert_eq!(render_draw(&incremental), render_draw(&whole));
     }
@@ -950,7 +951,7 @@ mod tests {
     #[test]
     fn test_history_item_query() {
         let item = HistoryItem {
-            content: HistoryItemContent::Response("hello".into()),
+            content: Box::new(ResponseRenderItem::new("hello")),
             resume_point: ResumePoint { offset: 0, row: 0 },
             item_id: None,
             seqno: Some(7),

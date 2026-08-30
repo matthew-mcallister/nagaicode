@@ -17,6 +17,11 @@ use crate::ui::tool_render_item::ToolRenderer;
 /// identifies the RenderItem implementation being used, in addition to its
 /// inner fields.
 pub trait RenderItem: std::fmt::Debug + DataQuery {
+    /// Whether a vertical padding row is rendered after the item's rows.
+    fn trailing_padding(&self) -> bool {
+        true
+    }
+
     /// Renders (or partially renders) the item, returning rows and a resume
     /// point for future incremental renders. Not all implementations must
     /// support incremental renders, but those that do must not be updated
@@ -29,40 +34,123 @@ pub trait RenderItem: std::fmt::Debug + DataQuery {
     ) -> (Vec<StyledString>, ResumePoint);
 }
 
-// Transitional type, to be replaced entirely by RenderItem
-#[derive(Debug)]
-pub enum HistoryItemContent {
-    Help(String),
-    Error(String),
-    User(String),
-    Thought(String),
-    Response(String),
-    CommandPrompt(String),
-    CommandOutput(String),
-    Dynamic(Box<dyn RenderItem>),
+macro_rules! string_render_item {
+    ($name:ident, $ty:literal, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Debug)]
+        pub struct $name(String);
+
+        impl $name {
+            /// Creates a new item.
+            pub fn new(content: impl Into<String>) -> Self {
+                Self(content.into())
+            }
+        }
+
+        impl DataQuery for $name {
+            fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+                match field {
+                    "" => Ok(QueryField::Value(json!({
+                        "type": $ty,
+                        "value": self.0,
+                    }))),
+                    "type" => Ok(QueryField::Value(json!($ty))),
+                    "value" => Ok(QueryField::Value(self.0.clone().into())),
+                    _ => Err(QueryError::InvalidField(field.to_string())),
+                }
+            }
+        }
+    };
 }
 
-impl DataQuery for HistoryItemContent {
-    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
-        let (ty, content) = match self {
-            Self::Help(content) => ("help", content),
-            Self::Error(content) => ("error", content),
-            Self::User(content) => ("user", content),
-            Self::Thought(content) => ("thought", content),
-            Self::Response(content) => ("response", content),
-            Self::CommandPrompt(content) => ("command_prompt", content),
-            Self::CommandOutput(content) => ("command_output", content),
-            Self::Dynamic(render_item) => return render_item.query_field(field),
-        };
-        match field {
-            "" => Ok(QueryField::Value(json!({
-                "type": ty,
-                "value": content,
-            }))),
-            "type" => Ok(QueryField::Value(json!(ty))),
-            "value" => Ok(QueryField::Value(content.clone().into())),
-            _ => Err(QueryError::InvalidField(field.to_string())),
-        }
+string_render_item!(HelpRenderItem, "help", "Renders help text.");
+string_render_item!(ErrorRenderItem, "error", "Renders an error message.");
+string_render_item!(UserRenderItem, "user", "Renders user input.");
+string_render_item!(ThoughtRenderItem, "thought", "Renders model reasoning.");
+string_render_item!(ResponseRenderItem, "response", "Renders model response text.");
+string_render_item!(CommandPromptRenderItem, "command_prompt", "Renders a command prompt.");
+string_render_item!(CommandOutputRenderItem, "command_output", "Renders command output.");
+
+impl RenderItem for HelpRenderItem {
+    fn render(
+        &self,
+        theme: &Theme,
+        width: usize,
+        _resume: ResumePoint,
+    ) -> (Vec<StyledString>, ResumePoint) {
+        (render_help(theme, width, &self.0), Default::default())
+    }
+}
+
+impl RenderItem for ErrorRenderItem {
+    fn render(
+        &self,
+        theme: &Theme,
+        width: usize,
+        _resume: ResumePoint,
+    ) -> (Vec<StyledString>, ResumePoint) {
+        (render_error(theme, width, &self.0), Default::default())
+    }
+}
+
+impl RenderItem for UserRenderItem {
+    fn render(
+        &self,
+        theme: &Theme,
+        width: usize,
+        _resume: ResumePoint,
+    ) -> (Vec<StyledString>, ResumePoint) {
+        (render_prompt(theme, width, &self.0), Default::default())
+    }
+}
+
+impl RenderItem for ThoughtRenderItem {
+    fn render(
+        &self,
+        theme: &Theme,
+        width: usize,
+        resume: ResumePoint,
+    ) -> (Vec<StyledString>, ResumePoint) {
+        let result = render_thought(theme, width, &self.0, resume);
+        (result.rows, result.resume_point)
+    }
+}
+
+impl RenderItem for ResponseRenderItem {
+    fn render(
+        &self,
+        theme: &Theme,
+        width: usize,
+        resume: ResumePoint,
+    ) -> (Vec<StyledString>, ResumePoint) {
+        let result = render_markdown(theme, width, &self.0, resume);
+        (result.rows, result.resume_point)
+    }
+}
+
+impl RenderItem for CommandPromptRenderItem {
+    fn trailing_padding(&self) -> bool {
+        false
+    }
+
+    fn render(
+        &self,
+        theme: &Theme,
+        width: usize,
+        _resume: ResumePoint,
+    ) -> (Vec<StyledString>, ResumePoint) {
+        (render_command_prompt(theme, width, &self.0), Default::default())
+    }
+}
+
+impl RenderItem for CommandOutputRenderItem {
+    fn render(
+        &self,
+        theme: &Theme,
+        width: usize,
+        _resume: ResumePoint,
+    ) -> (Vec<StyledString>, ResumePoint) {
+        (render_command_output(theme, width, &self.0), Default::default())
     }
 }
 
@@ -70,21 +158,21 @@ pub fn get_item_content(
     tools: &ToolRenderer,
     tool_calls: &FnvHashMap<String, ToolCallArgs>,
     item: &Item,
-) -> AnyResult<Option<HistoryItemContent>> {
+) -> AnyResult<Option<Box<dyn RenderItem>>> {
     Ok(Some(match item.ty()? {
         ItemType::UserText => {
             let Some(text) = item.text.clone() else { return Ok(None) };
-            HistoryItemContent::User(text)
+            Box::new(UserRenderItem::new(text))
         }
         ItemType::ResponseText => {
             let Some(text) = item.text.clone() else { return Ok(None) };
-            HistoryItemContent::Response(text)
+            Box::new(ResponseRenderItem::new(text))
         }
         ItemType::Reasoning => {
             let Some(text) = item.text.clone()
                 .or_else(|| item.summary.clone())
                 else { return Ok(None) };
-            HistoryItemContent::Thought(text)
+            Box::new(ThoughtRenderItem::new(text))
         }
         ItemType::ToolCall => return Ok(None),
         ItemType::ToolOutput => {
@@ -93,12 +181,11 @@ pub fn get_item_content(
             let args = tool_calls.get(call_id)
                 .ok_or_else(|| anyhow::anyhow!("missing args for item {}", item.id))?;
             let Some(output) = item.tool_output()? else { return Ok(None) };
-            let render_item = tools.build_render_item(
+            tools.build_render_item(
                 &args.name,
                 &args.args,
                 &output
-            )?;
-            HistoryItemContent::Dynamic(render_item)
+            )?
         },
     }))
 }
@@ -250,37 +337,6 @@ pub fn render_command_output(theme: &Theme, width: usize, content: &str) -> Vec<
         .collect()
 }
 
-impl HistoryItemContent {
-    /// Performs a full or partial rerender. Newly rendered rows are returned, as
-    /// well as a resume point for future rerenders.
-    pub fn render(
-        &self,
-        theme: &Theme,
-        width: usize,
-        resume: ResumePoint,
-    ) -> (Vec<StyledString>, ResumePoint) {
-        match self {
-            HistoryItemContent::Help(content) => (render_help(theme, width, content), Default::default()),
-            HistoryItemContent::Error(content) => (render_error(theme, width, content), Default::default()),
-            HistoryItemContent::User(content) => (render_prompt(theme, width, content), Default::default()),
-            HistoryItemContent::CommandPrompt(content) => (render_command_prompt(theme, width, content), Default::default()),
-            HistoryItemContent::CommandOutput(content) => (render_command_output(theme, width, content), Default::default()),
-            HistoryItemContent::Response(content) => {
-                let result = render_markdown(theme, width, content, resume);
-                (result.rows, result.resume_point)
-            }
-            HistoryItemContent::Thought(content) => {
-                let result = render_thought(theme, width, content, resume);
-                (result.rows, result.resume_point)
-            }
-            HistoryItemContent::Dynamic(render_item) => {
-                let (rows, resume) = render_item.render(theme, width, resume);
-                (rows, resume)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::ui::canvas::render_canvas;
@@ -415,20 +471,22 @@ mod tests {
     }
 
     #[test]
-    fn test_history_item_content_query() {
+    fn test_render_item_query() {
         use super::*;
         use crate::query::QueryError;
         use crate::tools::ToolResult;
         use crate::ui::tool_render_item::load_tool_renderers;
 
-        let user = HistoryItemContent::User("hello".into());
+        let user = UserRenderItem::new("hello");
         assert_eq!(user.query("/").unwrap(), json!({"type": "user", "value": "hello"}));
         assert_eq!(user.query("/type").unwrap(), json!("user"));
         assert_eq!(user.query("/value").unwrap(), json!("hello"));
         assert!(matches!(user.query("/missing"), Err(QueryError::InvalidField(_))));
+        assert!(user.trailing_padding());
 
-        let command = HistoryItemContent::CommandPrompt("!foo".into());
+        let command = CommandPromptRenderItem::new("!foo");
         assert_eq!(command.query("/").unwrap(), json!({"type": "command_prompt", "value": "!foo"}));
+        assert!(!command.trailing_padding());
 
         let tools = load_tool_renderers();
         let item = tools.build_render_item(
@@ -436,12 +494,11 @@ mod tests {
             &json!({"command": "echo hi"}),
             &ToolResult::Json(json!({"stdout": "hi\n", "stderr": "", "return_code": 0})),
         ).unwrap();
-        let dynamic = HistoryItemContent::Dynamic(item);
         assert_eq!(
-            dynamic.query("/").unwrap(),
+            item.query("/").unwrap(),
             json!({"type": "sh", "cmd_line": "echo hi", "stdout": "hi\n"})
         );
-        assert_eq!(dynamic.query("/type").unwrap(), json!("sh"));
-        assert_eq!(dynamic.query("/stdout").unwrap(), json!("hi\n"));
+        assert_eq!(item.query("/type").unwrap(), json!("sh"));
+        assert_eq!(item.query("/stdout").unwrap(), json!("hi\n"));
     }
 }
