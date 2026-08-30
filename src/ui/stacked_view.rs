@@ -224,12 +224,6 @@ impl Component for StackedView {
     }
 }
 
-/// Exposed fields:
-/// - width: number
-/// - height: number
-/// - focus_state: string
-/// - history: HistoryView
-/// - input: CommandEditor
 impl DataQuery for StackedView {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

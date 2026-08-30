@@ -151,12 +151,6 @@ impl Component for CommandEditor {
     }
 }
 
-/// Exposed fields:
-/// - input: Padded<InputBox>
-/// - scroll_bar: ScrollBar
-/// - command_history: string[]
-/// - command_history_pos: number
-/// - buffered_command: string
 impl DataQuery for CommandEditor {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

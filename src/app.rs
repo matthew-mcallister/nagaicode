@@ -484,13 +484,6 @@ impl App {
     }
 }
 
-/// Exposed fields:
-/// - chat: Chat
-/// - selected_model: Model | null
-/// - db_url: string
-/// - session: Session | null
-/// - current_task: int | null
-/// - task_count: int
 impl DataQuery for App {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

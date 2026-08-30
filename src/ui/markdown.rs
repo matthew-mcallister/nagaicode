@@ -588,9 +588,6 @@ impl ResumePoint {
     }
 }
 
-/// Exposed fields:
-/// - offset: number
-/// - row: number
 impl DataQuery for ResumePoint {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

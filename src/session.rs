@@ -167,11 +167,6 @@ impl Session {
     }
 }
 
-/// Exposed fields:
-/// - id: number
-/// - name: string
-/// - created_at: string (ISO 8601)
-/// - updated_at: string (ISO 8601)
 impl DataQuery for Session {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -268,15 +263,6 @@ impl Turn {
     }
 }
 
-/// Exposed fields:
-/// - id: number
-/// - ty: string
-/// - session_id: number
-/// - provider_id: number | null
-/// - provider_name: string | null
-/// - model_id: string | null
-/// - created_at: string (ISO 8601)
-/// - updated_at: string (ISO 8601)
 impl DataQuery for Turn {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -414,21 +400,6 @@ impl Response {
     }
 }
 
-/// Exposed fields:
-/// - id: number
-/// - session_id: number
-/// - turn_id: number
-/// - upstream_id: string | null
-/// - upstream_status: string | null
-/// - input_tokens: number | null
-/// - cached_input_tokens: number | null
-/// - output_tokens: number | null
-/// - reasoning_tokens: number | null
-/// - total_tokens: number | null
-/// - raw_request: string | null
-/// - raw_response: string | null
-/// - created_at: string (ISO 8601)
-/// - updated_at: string (ISO 8601)
 impl DataQuery for Response {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -707,25 +678,6 @@ impl Item {
     }
 }
 
-/// Exposed fields:
-/// - id: number
-/// - session_id: number
-/// - turn_id: number
-/// - response_id: number | null
-/// - provider_id: number | null
-/// - ty: string
-/// - upstream_id: string | null
-/// - upstream_type: string | null
-/// - upstream_call_id: string | null
-/// - text: string | null
-/// - summary: string | null
-/// - encrypted_text: string | null
-/// - json: string | null
-/// - raw_data: string | null
-/// - seqno: number
-/// - completed: boolean
-/// - created_at: string (ISO 8601)
-/// - updated_at: string (ISO 8601)
 impl DataQuery for Item {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

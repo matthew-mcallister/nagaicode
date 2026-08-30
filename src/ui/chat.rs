@@ -124,8 +124,6 @@ impl Component for Chat {
     }
 }
 
-/// Exposed fields:
-/// - stacked: Padded<StackedView>
 impl DataQuery for Chat {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

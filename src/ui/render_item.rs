@@ -38,12 +38,6 @@ pub enum HistoryItemContent {
     Dynamic(Box<dyn RenderItem>),
 }
 
-/// Exposed fields:
-/// - type: string, one of: help, error, user, thought, response,
-///   command_prompt, command_output
-/// - content: string
-///
-/// Dynamic content delegates all queries to the inner RenderItem.
 impl DataQuery for HistoryItemContent {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         let (ty, content) = match self {

@@ -177,18 +177,6 @@ impl HistoryItem {
     }
 }
 
-/// Exposed fields:
-///
-/// - content: string
-/// - ty: string
-/// - resume_point:
-///   - offset: number
-///   - row: number
-/// - item_id: number | null
-/// - seqno: number | null
-/// - first_row: id
-/// - last_row: id
-/// - num_rows: number
 impl DataQuery for HistoryItem {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -601,19 +589,6 @@ fn by_item_id_json(map: &FnvHashMap<i32, Id<HistoryItem>>) -> Value {
         .collect()
 }
 
-/// Exposed fields:
-/// - num_rows: number
-/// - items: HistoryItem[] (in linked-list order)
-/// - width: number
-/// - max_height: number
-/// - head: id
-/// - viewport_top: id
-/// - viewport_top_pos: number
-/// - viewport_bottom: id
-/// - viewport_bottom_pos: number
-/// - by_item_id: Map<string, id>
-/// - tool_calls: Map<string, {name, args}>
-// rows is intentionally not exposed as of yet
 impl DataQuery for History {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -643,6 +618,7 @@ impl DataQuery for History {
             "viewport_bottom_pos" => Ok(QueryField::Value(json!(self.viewport_bottom_pos))),
             "by_item_id" => Ok(QueryField::Value(by_item_id_json(&self.by_item_id))),
             "tool_calls" => Ok(QueryField::DataQuery(&self.tool_calls)),
+            // "rows" not exposed
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }

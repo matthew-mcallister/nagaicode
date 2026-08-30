@@ -104,15 +104,6 @@ pub fn base_url_normalized(&self) -> Option<&str> {
     }
 }
 
-/// Exposed fields:
-/// - id: number
-/// - name: string
-/// - interface: string
-/// - base_url: string | null
-/// - created_at: string (ISO 8601)
-/// - updated_at: string (ISO 8601)
-///
-/// api_key is intentionally not exposed.
 impl DataQuery for Provider {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

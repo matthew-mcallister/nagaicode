@@ -150,13 +150,6 @@ impl Component for ScrollBar {
     }
 }
 
-/// Exposed fields:
-/// - height: number
-/// - width: number
-/// - num_rows: number
-/// - top: number
-/// - bottom: number
-/// - focused: bool
 impl DataQuery for ScrollBar {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

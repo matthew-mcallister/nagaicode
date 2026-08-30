@@ -115,11 +115,6 @@ impl Model {
     }
 }
 
-/// Exposed fields:
-/// - provider_id: number
-/// - id: string
-/// - created_at: string (ISO 8601)
-/// - updated_at: string (ISO 8601)
 impl DataQuery for Model {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

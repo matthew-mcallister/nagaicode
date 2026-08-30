@@ -116,11 +116,6 @@ impl<C: Component> Component for Padded<C> {
     }
 }
 
-/// Exposed fields:
-/// - h_padding: number
-/// - v_padding: number
-/// - background_color: color | null
-/// - inner: C
 impl<C: DataQuery> DataQuery for Padded<C> {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

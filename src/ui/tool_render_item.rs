@@ -95,10 +95,6 @@ impl ToolRenderItemBuilder for ShRenderItemBuilder {
     }
 }
 
-/// Exposed fields:
-/// - type: string ("sh")
-/// - cmd_line: string
-/// - stdout: string
 impl DataQuery for ShRenderItem {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

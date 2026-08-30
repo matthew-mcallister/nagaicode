@@ -78,10 +78,6 @@ pub trait DataQuery {
     }
 }
 
-/// Exposed fields:
-/// - `/<index>`: T, element at the given index
-///
-/// Querying the whole object returns an array of the elements.
 impl<T> DataQuery for &[T]
     where T: DataQuery
 {

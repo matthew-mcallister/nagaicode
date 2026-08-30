@@ -1136,21 +1136,6 @@ impl Component for InputBox {
     }
 }
 
-/// Exposed fields:
-/// - width: number
-/// - max_height: number
-/// - num_rows: number
-/// - num_lines: number
-/// - text: string
-/// - head: id
-/// - viewport_top: id
-/// - viewport_top_pos: number
-/// - viewport_bottom: id
-/// - viewport_bottom_pos: number
-/// - cursor_row: id
-/// - cursor_col: number
-/// - buffer: string
-/// - overwrite_buffer: bool
 impl DataQuery for InputBox {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
