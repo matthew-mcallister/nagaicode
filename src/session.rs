@@ -653,7 +653,7 @@ impl Item {
     }
 
     pub fn tool_args(&self) -> AnyResult<Option<ToolCallArgs>> {
-        if self.ty()? != ItemType::ToolOutput {
+        if self.ty()? != ItemType::ToolCall {
             Ok(None)
         } else if let Some(name) = self.text.clone()
             && let Some(args) = self.json()?.clone()

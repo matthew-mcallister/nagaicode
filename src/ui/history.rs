@@ -12,7 +12,7 @@ use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::session::{Item, ToolCallArgs};
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
-use crate::ui::render_item::{HistoryItemContent, get_item_content, render};
+use crate::ui::render_item::{HistoryItemContent, get_item_content};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::style::Theme;
 use crate::ui::styled_string::StyledString;
@@ -53,20 +53,24 @@ fn row_offset(
 }
 
 /// Deletes and unlinks rows from the arena
-fn remove_rows(rows: &mut Arena<HistoryRow>, prev: Id<HistoryRow>, count: usize) {
-    for _ in 0..count {
+fn remove_rows(rows: &mut Arena<HistoryRow>, prev: Id<HistoryRow>, last: Id<HistoryRow>) {
+    loop {
         let next = rows[prev].next;
+        debug_assert!(rows[next].item != Id::null(), "removed head");
         rows[prev].next = rows[next].next;
         rows.remove(next);
+        if next == last {
+            break;
+        }
     }
 }
 
 // Inserts and links rows
 fn insert_rows(
     rows: &mut Arena<HistoryRow>,
+    prev: Id<HistoryRow>,
     item: Id<HistoryItem>,
     rendered: Vec<StyledString>,
-    prev: Id<HistoryRow>,
 ) {
     let next = rows[prev].next;
     let mut last = prev;
@@ -95,8 +99,35 @@ pub struct HistoryItem {
 }
 
 impl HistoryItem {
-    fn new(
-        theme: &'static Theme,
+    fn render(
+        theme: &Theme,
+        width: usize,
+        content: &HistoryItemContent,
+        resume: ResumePoint,
+    ) -> (Vec<StyledString>, ResumePoint) {
+        let (mut rendered, resume_point) = content.render(theme, width, resume);
+
+        // TODO: smarter padding system
+        if !matches!(content, HistoryItemContent::CommandPrompt(_)) {
+            // Add vertical padding row
+            let mut padding = StyledString::new(theme.base_style(), width);
+            padding.pad_to_width(width);
+            rendered.push(padding);
+        }
+
+        if rendered.is_empty() {
+            // Every item must have at least one row. This keeps the list data
+            // structure a lot simpler. Items that have no actual content are
+            // ordinarily not inserted into the history in the first place.
+            // This check handles pathological cases and bugs.
+            rendered.push(StyledString::new(theme.base_style(), 0));
+        }
+
+        (rendered, resume_point)
+    }
+
+    fn create(
+        theme: &Theme,
         items: &mut Arena<HistoryItem>,
         rows: &mut Arena<HistoryRow>,
         prev: Id<HistoryRow>,
@@ -104,11 +135,7 @@ impl HistoryItem {
         content: HistoryItemContent,
         item_id: Option<i32>,
     ) -> Id<Self> {
-        let resume: ResumePoint = Default::default();
-        let (mut rendered, resume_point) = render(theme, width, &content, resume);
-
-        let next = rows[prev].next;
-        let is_prompt = matches!(content, HistoryItemContent::CommandPrompt(_));
+        let (rendered, resume_point) = Self::render(theme, width, &content, Default::default());
 
         let item = items.insert(Self {
             content,
@@ -120,17 +147,9 @@ impl HistoryItem {
             num_rows: 0,
         });
 
-        // TODO: smarter padding system
-        if !is_prompt && !rendered.is_empty() {
-            // Add vertical padding row
-            let mut padding = StyledString::new(theme.base_style(), width);
-            padding.pad_to_width(width);
-            rendered.push(padding);
-        }
-
+        let next = rows[prev].next;
         let num_rows = rendered.len();
-        insert_rows(rows, item, rendered, prev);
-
+        insert_rows(rows, prev, item, rendered);
         items[item].first_row = rows[prev].next;
         items[item].last_row = rows[next].prev;
         items[item].num_rows = num_rows;
@@ -138,7 +157,11 @@ impl HistoryItem {
         item
     }
 
-    // Updates and re-renders an existing item
+    // Updates and re-renders an existing item.
+    //
+    // Incremental rerenders are handled by passing a resume point to the
+    // renderer to get a partial render, then overwriting all the rows past the
+    // resume point.
     pub fn update(
         &mut self,
         theme: &Theme,
@@ -150,25 +173,19 @@ impl HistoryItem {
         let item_id = rows[self.first_row].item;  // Bit of a hack
 
         self.content = content;
-        let (rendered, new_resume_point) = render(
-            theme,
-            width,
-            &self.content,
-            self.resume_point,
-        );
+        let (rendered, new_resume_point) = Self::render(theme, width, &self.content, self.resume_point);
+        debug_assert!(!rendered.is_empty());
 
-        // XXX: should iterate in whichever direction is shorter
-        let offset = self.num_rows - self.resume_point.row;
+        let prev = rows[self.first_row].prev;
         let next = rows[self.last_row].next;
-        let prev = row_offset(rows, next, head, -(offset as isize + 1)).unwrap();
-        remove_rows(rows, prev, self.num_rows);
+        let len = self.resume_point.row + rendered.len();
 
-        let mut rendered = rendered;
-        let mut padding = StyledString::new(theme.base_style(), width);
-        padding.pad_to_width(width);
-        rendered.push(padding);
-        let len = rendered.len();
-        insert_rows(rows, item_id, rendered, prev);
+        // FIXME: this iterates from end but should iterate in whichever
+        // direction is shorter
+        let offset = self.num_rows - self.resume_point.row;
+        let insert_prev = row_offset(rows, head, self.last_row, -(offset as isize)).unwrap_or(head);
+        remove_rows(rows, insert_prev, self.last_row);
+        insert_rows(rows, insert_prev, item_id, rendered);
 
         self.first_row = rows[prev].next;
         self.last_row = rows[next].prev;
@@ -403,7 +420,7 @@ impl History {
 
         for saved in saved {
             let prev = self.last_row();
-            let id = HistoryItem::new(
+            let id = HistoryItem::create(
                 self.theme,
                 &mut self.item,
                 &mut self.rows,
@@ -420,17 +437,41 @@ impl History {
         }
     }
 
-    fn add_item(&mut self, content: HistoryItemContent) {
-        self.add_item_with_id(content, None)
+    fn add_content(&mut self, content: HistoryItemContent) {
+        self.add_item(content, None, None)
     }
 
-    fn add_item_with_id(
+    fn find_insertion_point(&self, seqno: i64) -> Id<HistoryRow> {
+        // Insert right before the last item with larger seqno, or at the end
+        let mut cur = self.last_row();
+        let mut result = cur;
+        while cur != self.head {
+            let item = &self.item[self.rows[cur].item];
+            cur = self.rows[item.first_row].prev;
+            if let Some(seqno2) = item.seqno {
+                if seqno2 < seqno {
+                    return result;
+                } else {
+                    result = cur;
+                }
+            }
+        }
+        self.head
+    }
+
+    fn add_item(
         &mut self,
         content: HistoryItemContent,
         item_id: Option<i32>,
+        seqno: Option<i64>,
     ) {
-        let prev = self.last_row();
-        let created_id = HistoryItem::new(
+        let prev = if let Some(seqno) = seqno {
+            self.find_insertion_point(seqno)
+        } else {
+            self.last_row()
+        };
+
+        let created_id = HistoryItem::create(
             self.theme,
             &mut self.item,
             &mut self.rows,
@@ -439,19 +480,32 @@ impl History {
             content,
             item_id,
         );
+        self.item[created_id].seqno = seqno;
         if let Some(id) = item_id {
             self.by_item_id.insert(id, created_id);
         }
+
+        // Update viewport
+        // FIXME: Scrolling
         self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
     }
 
     /// Creates (or updates) an item
     fn on_item_created(&mut self, item: &Item) -> AnyResult<()> {
+        // Tool calls
+        if let Some(call_id) = item.upstream_call_id.clone()
+            && let Some(args) = item.tool_args()?
+        {
+            self.tool_calls.insert(call_id, args);
+        }
+
+        // Normal content
         if self.by_item_id.contains_key(&item.id) {
             self.on_item_updated(item)?;
         } else if let Some(content) = get_item_content(&self.tool_renderer, &self.tool_calls, item)? {
-            self.add_item_with_id(content, Some(item.id));
+            self.add_item(content, Some(item.id), Some(item.seqno));
         }
+
         Ok(())
     }
 
@@ -497,13 +551,13 @@ impl History {
         match update {
             Update::ItemCreated { item } => self.on_item_created(item)?,
             Update::ItemUpdated { item } => self.on_item_updated(item)?,
-            Update::HelpMessage(content) => self.add_item(HistoryItemContent::Help(content.into())),
-            Update::ErrorMessage(content) => self.add_item(HistoryItemContent::Error(content.into())),
+            Update::HelpMessage(content) => self.add_content(HistoryItemContent::Help(content.into())),
+            Update::ErrorMessage(content) => self.add_content(HistoryItemContent::Error(content.into())),
             Update::CommandPrompt(content) => {
-                self.add_item(HistoryItemContent::CommandPrompt(content.into()))
+                self.add_content(HistoryItemContent::CommandPrompt(content.into()))
             }
             Update::CommandOutput(content) => {
-                self.add_item(HistoryItemContent::CommandOutput(content.into()))
+                self.add_content(HistoryItemContent::CommandOutput(content.into()))
             }
         }
         Ok(())
@@ -795,7 +849,7 @@ mod tests {
     fn test_scroll() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemContent::Response(format!("message {i}")));
+            history.add_content(HistoryItemContent::Response(format!("message {i}")));
         }
         assert_eq!(history.num_rows(), 20);
 
@@ -836,7 +890,7 @@ mod tests {
     fn test_set_viewport_top_pos() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemContent::Response(format!("message {i}")));
+            history.add_content(HistoryItemContent::Response(format!("message {i}")));
         }
 
         let row = history.row_offset(history.first_row(), 5).unwrap();
@@ -850,7 +904,7 @@ mod tests {
     fn test_home_end() {
         let mut history = history(80, 4);
         for i in 0..10 {
-            history.add_item(HistoryItemContent::Response(format!("message {i}")));
+            history.add_content(HistoryItemContent::Response(format!("message {i}")));
         }
 
         // Start at the bottom; scroll up so we're not at either extreme.
@@ -878,14 +932,17 @@ mod tests {
         let full = "# Title\n\nfirst\n\nsecond\n\nthird";
 
         let mut incremental = history(20, 20);
-        incremental.add_item(HistoryItemContent::Response("# Title".into()));
+        incremental.add_content(HistoryItemContent::Response("# Title".into()));
+        assert_eq!(incremental.num_rows(), 2);
         update_item(&mut incremental, 0, "\n\nfirst");
+        assert_eq!(incremental.num_rows(), 4);
         update_item(&mut incremental, 0, "\n\nsecond");
+        assert_eq!(incremental.num_rows(), 6);
         update_item(&mut incremental, 0, "\n\nthird");
         assert_eq!(incremental.num_rows(), 8);
 
         let mut whole = history(20, 20);
-        whole.add_item(HistoryItemContent::Response(full.into()));
+        whole.add_content(HistoryItemContent::Response(full.into()));
 
         assert_eq!(render_draw(&incremental), render_draw(&whole));
     }
@@ -923,29 +980,6 @@ mod tests {
         assert_eq!(item.query("/first_row").unwrap(), item.first_row.to_json());
         assert_eq!(item.query("/last_row").unwrap(), item.last_row.to_json());
         assert_eq!(item.query("/num_rows").unwrap(), json!(0));
-    }
-
-    fn make_item(id: i32, seqno: i64) -> Item {
-        Item {
-            id,
-            session_id: 1,
-            turn_id: 1,
-            response_id: None,
-            provider_id: None,
-            ty: ItemType::ResponseText.to_string(),
-            upstream_id: None,
-            upstream_type: None,
-            upstream_call_id: None,
-            text: Some(format!("message {seqno}")),
-            summary: None,
-            encrypted_text: None,
-            json: None,
-            raw_data: None,
-            seqno,
-            completed: true,
-            created_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
-            updated_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
-        }
     }
 
     fn make_tool_call(id: i32, seqno: i64, call_id: &str, name: &str, args: Value) -> Item {
@@ -1064,12 +1098,39 @@ mod tests {
             .collect()
     }
 
+    fn item_with_seqno(id: i32, seqno: i64) -> Item {
+        Item {
+            id,
+            session_id: 1,
+            turn_id: 1,
+            response_id: None,
+            provider_id: None,
+            ty: ItemType::ResponseText.to_string(),
+            upstream_id: None,
+            upstream_type: None,
+            upstream_call_id: None,
+            text: Some(format!("message {seqno}")),
+            summary: None,
+            encrypted_text: None,
+            json: None,
+            raw_data: None,
+            seqno,
+            completed: true,
+            created_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
+            updated_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
+        }
+    }
+
     #[test]
     fn test_item_created_order() {
         let mut h = history(80, 10);
-        for (id, seqno) in [(1, 3), (2, 1), (3, 2)] {
-            let item = make_item(id, seqno);
-            h.handle_update(Update::ItemCreated { item: &item });
+        let mut items: Vec<_> = [3, 1, 2]
+            .into_iter()
+            .enumerate()
+            .map(|(i, seqno)| item_with_seqno(i as i32 + 1, seqno))
+            .collect();
+        for item in &items {
+            h.do_update(Update::ItemCreated { item }).unwrap();
         }
 
         let seqnos: Vec<i64> = h
@@ -1083,23 +1144,23 @@ mod tests {
         assert_eq!(seqnos, [1, 2, 3]);
         assert_eq!(item_contents(&h), ["message 1", "message 2", "message 3"]);
 
-        // UI-only items keep appending at the tail.
+        // No seqno: append at tail
         h.handle_update(Update::HelpMessage("help"));
         assert_eq!(
             item_contents(&h),
             ["message 1", "message 2", "message 3", "help"]
         );
 
-        // Later session items land after the help item.
-        let item = make_item(4, 4);
-        h.handle_update(Update::ItemCreated { item: &item });
+        // Append after items without seqno
+        items.push(item_with_seqno(4, 4));
+        h.handle_update(Update::ItemCreated { item: &items[3] });
         assert_eq!(
             item_contents(&h),
             ["message 1", "message 2", "message 3", "help", "message 4"]
         );
 
         // Updated items are rerendered in place.
-        let mut item = make_item(3, 2);
+        let mut item = item_with_seqno(3, 2);
         item.text = Some("updated".into());
         h.handle_update(Update::ItemUpdated { item: &item });
         assert_eq!(

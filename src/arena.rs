@@ -206,6 +206,7 @@ impl<T> Arena<T> {
 
     pub fn insert(&mut self, value: T) -> Id<T> {
         let idx = self.free_head as usize;
+        self.len += 1;
         if idx == self.entries.len() {
             // No free slots, push new entry
             self.entries.push(Entry {
@@ -214,13 +215,11 @@ impl<T> Arena<T> {
                     full: ManuallyDrop::new(value),
                 },
             });
-            self.len += 1;
             self.free_head = self.entries.len() as u32;
             Id::new(idx as u32, 1)
         } else {
             let entry = &mut self.entries[idx];
             self.free_head = entry.put(value);
-            self.len += 1;
             Id::new(idx as u32, entry.generation)
         }
     }
@@ -334,6 +333,7 @@ impl<T> Arena<T> {
     /// in no particular order.
     // XXX: Would be nice if this implemented ExactSizeIterator
     pub fn drain(&mut self) -> impl Iterator<Item = T> + '_ {
+        self.len = 0;
         self.entries.drain(..)
             .filter_map(|entry| Some(entry.into_inner()?))
     }

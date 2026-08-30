@@ -17,6 +17,10 @@ use crate::ui::tool_render_item::ToolRenderer;
 /// identifies the RenderItem implementation being used, in addition to its
 /// inner fields.
 pub trait RenderItem: std::fmt::Debug + DataQuery {
+    /// Renders (or partially renders) the item, returning rows and a resume
+    /// point for future incremental renders. Not all implementations must
+    /// support incremental renders, but those that do must not be updated
+    /// except for appends.
     fn render(
         &self,
         theme: &Theme,
@@ -246,31 +250,33 @@ pub fn render_command_output(theme: &Theme, width: usize, content: &str) -> Vec<
         .collect()
 }
 
-/// Performs a full or partial rerender. Newly rendered rows are returned, as
-/// well as a resume point for future rerenders.
-pub fn render(
-    theme: &Theme,
-    width: usize,
-    content: &HistoryItemContent,
-    resume: ResumePoint,
-) -> (Vec<StyledString>, ResumePoint) {
-    match content {
-        HistoryItemContent::Help(content) => (render_help(theme, width, content), Default::default()),
-        HistoryItemContent::Error(content) => (render_error(theme, width, content), Default::default()),
-        HistoryItemContent::User(content) => (render_prompt(theme, width, content), Default::default()),
-        HistoryItemContent::CommandPrompt(content) => (render_command_prompt(theme, width, content), Default::default()),
-        HistoryItemContent::CommandOutput(content) => (render_command_output(theme, width, content), Default::default()),
-        HistoryItemContent::Response(content) => {
-            let result = render_markdown(theme, width, content, resume);
-            (result.rows, result.resume_point)
-        }
-        HistoryItemContent::Thought(content) => {
-            let result = render_thought(theme, width, content, resume);
-            (result.rows, result.resume_point)
-        }
-        HistoryItemContent::Dynamic(render_item) => {
-            let (rows, resume) = render_item.render(theme, width, resume);
-            (rows, resume)
+impl HistoryItemContent {
+    /// Performs a full or partial rerender. Newly rendered rows are returned, as
+    /// well as a resume point for future rerenders.
+    pub fn render(
+        &self,
+        theme: &Theme,
+        width: usize,
+        resume: ResumePoint,
+    ) -> (Vec<StyledString>, ResumePoint) {
+        match self {
+            HistoryItemContent::Help(content) => (render_help(theme, width, content), Default::default()),
+            HistoryItemContent::Error(content) => (render_error(theme, width, content), Default::default()),
+            HistoryItemContent::User(content) => (render_prompt(theme, width, content), Default::default()),
+            HistoryItemContent::CommandPrompt(content) => (render_command_prompt(theme, width, content), Default::default()),
+            HistoryItemContent::CommandOutput(content) => (render_command_output(theme, width, content), Default::default()),
+            HistoryItemContent::Response(content) => {
+                let result = render_markdown(theme, width, content, resume);
+                (result.rows, result.resume_point)
+            }
+            HistoryItemContent::Thought(content) => {
+                let result = render_thought(theme, width, content, resume);
+                (result.rows, result.resume_point)
+            }
+            HistoryItemContent::Dynamic(render_item) => {
+                let (rows, resume) = render_item.render(theme, width, resume);
+                (rows, resume)
+            }
         }
     }
 }
