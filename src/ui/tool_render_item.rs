@@ -235,7 +235,8 @@ fn render_sh_stdout(
     };
 
     // Command line
-    push_rows(&mut rows, &wrap_line_naive(inner_width, cmd_line));
+    let prompt = format!("$ {cmd_line}");
+    push_rows(&mut rows, &wrap_line_naive(inner_width, &prompt));
 
     // Output
     let (head, tail) = ellipsize(inner_width, MAX_ROWS, stdout);
@@ -301,14 +302,14 @@ mod tests {
         assert_eq!(
             render(&tools, 14, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
             format!(
-                "{style}              \n{style}  echo hi     \n{style}  hello       \n{style}              "
+                "{style}              \n{style}  $ echo hi   \n{style}  hello       \n{style}              "
             )
         );
         let output = ToolResult::Json(json!({"stdout": "hi\n", "stderr": "", "return_code": 0}));
         assert_eq!(
             render(&tools, 14, "sh", &json!({"command": "echo hello world"}), &output).unwrap(),
             format!(
-                "{style}              \n{style}  echo hello  \n{style}   world      \n{style}  hi          \n{style}              "
+                "{style}              \n{style}  $ echo hel  \n{style}  lo world    \n{style}  hi          \n{style}              "
             )
         );
 
@@ -320,7 +321,7 @@ mod tests {
             render(&tools, 14, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
             [
                 format!("{style}              "),
-                format!("{style}  echo hi     "),
+                format!("{style}  $ echo hi   "),
                 line(), line(), line(), line(), line(),
                 format!("{ellipsis_style}  ...         "),
                 line(), line(), line(), line(), line(),
