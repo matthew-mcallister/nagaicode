@@ -69,6 +69,15 @@ impl Row {
     }
 }
 
+impl std::fmt::Display for Row {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for grapheme in &self.graphemes {
+            f.write_str(grapheme.formatted())?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Breakpoint {
     offset: usize,
@@ -243,6 +252,72 @@ pub fn wrap_line_naive(max_width: usize, line: &str) -> Vec<Row> {
     rows
 }
 
+/// Naive line wrapping in reverse direction: rows are filled starting from
+/// the end of the line. Returns rows in reverse order, so the first row
+/// contains the end of the line, filled to the full width wherever possible.
+/// Tab widths are computed in forward direction from the start of the line.
+pub fn wrap_line_reverse(max_width: usize, line: &str) -> Vec<Row> {
+    assert!(max_width >= TAB_WIDTH);
+    let graphemes = truncate_line(usize::MAX, line).graphemes;
+
+    let mut rows = Vec::new();
+    let mut row = Row::default();
+    let mut width = 0;
+    for grapheme in graphemes.into_iter().rev() {
+        let grapheme_width = grapheme.width as usize;
+        if width + grapheme_width > max_width {
+            row.graphemes.reverse();
+            row.width = width;
+            rows.push(std::mem::take(&mut row));
+            width = 0;
+        }
+        row.graphemes.push(grapheme);
+        width += grapheme_width;
+    }
+    row.graphemes.reverse();
+    row.width = width;
+    rows.push(row);
+    rows
+}
+
+/// Wraps text to rows of `max_width` columns, ellipsizing it if it exceeds
+/// `max_rows` rows. Returns the head rows and, if the text overflowed, tail
+/// rows to be displayed after an ellipsis marker. Any line in the tail which
+/// does not fit fully in the output will be reverse-wrapped so it fills the
+/// final row.
+pub fn ellipsize(max_width: usize, max_rows: usize, text: &str) -> (Vec<Row>, Option<Vec<Row>>) {
+    let half = max_rows / 2;
+    // This is not a hard upper bound, but it is a generous limit.
+    let limit = 6 * (max_rows + 1) * max_width;
+    let head_end = text.floor_char_boundary(limit);
+    let mut rows: Vec<Row> = text[..head_end]
+        .lines()
+        .flat_map(|line| wrap_line_naive(max_width, line))
+        .collect();
+    let tail_rows = if rows.len() > max_rows {
+        rows.truncate(half);
+        let tail_start = text.floor_char_boundary(text.len().saturating_sub(limit));
+        let mut tail_rows: Vec<Row> = Vec::new();
+        for line in text[tail_start..].lines().rev() {
+            let wrapped = wrap_line_naive(max_width, line);
+            if tail_rows.len() + wrapped.len() > half {
+                tail_rows.extend(wrap_line_reverse(max_width, line));
+            } else {
+                tail_rows.extend(wrapped);
+            }
+            if tail_rows.len() > half {
+                break;
+            }
+        }
+        tail_rows.truncate(half);
+        tail_rows.reverse();
+        Some(tail_rows)
+    } else {
+        None
+    };
+    (rows, tail_rows)
+}
+
 /// Truncates a single line to fit within the maximum width. Also expands tabs.
 pub fn truncate_line(max_width: usize, line: &str) -> Row {
     let mut row = Row::default();
@@ -336,6 +411,53 @@ mod tests {
         assert_eq!(wrap_naive(4, "        "), "    \n    \n");
         assert_eq!(wrap_naive(10, "asdf\t"), "asdf    \n");
         assert_eq!(wrap_naive(6, "asdf\t"), "asdf\n    \n");
+    }
+
+    fn wrap_rev(width: usize, text: &str) -> Vec<String> {
+        wrap_line_reverse(width, text)
+            .into_iter()
+            .map(|row| row.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_wrap_reverse() {
+        assert_eq!(wrap_rev(10, ""), [""]);
+        assert_eq!(wrap_rev(10, "hello"), ["hello"]);
+        assert_eq!(wrap_rev(10, "hello world foo"), [" world foo", "hello"]);
+        assert_eq!(wrap_rev(4, "abcdefgh"), ["efgh", "abcd"]);
+        assert_eq!(wrap_rev(4, "abcdefg"), ["defg", "abc"]);
+        assert_eq!(wrap_rev(10, "abcdefghij0123456789"), ["0123456789", "abcdefghij"]);
+        assert_eq!(wrap_rev(4, "ab界cdef界"), ["ef界", "界cd", "ab"]);
+        assert_eq!(wrap_rev(10, "a\tb"), ["a   b"]);
+        assert_eq!(wrap_rev(4, "ab\tcd"), ["  cd", "ab"]);
+    }
+
+    fn ellipsized(text: &str) -> (Vec<String>, Option<Vec<String>>) {
+        let (head, tail) = ellipsize(10, 7, text);
+        (
+            head.into_iter().map(|row| row.to_string()).collect(),
+            tail.map(|rows| rows.into_iter().map(|row| row.to_string()).collect()),
+        )
+    }
+
+    #[test]
+    fn test_ellipsize() {
+        // Exactly max_rows rows
+        let (head, tail) = ellipsized("line0\nline1\nline2\nline3\nline4\nline5\nline6");
+        assert_eq!(head, ["line0", "line1", "line2", "line3", "line4", "line5", "line6"]);
+        assert!(tail.is_none());
+
+        // More than max_rows rows across separate lines
+        let (head, tail) = ellipsized("line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8");
+        assert_eq!(head, ["line0", "line1", "line2"]);
+        assert_eq!(tail.unwrap(), ["line6", "line7", "line8"]);
+
+        // A single very long line fills the final row to the full width
+        let long = "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffffgggggggggg123";
+        let (head, tail) = ellipsized(long);
+        assert_eq!(head, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"]);
+        assert_eq!(tail.unwrap(), ["eeeeeeefff", "fffffffggg", "ggggggg123"]);
     }
 
     fn trunc(width: usize, text: &str) -> String {
