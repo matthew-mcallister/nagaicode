@@ -11,6 +11,7 @@ use crossterm::terminal::{
     DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use diesel::SqliteConnection;
+use dedent::dedent;
 use fnv::FnvHashSet;
 use futures::StreamExt;
 use serde_json::json;
@@ -35,6 +36,13 @@ use crate::ui::chat::{Chat, Update};
 use crate::ui::style::{THEME_DARK, Theme};
 use crate::ui::styled_string::StyledString;
 use crate::ui::text::truncate_line;
+
+const WELCOME: &str = dedent!(
+    "
+    Welcome to NagaiCode!
+
+    Type /help for a list of commands."
+);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
@@ -104,7 +112,8 @@ impl App {
         let terminal = DefaultTerminal::default();
         let (w, h) = terminal.size()?;
         let theme = &THEME_DARK;
-        let chat = Chat::new(w, h, theme);
+        let mut chat = Chat::new(w, h, theme);
+        chat.handle_update(Update::HelpMessage(WELCOME));
         let (send, recv) = unbounded_channel();
         let db_url = crate::db::db_url()?;
         let mut conn = crate::db::open(&db_url)?;
@@ -323,7 +332,7 @@ impl App {
 
     /// Cancels the active task, drops all pending events, and resets the
     /// session and UI for a fresh start.
-    pub(crate) async fn new_session(&mut self) -> AnyResult<()> {
+    async fn clear_session(&mut self) -> AnyResult<()> {
         self.cancel_task().await;
         // Task bookkeeping updates arrive via events, which are dropped below.
         self.tasks.clear();
@@ -331,6 +340,30 @@ impl App {
         self.session = None;
         let (w, h) = self.terminal.size()?;
         self.chat = Chat::new(w, h, self.theme);
+        Ok(())
+    }
+
+    /// Cancels the active task and resets to a fresh session with the
+    /// greeting message.
+    pub(crate) async fn new_session(&mut self) -> AnyResult<()> {
+        self.clear_session().await?;
+        self.chat.handle_update(Update::HelpMessage(WELCOME));
+        Ok(())
+    }
+
+    /// Cancels the active task, resets the UI, and restores the given
+    /// session's items into the chat history.
+    pub(crate) async fn switch_session(&mut self, session_id: i32) -> AnyResult<()> {
+        let Some(session) = Session::get_by_id(&mut self.conn, session_id)? else {
+            return Err(anyhow!("no session with id {session_id}"));
+        };
+        let items = Item::list_by_session(&mut self.conn, session_id)?;
+        self.clear_session().await?;
+        self.session = Some(session);
+        for item in items {
+            self.send.send(AppEvent::ItemCreated { item })?;
+        }
+        Box::pin(self.process_pending_events()).await;
         Ok(())
     }
 

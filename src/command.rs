@@ -50,6 +50,7 @@ pub enum ModelCommand {
 pub enum SessionCommand {
     Ls,
     New,
+    Switch(i32),
 }
 
 #[derive(Clone, Debug)]
@@ -325,6 +326,7 @@ fn parse_session(args: &[&str]) -> Result<Command, AnyError> {
 
           /session ls
           /session new
+          /session switch <id>
     ");
     let mut parser = Parser::new(USAGE, &args, &[]);
     match parser.expect()? {
@@ -335,6 +337,15 @@ fn parse_session(args: &[&str]) -> Result<Command, AnyError> {
         "new" => {
             parser.expect_empty()?;
             Ok(Command::Session(SessionCommand::New))
+        }
+        "switch" => {
+            let arg = parser.expect()?;
+            parser.expect_empty()?;
+            let id: i32 = arg.parse().map_err(|_| CliParseError {
+                error: Some(format!("Invalid session id: '{arg}'")),
+                usage: USAGE,
+            })?;
+            Ok(Command::Session(SessionCommand::Switch(id)))
         }
         command => Err(unknown_command(USAGE, command)),
     }
@@ -451,6 +462,10 @@ pub async fn run_session_command(
         }
         SessionCommand::New => {
             app.new_session().await?;
+            Ok(String::new())
+        }
+        SessionCommand::Switch(id) => {
+            app.switch_session(id).await?;
             Ok(String::new())
         }
     }
@@ -589,6 +604,19 @@ mod tests {
 
         let cmd = parse_args(vec!["s".into(), "new".into()]).expect("parse alias new failed");
         assert_eq!(cmd, Command::Session(SessionCommand::New));
+
+        let cmd = parse_args(vec!["s".into(), "switch".into(), "3".into()])
+            .expect("parse switch failed");
+        assert_eq!(cmd, Command::Session(SessionCommand::Switch(3)));
+
+        let bad = parse_args(vec!["s".into(), "switch".into(), "abc".into()]);
+        assert!(bad.is_err(), "expected error, got {:?}", bad.unwrap());
+
+        let missing = parse_args(vec!["s".into(), "switch".into()]);
+        assert!(missing.is_err(), "expected error, got {:?}", missing.unwrap());
+
+        let extra = parse_args(vec!["s".into(), "switch".into(), "3".into(), "4".into()]);
+        assert!(extra.is_err(), "expected error, got {:?}", extra.unwrap());
 
         let extra = parse_args(vec!["session".into(), "new".into(), "x".into()]);
         assert!(extra.is_err(), "expected error, got {:?}", extra.unwrap());

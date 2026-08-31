@@ -1,5 +1,4 @@
 use crossterm::event::Event;
-use dedent::dedent;
 use serde_json::json;
 
 use crate::app::AppEvent;
@@ -26,19 +25,12 @@ impl Chat {
         let w = w.max(80);
         let h = h.max(24);
 
-        let mut stacked = StackedView::new(
+        let stacked = StackedView::new(
             w as usize - 4,
             h as usize - 2,
             TEXT_INPUT_MAX_HEIGHT.min(h.saturating_sub(2)) as usize,
             theme,
         );
-        let help = dedent!(
-            "
-            Welcome to NagaiCode!
-
-            Type /help for a list of commands."
-        );
-        stacked.handle_update(stacked_view::Update::HelpMessage(help));
 
         Self {
             stacked: Padded::new(stacked, 2, 1, Some(theme.bg_base)),

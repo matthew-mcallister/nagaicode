@@ -315,8 +315,15 @@ async fn test_app_query() {
     assert_eq!(app.query("/current_task").unwrap(), json!(null));
     assert_eq!(app.query("/task_count").unwrap(), json!(0));
 
-    // Nested query into chat.
-    let expected_chat = Chat::new(80, 24, &THEME_DARK).query("/").unwrap();
+    // Nested query into chat. The app's chat starts with the greeting.
+    use crate::ui::chat::Update;
+    use crate::ui::Component;
+
+    let mut chat = Chat::new(80, 24, &THEME_DARK);
+    chat.handle_update(Update::HelpMessage(
+        "Welcome to NagaiCode!\n\nType /help for a list of commands.",
+    ));
+    let expected_chat = chat.query("/").unwrap();
     assert_eq!(app.query("/chat").unwrap(), expected_chat);
     assert_eq!(app.query("/chat/stacked/h_padding").unwrap(), json!(2));
     assert_eq!(app.query("/chat/stacked/v_padding").unwrap(), json!(1));
@@ -467,4 +474,89 @@ async fn test_app_session_new() {
         date(&fresh),
     );
     assert_eq!(last_content(&app), expected);
+}
+
+#[tokio::test]
+async fn test_app_session_switch() {
+    use crate::session::{Item, ItemType, NewItem, Session, Turn, TurnType};
+
+    let mut app = App::new().unwrap();
+
+    let provider = Provider::create(app.conn(), "test", InterfaceId::Openai, "key", None)
+        .expect("create provider");
+    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    app.switch_model(provider, model).unwrap();
+
+    // Fake completed session with a prompt and a response.
+    let session = Session::create(app.conn(), "restored").unwrap();
+    let turn = Turn::create(app.conn(), session.id, TurnType::User, None, None, None)
+        .expect("create turn");
+    for (ty, text) in [
+        (ItemType::UserText, "hello from the past"),
+        (ItemType::ResponseText, "restored reply"),
+    ] {
+        Item::create(
+            app.conn(),
+            NewItem {
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
+                ty: Some(ty),
+                text: Some(text),
+                completed: Some(true),
+                ..Default::default()
+            },
+        )
+        .expect("create item");
+    }
+
+    // Switching cancels the running task and purges its events.
+    app.process_command("hello world").await.unwrap();
+    assert_eq!(app.query("/current_task").unwrap(), json!(0));
+    app.process_command(&format!("/session switch {}", session.id))
+        .await
+        .unwrap();
+    assert_eq!(app.query("/session/id").unwrap(), json!(session.id));
+    assert_eq!(app.query("/current_task").unwrap(), json!(null));
+    assert_eq!(app.query("/task_count").unwrap(), json!(0));
+    assert_eq!(interrupted_count(&app), 0);
+
+    // The history is rebuilt from the session's items, without the greeting.
+    let history = app
+        .query("/chat/stacked/inner/history/history/items")
+        .unwrap();
+    let items = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            (
+                item["content"]["type"].as_str().unwrap(),
+                item["content"]["value"].as_str().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        items,
+        [("user", "hello from the past"), ("response", "restored reply")]
+    );
+    let mut canvas = app.make_canvas();
+    app.draw(&mut canvas);
+    assert!(!render_canvas(&mut canvas).contains("Welcome to NagaiCode!"));
+
+    // The next prompt continues in the switched session.
+    app.process_command("one more thing").await.unwrap();
+    assert_eq!(app.query("/session/id").unwrap(), json!(session.id));
+}
+
+#[tokio::test]
+async fn test_app_session_switch_missing() {
+    let mut app = App::new().unwrap();
+
+    // Switching to a session that does not exist errors and leaves the
+    // initial UI untouched.
+    assert!(app.process_command("/session switch 999").await.is_err());
+    assert_eq!(app.query("/session").unwrap(), json!(null));
+    let mut canvas = app.make_canvas();
+    app.draw(&mut canvas);
+    assert_eq!(render_canvas(&mut canvas), EXPECTED_INITIAL_FRAME);
 }
