@@ -228,6 +228,7 @@ fn render_sh_stdout(
             for g in &row.graphemes {
                 s.push(g.formatted(), g.width as usize);
             }
+            s.pad_to_width(width - PADDING);
             s.push(&SPACES[..PADDING], PADDING);
             rows.push(s);
         }
@@ -300,14 +301,14 @@ mod tests {
         assert_eq!(
             render(&tools, 14, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
             format!(
-                "{style}              \n{style}  echo hi  \n{style}  hello  \n{style}              "
+                "{style}              \n{style}  echo hi     \n{style}  hello       \n{style}              "
             )
         );
         let output = ToolResult::Json(json!({"stdout": "hi\n", "stderr": "", "return_code": 0}));
         assert_eq!(
             render(&tools, 14, "sh", &json!({"command": "echo hello world"}), &output).unwrap(),
             format!(
-                "{style}              \n{style}  echo hello  \n{style}   world  \n{style}  hi  \n{style}              "
+                "{style}              \n{style}  echo hello  \n{style}   world      \n{style}  hi          \n{style}              "
             )
         );
 
@@ -319,7 +320,7 @@ mod tests {
             render(&tools, 14, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
             [
                 format!("{style}              "),
-                format!("{style}  echo hi  "),
+                format!("{style}  echo hi     "),
                 line(), line(), line(), line(), line(),
                 format!("{ellipsis_style}  ...         "),
                 line(), line(), line(), line(), line(),

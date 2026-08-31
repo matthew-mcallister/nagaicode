@@ -1074,7 +1074,7 @@ mod tests {
         assert_eq!(
             render_draw(&h),
             format!(
-                "{style}              \n{style}  echo hi  \n{style}  hello  \n{style}              \n{base_style}              "
+                "{style}              \n{style}  echo hi     \n{style}  hello       \n{style}              \n{base_style}              "
             )
         );
         // The item stores the parsed output; the renderer handles formatting.
