@@ -7,7 +7,7 @@ use std::task::Poll;
 use futures::{Stream, pin_mut};
 use tokio::sync::Notify;
 
-use crate::tasks::{Task, TaskContext};
+use crate::task::{Task, TaskContext};
 
 /// A task that does nothing until it is signaled to complete. Used for
 /// testing task lifecycle behavior.

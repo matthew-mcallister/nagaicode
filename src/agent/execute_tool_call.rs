@@ -3,8 +3,8 @@ use anyhow::anyhow;
 use crate::app::AppEvent;
 use crate::error::AnyResult;
 use crate::session::{Item, ItemType};
-use crate::tasks::{Task, TaskContext};
-use crate::tools::{ToolResult, ToolServer};
+use crate::task::{Task, TaskContext};
+use crate::tool::{ToolResult, ToolServer};
 
 /// Executes a tool call item and completes its pre-created tool output item.
 pub struct ExecuteToolCall {
@@ -61,7 +61,7 @@ mod tests {
     use crate::app::App;
     use crate::db;
     use crate::session::{NewItem, Session, Turn, TurnType};
-    use crate::tools::mock::ToolCall;
+    use crate::tool::mock::ToolCall;
     use diesel::sqlite::SqliteConnection;
 
     #[tokio::test]

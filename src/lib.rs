@@ -15,10 +15,10 @@ pub mod request;
 pub mod schema;
 pub mod session;
 pub mod settings;
-pub mod tasks;
+pub mod task;
 pub mod terminal;
 pub mod testing;
-pub mod tools;
+pub mod tool;
 
 #[cfg(test)]
 mod tests;

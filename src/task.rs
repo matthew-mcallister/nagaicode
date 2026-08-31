@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
-use crate::tools::DefaultToolServer;
+use crate::tool::DefaultToolServer;
 
 /// Unique identifier for a spawned task.
 pub type Tid = u64;
@@ -168,7 +168,7 @@ mod tests {
 
     use tokio::sync::mpsc::unbounded_channel;
 
-    use crate::tasks::{TaskContext, TaskError};
+    use crate::task::{TaskContext, TaskError};
     use crate::testing::DummyTask;
 
     use super::*;
@@ -177,7 +177,7 @@ mod tests {
     async fn test_spawn_cancels() {
         let (sender, mut recv) = unbounded_channel();
         let url = crate::db::db_url().unwrap();
-        let tools = crate::tools::DefaultToolServer::new();
+        let tools = crate::tool::DefaultToolServer::new();
         let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender, url, tools);
         let handle = context.spawn(DummyTask::new());
         handle.cancel();

@@ -12,7 +12,7 @@ use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::request::DefaultClient;
 use crate::schema::model;
 use crate::schema::model::dsl;
-use crate::tasks::{Task, TaskContext};
+use crate::task::{Task, TaskContext};
 use serde_json::json;
 
 /// Model from a provider. We fetch and cache these periodically.

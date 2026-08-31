@@ -11,7 +11,7 @@ use crate::interface::{
     ReasoningEffort, ResponseCompleted, ResponseCreated, ResponseFailed, Usage,
 };
 use crate::request::DefaultClient;
-use crate::tools::{ToolInfo, ToolServer};
+use crate::tool::{ToolInfo, ToolServer};
 #[allow(unused_imports)]
 use crate::request::{Client as _, Response as _};
 
@@ -563,7 +563,7 @@ mod tests {
     use crate::request::DefaultClient;
     use crate::request::test_client::{Response, ResponseData};
     use crate::testing::QueueStream;
-    use crate::tools::{DefaultToolServer, ToolInfo};
+    use crate::tool::{DefaultToolServer, ToolInfo};
     use reqwest::StatusCode;
     use reqwest::header::HeaderMap;
     use reqwest_eventsource::Event;

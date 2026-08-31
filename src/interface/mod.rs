@@ -13,7 +13,7 @@ use crate::interface::openai::OpenaiInterface;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, ItemType};
-use crate::tools::ToolServer;
+use crate::tool::ToolServer;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum InterfaceId {

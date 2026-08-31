@@ -7,7 +7,7 @@ use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, ItemType, NewItem, Session};
-use crate::tasks::{Task, TaskContext};
+use crate::task::{Task, TaskContext};
 use self::create_prompt::CreatePrompt;
 use self::execute_tool_call::ExecuteToolCall;
 use self::stream_response::StreamResponse;

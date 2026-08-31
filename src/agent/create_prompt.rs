@@ -4,7 +4,7 @@ use diesel::sqlite::SqliteConnection;
 use crate::app::AppEvent;
 use crate::error::AnyResult;
 use crate::session::{Item, ItemType, NewItem, Turn, TurnType};
-use crate::tasks::{Task, TaskContext};
+use crate::task::{Task, TaskContext};
 
 /// Backfills missing tool outputs for tool calls. OpenAI chokes when a tool
 /// call is missing its output so we must do this before building history.

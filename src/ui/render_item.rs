@@ -474,7 +474,7 @@ mod tests {
     fn test_render_item_query() {
         use super::*;
         use crate::query::QueryError;
-        use crate::tools::ToolResult;
+        use crate::tool::ToolResult;
         use crate::ui::tool_render_item::load_tool_renderers;
 
         let user = UserRenderItem::new("hello");

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::error::AnyResult;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::ToolResult;
+use crate::tool::ToolResult;
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::RenderItem;
 use crate::ui::style::{Style, Theme};

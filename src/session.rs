@@ -15,7 +15,7 @@ use crate::error::{AnyError, AnyResult};
 use crate::interface::Usage;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::schema::{item, response, session, turn};
-use crate::tools::ToolResult;
+use crate::tool::ToolResult;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, diesel::AsExpression, diesel::FromSqlRow)]
 #[diesel(sql_type = Text)]

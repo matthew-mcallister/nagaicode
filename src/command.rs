@@ -15,8 +15,8 @@ use crate::model::Model;
 use crate::provider::Provider;
 use crate::schema::provider::dsl;
 use crate::session::Session;
-use crate::tasks::{Task, TaskContext};
-use crate::tools::{ToolResult, ToolServer};
+use crate::task::{Task, TaskContext};
+use crate::tool::{ToolResult, ToolServer};
 use crate::ui::text::truncate_line;
 use serde_json::{Value, json};
 

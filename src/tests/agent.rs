@@ -13,8 +13,8 @@ use crate::provider::Provider;
 use crate::query::DataQuery;
 use crate::request::test_client::ResponseData;
 use crate::testing::QueueStream;
-use crate::tools::ToolResult;
-use crate::tools::mock::ToolCall;
+use crate::tool::ToolResult;
+use crate::tool::mock::ToolCall;
 
 fn create_message_event(data: &str) -> SseEvent {
     SseEvent::Message(eventsource_stream::Event {

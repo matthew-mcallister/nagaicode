@@ -5,7 +5,7 @@ use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, Session};
-use crate::tasks::{Task, TaskContext};
+use crate::task::{Task, TaskContext};
 
 pub struct StreamResponse {
     session: Session,
