@@ -1006,7 +1006,13 @@ mod tests {
         }
     }
 
-    fn make_tool_output(id: i32, seqno: i64, call_id: &str, output: Value) -> Item {
+    fn make_tool_output(
+        id: i32,
+        seqno: i64,
+        call_id: &str,
+        output: Option<Value>,
+        completed: bool,
+    ) -> Item {
         Item {
             id,
             session_id: 1,
@@ -1020,10 +1026,10 @@ mod tests {
             text: None,
             summary: None,
             encrypted_text: None,
-            json: Some(output.to_string()),
+            json: output.map(|v| v.to_string()),
             raw_data: None,
             seqno,
-            completed: true,
+            completed,
             created_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
             updated_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
         }
@@ -1048,12 +1054,18 @@ mod tests {
             json!({ "command": "echo hi" })
         );
 
-        let output = make_tool_output(
-            2,
-            2,
-            "call_1",
-            json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 }),
+        // An incomplete tool output is not rendered yet.
+        let output = make_tool_output(2, 2, "call_1", None, false);
+        h.handle_update(Update::ItemCreated { item: &output });
+        assert_eq!(h.num_rows(), 0);
+        assert_eq!(h.by_item_id.len(), 0);
+
+        // When the output completes, the item is updated and rendered.
+        let mut output = output.clone();
+        output.json = Some(
+            json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 }).to_string(),
         );
+        output.completed = true;
         h.handle_update(Update::ItemUpdated { item: &output });
 
         // Rendered with the prompt background and padding, plus the item's
@@ -1079,7 +1091,8 @@ mod tests {
             1,
             1,
             "missing",
-            json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 }),
+            Some(json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 })),
+            true,
         );
         h.handle_update(Update::ItemUpdated { item: &output });
 

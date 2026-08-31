@@ -660,7 +660,7 @@ impl Item {
         {
             Ok(Some(ToolCallArgs { name, args }))
         } else {
-            bail!("tool output item {} has no output", self.id);
+            bail!("tool call item {} has no output", self.id);
         }
     }
 

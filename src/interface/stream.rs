@@ -131,8 +131,10 @@ impl<'a, S> StreamProcessor<'a, S> {
             }
             Item::set_raw_data(self.conn, item.id, &done.raw)?;
             item.raw_data = Some(done.raw.to_string());
+            Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))
+        } else {
+            Ok(None)
         }
-        Ok(None)
     }
 
     fn ensure_item(&mut self, output_index: i64, ty: ItemType) -> AnyResult<()> {
