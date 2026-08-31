@@ -12,6 +12,7 @@ use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::request::DefaultClient;
 use crate::schema::model;
 use crate::schema::model::dsl;
+use crate::tasks::{Task, TaskContext};
 use serde_json::json;
 
 /// Model from a provider. We fetch and cache these periodically.
@@ -114,11 +115,6 @@ impl Model {
     }
 }
 
-/// Exposed fields:
-/// - provider_id: number
-/// - id: string
-/// - created_at: string (ISO 8601)
-/// - updated_at: string (ISO 8601)
 impl DataQuery for Model {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -179,6 +175,25 @@ pub async fn revalidate_models(conn: &mut SqliteConnection) -> AnyResult<()> {
     })?;
 
     Ok(())
+}
+
+/// Background task that refreshes cached provider model lists.
+pub struct RevalidateModelsTask;
+
+impl RevalidateModelsTask {
+    async fn process(self, context: &mut TaskContext) -> AnyResult<()> {
+        revalidate_models(context.connection()?).await
+    }
+}
+
+impl Task for RevalidateModelsTask {
+    type Output = ();
+
+    async fn run(self, context: &mut TaskContext) {
+        if let Err(e) = self.process(context).await {
+            log::error!("failed to revalidate models: {e}");
+        }
+    }
 }
 
 #[cfg(test)]

@@ -39,7 +39,7 @@ impl DummyTask {
 impl Task for DummyTask {
     type Output = ();
 
-    async fn run(self, _context: TaskContext) {
+    async fn run(self, _context: &mut TaskContext) {
         self.complete.notified().await;
     }
 }

@@ -3,6 +3,7 @@ use log::debug;
 use reqwest_eventsource::Event;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::error::AnyResult;
 use crate::interface::{
@@ -10,6 +11,7 @@ use crate::interface::{
     ReasoningEffort, ResponseCompleted, ResponseCreated, ResponseFailed, Usage,
 };
 use crate::request::DefaultClient;
+use crate::tools::{ToolInfo, ToolServer};
 #[allow(unused_imports)]
 use crate::request::{Client as _, Response as _};
 
@@ -112,21 +114,67 @@ struct RequestReasoning {
 #[serde(untagged)]
 enum InputItem<'a> {
     Message {
+        #[serde(rename = "type")]
+        r#type: &'static str,
         role: &'static str,
         content: &'a str,
     },
     Reasoning {
         #[serde(rename = "type")]
         r#type: &'static str,
-        summary: Vec<ReasoningSummary<'a>>,
+        content: Vec<ReasoningText<'a>>,
+    },
+    FunctionCall {
+        #[serde(rename = "type")]
+        r#type: &'static str,
+        call_id: &'a str,
+        name: &'a str,
+        arguments: &'a str,
+    },
+    FunctionCallOutput {
+        #[serde(rename = "type")]
+        r#type: &'static str,
+        call_id: &'a str,
+        output: &'a str,
     },
 }
 
 #[derive(Debug, Serialize)]
-struct ReasoningSummary<'a> {
+struct ReasoningText<'a> {
     #[serde(rename = "type")]
     r#type: &'static str,
     text: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct RequestToolInfo<'a> {
+    name: &'a str,
+    description: &'a str,
+    parameters: &'a Value,
+    strict: bool,
+}
+
+impl<'a> From<&'a ToolInfo> for RequestToolInfo<'a> {
+    fn from(tool: &'a ToolInfo) -> Self {
+        Self {
+            name: &tool.name,
+            description: &tool.description,
+            parameters: &tool.input_schema,
+            strict: true,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum RequestTool<'a> {
+    Function(RequestToolInfo<'a>),
+}
+
+impl<'a> From<&'a ToolInfo> for RequestTool<'a> {
+    fn from(tool: &'a ToolInfo) -> Self {
+        Self::Function(tool.into())
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -139,29 +187,51 @@ struct CreateResponseRequest<'a> {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<RequestReasoning>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<RequestTool<'a>>,
     stream: bool,
 }
 
 impl<'a> CreateResponseRequest<'a> {
-    fn from_params(params: &InferenceParams<'a>) -> Self {
+    fn from_params<T: ToolServer + ?Sized>(
+        params: &InferenceParams<'a>,
+        tools: &'a T,
+    ) -> Self {
         let input = params
             .input
             .iter()
             .map(|msg| match msg {
                 ChatMessage::Message { content } => InputItem::Message {
+                    r#type: "message",
                     role: "user",
                     content,
                 },
                 ChatMessage::Response { content } => InputItem::Message {
+                    r#type: "message",
                     role: "assistant",
                     content,
                 },
                 ChatMessage::Reasoning { content } => InputItem::Reasoning {
                     r#type: "reasoning",
-                    summary: vec![ReasoningSummary {
-                        r#type: "summary_text",
+                    content: vec![ReasoningText {
+                        r#type: "reasoning_text",
                         text: content,
                     }],
+                },
+                ChatMessage::ToolCall {
+                    call_id,
+                    name,
+                    arguments,
+                } => InputItem::FunctionCall {
+                    r#type: "function_call",
+                    call_id,
+                    name,
+                    arguments,
+                },
+                ChatMessage::ToolOutput { call_id, output } => InputItem::FunctionCallOutput {
+                    r#type: "function_call_output",
+                    call_id,
+                    output,
                 },
             })
             .collect();
@@ -172,6 +242,8 @@ impl<'a> CreateResponseRequest<'a> {
             Some(params.system_prompt)
         };
 
+        let tools = tools.list_tools().map(RequestTool::from).collect();
+
         Self {
             model: params.model_id,
             input,
@@ -180,6 +252,7 @@ impl<'a> CreateResponseRequest<'a> {
             reasoning: params.reasoning_effort.map(|effort| RequestReasoning {
                 effort: effort.into(),
             }),
+            tools,
             stream: true,
         }
     }
@@ -220,6 +293,12 @@ enum ResponseStreamEvent {
         output_index: i64,
         delta: String,
     },
+    #[serde(rename = "response.function_call_arguments.delta")]
+    FunctionCallArgsDelta {
+        #[serde(default)]
+        output_index: i64,
+        delta: String,
+    },
     #[serde(rename = "response.completed")]
     Completed { response: ResponsePayload },
     #[serde(rename = "response.incomplete")]
@@ -238,6 +317,8 @@ struct OutputItemPayload {
     id: String,
     #[serde(default, rename = "type")]
     ty: String,
+    #[serde(default)]
+    call_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -341,11 +422,13 @@ impl OpenaiInterface {
             .collect())
     }
 
-    pub fn generate(
+    pub fn generate<T: ToolServer + ?Sized>(
         &self,
         params: InferenceParams<'_>,
-    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<> {
-        let req_body = serde_json::to_value(CreateResponseRequest::from_params(&params)).unwrap();
+        tools: &T,
+    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<T> {
+        let req_body = CreateResponseRequest::from_params(&params, tools);
+        let req_body = serde_json::to_value(req_body).unwrap();
         let client = self.client.clone();
 
         async_stream::try_stream! {
@@ -382,6 +465,7 @@ impl OpenaiInterface {
                                     output_index,
                                     id: item.id,
                                     ty: item.ty,
+                                    call_id: item.call_id,
                                     raw: raw_event["item"].clone(),
                                 });
                             }
@@ -390,6 +474,7 @@ impl OpenaiInterface {
                                     output_index,
                                     id: item.id,
                                     ty: item.ty,
+                                    call_id: item.call_id,
                                     raw: raw_event["item"].clone(),
                                 });
                             }
@@ -410,6 +495,15 @@ impl OpenaiInterface {
                                 delta,
                             } => {
                                 yield InferenceEvent::ReasoningSummaryDelta(ItemDelta {
+                                    output_index,
+                                    delta,
+                                });
+                            }
+                            ResponseStreamEvent::FunctionCallArgsDelta {
+                                output_index,
+                                delta,
+                            } => {
+                                yield InferenceEvent::FunctionCallArgsDelta(ItemDelta {
                                     output_index,
                                     delta,
                                 });
@@ -469,6 +563,7 @@ mod tests {
     use crate::request::DefaultClient;
     use crate::request::test_client::{Response, ResponseData};
     use crate::testing::QueueStream;
+    use crate::tools::{DefaultToolServer, ToolInfo};
     use reqwest::StatusCode;
     use reqwest::header::HeaderMap;
     use reqwest_eventsource::Event;
@@ -572,7 +667,36 @@ mod tests {
             ],
         };
 
-        let stream = iface.generate(params);
+        let mut tools = DefaultToolServer::new();
+        tools.set_tools(vec![
+            ToolInfo {
+                name: "sh".to_owned(),
+                description: "Run a shell command".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string" },
+                    },
+                    "required": ["command"],
+                    "additionalProperties": false,
+                }),
+            },
+            ToolInfo {
+                name: "noop".to_owned(),
+                description: "Does nothing".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "a": { "type": "integer" },
+                        "b": { "type": "integer" },
+                    },
+                    "required": ["a"],
+                    "additionalProperties": true,
+                }),
+            },
+        ]);
+
+        let stream = iface.generate(params, &tools);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -591,6 +715,7 @@ mod tests {
                     output_index: 0,
                     id: "msg_1".into(),
                     ty: "message".into(),
+                    call_id: None,
                     raw: json!({
                         "id": "msg_1",
                         "type": "message",
@@ -611,6 +736,7 @@ mod tests {
                     output_index: 0,
                     id: "msg_1".into(),
                     ty: "message".into(),
+                    call_id: None,
                     raw: json!({
                         "id": "msg_1",
                         "type": "message",
@@ -657,9 +783,41 @@ mod tests {
         assert_eq!(
             body["input"],
             serde_json::json!([
-                {"role": "user", "content": "Hello"},
-                {"role": "assistant", "content": "Hi there!"},
-                {"role": "user", "content": "How are you?"}
+                {"type": "message", "role": "user", "content": "Hello"},
+                {"type": "message", "role": "assistant", "content": "Hi there!"},
+                {"type": "message", "role": "user", "content": "How are you?"}
+            ])
+        );
+        assert_eq!(
+            body["tools"],
+            json!([
+                {
+                    "type": "function",
+                    "name": "sh",
+                    "description": "Run a shell command",
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "command": { "type": "string" } },
+                        "required": ["command"],
+                        "additionalProperties": false,
+                    },
+                    "strict": true,
+                },
+                {
+                    "type": "function",
+                    "name": "noop",
+                    "description": "Does nothing",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "a": { "type": "integer" },
+                            "b": { "type": "integer" },
+                        },
+                        "required": ["a"],
+                        "additionalProperties": true,
+                    },
+                    "strict": true,
+                },
             ])
         );
     }
@@ -678,6 +836,7 @@ mod tests {
         );
 
         let iface = make_iface(client);
+        let tools = DefaultToolServer::new();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -686,7 +845,7 @@ mod tests {
             input: &[],
         };
 
-        let stream = iface.generate(params);
+        let stream = iface.generate(params, &tools);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -702,6 +861,10 @@ mod tests {
                 raw_response: json!({"id": "resp-custom-1"}),
             })]
         );
+
+        let requests = iface.client().inner().get_requests();
+        let body = request_body_value(&requests[0]);
+        assert!(body.get("tools").is_none());
     }
 
     #[tokio::test]
@@ -742,6 +905,7 @@ mod tests {
         );
 
         let iface = make_iface(client);
+        let tools = DefaultToolServer::new();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
@@ -750,7 +914,7 @@ mod tests {
             input: &[],
         };
 
-        let stream = iface.generate(params);
+        let stream = iface.generate(params, &tools);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -769,6 +933,7 @@ mod tests {
                     output_index: 0,
                     id: "rs_1".into(),
                     ty: "reasoning".into(),
+                    call_id: None,
                     raw: json!({"id": "rs_1", "type": "reasoning", "summary": []}),
                 }),
                 InferenceEvent::ReasoningTextDelta(ItemDelta {
@@ -783,6 +948,7 @@ mod tests {
                     output_index: 0,
                     id: "rs_1".into(),
                     ty: "reasoning".into(),
+                    call_id: None,
                     raw: json!({
                         "id": "rs_1",
                         "type": "reasoning",
@@ -793,6 +959,7 @@ mod tests {
                     output_index: 1,
                     id: "msg_1".into(),
                     ty: "message".into(),
+                    call_id: None,
                     raw: json!({
                         "id": "msg_1",
                         "type": "message",
@@ -809,6 +976,7 @@ mod tests {
                     output_index: 1,
                     id: "msg_1".into(),
                     ty: "message".into(),
+                    call_id: None,
                     raw: json!({
                         "id": "msg_1",
                         "type": "message",
@@ -827,10 +995,162 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_tool_call_fields() {
+        let mut client = DefaultClient::default();
+        client.add_response(
+            &format!("{BASE_URL}/responses"),
+            sse(vec![
+                Ok(create_message_event(
+                    r#"{"type":"response.created","response":{"id":"resp-tool-1","status":"in_progress"}}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"get_weather","call_id":"call_1","arguments":""}}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"city\":\"San Francisco\""}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"}"}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"get_weather","call_id":"call_1","arguments":"{\"city\":\"San Francisco\"}"}}"#,
+                )),
+                Ok(create_message_event(
+                    r#"{"type":"response.completed","response":{"id":"resp-tool-1","status":"completed"}}"#,
+                )),
+                Ok(create_message_event("[DONE]")),
+            ]),
+        );
+
+        let iface = make_iface(client);
+        let tools = DefaultToolServer::new();
+        let params = InferenceParams {
+            model_id: "test-model",
+            system_prompt: "",
+            temperature: 0.0,
+            reasoning_effort: None,
+            input: &[],
+        };
+
+        let stream = iface.generate(params, &tools);
+        let events: Vec<InferenceEvent> = stream
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+
+        assert_eq!(
+            events,
+            vec![
+                InferenceEvent::Created(ResponseCreated {
+                    id: "resp-tool-1".into(),
+                    status: "in_progress".into(),
+                }),
+                InferenceEvent::OutputItemAdded(OutputItemEvent {
+                    output_index: 0,
+                    id: "fc_1".into(),
+                    ty: "function_call".into(),
+                    call_id: Some("call_1".into()),
+                    raw: json!({
+                        "id": "fc_1",
+                        "type": "function_call",
+                        "status": "in_progress",
+                        "name": "get_weather",
+                        "call_id": "call_1",
+                        "arguments": "",
+                    }),
+                }),
+                InferenceEvent::FunctionCallArgsDelta(ItemDelta {
+                    output_index: 0,
+                    delta: r#"{"city":"San Francisco""#.into(),
+                }),
+                InferenceEvent::FunctionCallArgsDelta(ItemDelta {
+                    output_index: 0,
+                    delta: "}".into(),
+                }),
+                InferenceEvent::OutputItemDone(OutputItemEvent {
+                    output_index: 0,
+                    id: "fc_1".into(),
+                    ty: "function_call".into(),
+                    call_id: Some("call_1".into()),
+                    raw: json!({
+                        "id": "fc_1",
+                        "type": "function_call",
+                        "status": "completed",
+                        "name": "get_weather",
+                        "call_id": "call_1",
+                        "arguments": r#"{"city":"San Francisco"}"#,
+                    }),
+                }),
+                InferenceEvent::Completed(ResponseCompleted {
+                    status: "completed".into(),
+                    usage: None,
+                    raw_response: json!({"id": "resp-tool-1", "status": "completed"}),
+                }),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_input_items() {
+        let mut client = DefaultClient::default();
+        client.add_response(
+            &format!("{BASE_URL}/responses"),
+            sse(vec![Ok(create_message_event("[DONE]"))]),
+        );
+
+        let iface = make_iface(client);
+        let tools = DefaultToolServer::new();
+        let params = InferenceParams {
+            model_id: "test-model",
+            system_prompt: "",
+            temperature: 0.0,
+            reasoning_effort: None,
+            input: &[
+                ChatMessage::ToolCall {
+                    call_id: "call_1",
+                    name: "add",
+                    arguments: r#"{"a":1}"#,
+                },
+                ChatMessage::ToolOutput {
+                    call_id: "call_1",
+                    output: r#"{"result":3}"#,
+                },
+            ],
+        };
+
+        let stream = iface.generate(params, &tools);
+        let events: Vec<AnyResult<InferenceEvent>> = stream.collect().await;
+        assert!(events.is_empty());
+
+        let requests = iface.client().inner().get_requests();
+        assert_eq!(requests.len(), 1);
+        let body = request_body_value(&requests[0]);
+        assert_eq!(
+            body["input"],
+            json!([
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "add",
+                    "arguments": r#"{"a":1}"#,
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": r#"{"result":3}"#,
+                },
+            ])
+        );
+    }
+
+    #[tokio::test]
     async fn test_error() {
         let mut client = DefaultClient::default();
         let iface = make_iface(client.clone());
         let url = format!("{BASE_URL}/responses");
+        let tools = DefaultToolServer::new();
 
         // A top-level error event surfaces as a stream error.
         client.add_response(&url, sse(vec![Ok(create_message_event(
@@ -845,7 +1165,7 @@ mod tests {
             input: &[],
         };
 
-        let stream = iface.generate(params);
+        let stream = iface.generate(params, &tools);
         let results: Vec<_> = stream.collect().await;
         assert_eq!(results.len(), 1);
         assert!(results[0].is_err());
@@ -868,7 +1188,7 @@ mod tests {
             input: &[],
         };
 
-        let stream = iface.generate(params);
+        let stream = iface.generate(params, &tools);
         let results: Vec<_> = stream.collect().await;
         assert_eq!(results.len(), 1);
         match results[0].as_ref().unwrap() {

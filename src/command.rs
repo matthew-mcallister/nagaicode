@@ -8,15 +8,19 @@ use diesel::RunQueryDsl;
 use diesel::expression_methods::ExpressionMethods;
 
 use crate::app::App;
-use crate::error::AnyError;
+use crate::app::AppEvent;
+use crate::error::{AnyError, AnyResult};
 use crate::interface::InterfaceId;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::schema::provider::dsl;
 use crate::session::Session;
+use crate::tasks::{Task, TaskContext};
+use crate::tools::{ToolResult, ToolServer};
 use crate::ui::text::truncate_line;
+use serde_json::{Value, json};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
     Provider(ProviderCommand),
     Model(ModelCommand),
@@ -24,7 +28,7 @@ pub enum Command {
     Quit,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderCommand {
     Ls,
     New {
@@ -36,13 +40,13 @@ pub enum ProviderCommand {
     Rm(String),
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModelCommand {
     Ls,
     Switch { provider: String, model: String },
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionCommand {
     Ls,
     New,
@@ -137,7 +141,7 @@ impl<'a> Parser<'a> {
 
     fn expect_empty(&mut self) -> Result<(), AnyError> {
         if let Some(first) = self.args.first() {
-            Err(From::from(unexpected_argument(self.usage, first)))
+            Err(unexpected_argument(self.usage, first))
         } else {
             Ok(())
         }
@@ -156,7 +160,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn parse_args<'a>(args: Vec<String>) -> Result<Command, AnyError> {
+fn parse_args(args: Vec<String>) -> Result<Command, AnyError> {
     let args_: Vec<&str> = args.iter().map(|s| &s[..]).collect();
 
     const USAGE: &str = dedent!("
@@ -185,7 +189,7 @@ fn parse_quit(args: &[&str]) -> Result<Command, AnyError> {
 
             /quit
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     parser.expect_empty()?;
     Ok(Command::Quit)
 }
@@ -198,7 +202,7 @@ fn parse_provider(args: &[&str]) -> Result<Command, AnyError> {
           /provider ls
           /provider rm
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     match parser.expect()? {
         "new" => parse_provider_new(parser.args),
         "ls" => parse_provider_ls(parser.args),
@@ -213,7 +217,7 @@ fn parse_provider_ls(args: &[&str]) -> Result<Command, AnyError> {
 
           /provider ls
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     parser.expect_empty()?;
     Ok(Command::Provider(ProviderCommand::Ls))
 }
@@ -224,7 +228,7 @@ fn parse_provider_rm(args: &[&str]) -> Result<Command, AnyError> {
 
           /provider rm 'provider-name-here'
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     let arg = parser.expect()?;
     parser.expect_empty()?;
     Ok(Command::Provider(ProviderCommand::Rm(arg.into())))
@@ -240,7 +244,7 @@ fn parse_provider_new(args: &[&str]) -> Result<Command, AnyError> {
                 -api-key 'sk-api-key-here'
                 [-base-url 'https://base.url/here']
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &["-name", "-interface", "-api-key", "-base-url"]);
+    let mut parser = Parser::new(USAGE, args, &["-name", "-interface", "-api-key", "-base-url"]);
 
     let mut name: Option<String> = None;
     let mut interface: Option<String> = None;
@@ -277,7 +281,7 @@ fn parse_model(args: &[&str]) -> Result<Command, AnyError> {
           /model ls
           /model switch
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     match parser.expect()? {
         "ls" => parse_model_ls(parser.args),
         "switch" => parse_model_switch(parser.args),
@@ -291,7 +295,7 @@ fn parse_model_ls(args: &[&str]) -> Result<Command, AnyError> {
 
           /model ls
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     parser.expect_empty()?;
     Ok(Command::Model(ModelCommand::Ls))
 }
@@ -302,7 +306,7 @@ fn parse_model_switch(args: &[&str]) -> Result<Command, AnyError> {
 
           /model switch 'provider-name-here' 'model-id-here'
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, args, &[]);
     let provider = parser.expect()?;
     let model = parser.expect()?;
     parser.expect_empty()?;
@@ -322,7 +326,7 @@ fn parse_session(args: &[&str]) -> Result<Command, AnyError> {
           /session ls
           /session new
     ");
-    let mut parser = Parser::new(USAGE, &args[..], &[]);
+    let mut parser = Parser::new(USAGE, &args, &[]);
     match parser.expect()? {
         "ls" => {
             parser.expect_empty()?;
@@ -387,8 +391,7 @@ pub fn run_provider_command(
 pub fn run_model_command(
     app: &mut App,
     command: ModelCommand,
-) -> Result<String, AnyError> {
-    match command {
+) -> Result<String, AnyError> {    match command {
         ModelCommand::Ls => {
             use crate::schema::model::dsl as model_dsl;
 
@@ -449,6 +452,58 @@ pub async fn run_session_command(
         SessionCommand::New => {
             app.new_session().await?;
             Ok(String::new())
+        }
+    }
+}
+
+/// Executes a host command via the `sh` tool, reporting the result to the UI.
+pub struct BangCommand {
+    command: String,
+}
+
+impl BangCommand {
+    /// Creates a task that runs `command` on the host.
+    pub fn new(command: String) -> Self {
+        Self { command }
+    }
+
+    async fn process(self, context: &mut TaskContext) -> AnyResult<()> {
+        context.send(AppEvent::CommandPrompt(format!("$ {}", self.command)));
+        let result = context
+            .tools_mut()
+            .call("sh", json!({ "command": self.command }))
+            .await;
+        match result {
+            ToolResult::Text(msg) => Err(anyhow!(msg)),
+            ToolResult::Json(value) => {
+                let obj = value
+                    .as_object()
+                    .ok_or_else(|| anyhow!("invalid result for 'sh': expected an object"))?;
+                let stdout = obj.get("stdout").and_then(Value::as_str).unwrap_or("");
+                let stderr = obj.get("stderr").and_then(Value::as_str).unwrap_or("");
+                let return_code = obj
+                    .get("return_code")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(-1);
+                if return_code == 0 {
+                    context.send(AppEvent::CommandOutput(format!("{stdout}{stderr}")));
+                    Ok(())
+                } else {
+                    Err(anyhow!(
+                        "command exited with code {return_code}: {stdout}{stderr}"
+                    ))
+                }
+            }
+        }
+    }
+}
+
+impl Task for BangCommand {
+    type Output = ();
+
+    async fn run(self, context: &mut TaskContext) {
+        if let Err(e) = self.process(context).await {
+            context.send(AppEvent::ErrorMessage(e.to_string()));
         }
     }
 }

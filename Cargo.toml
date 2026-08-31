@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 crossterm = { version = "0.28", features = ["event-stream"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 dirs = "5"
 diesel = { version = "2", features = ["sqlite", "chrono", "serde_json", "returning_clauses_for_sqlite_3_35"] }

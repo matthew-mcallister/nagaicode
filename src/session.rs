@@ -1,6 +1,11 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use chrono::NaiveDateTime;
+use diesel::backend::Backend;
+use diesel::deserialize::{self, FromSql};
 use diesel::prelude::*;
+use diesel::serialize::{self, IsNull, ToSql};
+use diesel::sql_types::Text;
+use diesel::sqlite::Sqlite;
 use diesel::sqlite::SqliteConnection;
 use serde_json::{Value, json};
 use std::fmt;
@@ -10,8 +15,10 @@ use crate::error::{AnyError, AnyResult};
 use crate::interface::Usage;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::schema::{item, response, session, turn};
+use crate::tools::ToolResult;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, diesel::AsExpression, diesel::FromSqlRow)]
+#[diesel(sql_type = Text)]
 pub enum TurnType {
     User,
     Assistant,
@@ -37,11 +44,28 @@ impl FromStr for TurnType {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+impl ToSql<Text, Sqlite> for TurnType {
+    fn to_sql<'b>(&'b self, out: &mut serialize::Output<'b, '_, Sqlite>) -> serialize::Result {
+        out.set_value(self.to_string());
+        Ok(IsNull::No)
+    }
+}
+
+impl FromSql<Text, Sqlite> for TurnType {
+    fn from_sql(bytes: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
+        let value = <String as FromSql<Text, Sqlite>>::from_sql(bytes)?;
+        value.parse().map_err(Into::into)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, diesel::AsExpression, diesel::FromSqlRow)]
+#[diesel(sql_type = Text)]
 pub enum ItemType {
     UserText,
     ResponseText,
     Reasoning,
+    ToolCall,
+    ToolOutput,
 }
 
 impl fmt::Display for ItemType {
@@ -50,6 +74,8 @@ impl fmt::Display for ItemType {
             ItemType::UserText => write!(f, "user_text"),
             ItemType::ResponseText => write!(f, "response_text"),
             ItemType::Reasoning => write!(f, "reasoning"),
+            ItemType::ToolCall => write!(f, "tool_call"),
+            ItemType::ToolOutput => write!(f, "tool_output"),
         }
     }
 }
@@ -61,8 +87,24 @@ impl FromStr for ItemType {
             "user_text" => Ok(ItemType::UserText),
             "response_text" => Ok(ItemType::ResponseText),
             "reasoning" => Ok(ItemType::Reasoning),
+            "tool_call" => Ok(ItemType::ToolCall),
+            "tool_output" => Ok(ItemType::ToolOutput),
             other => Err(anyhow!("unknown item type: {other}")),
         }
+    }
+}
+
+impl ToSql<Text, Sqlite> for ItemType {
+    fn to_sql<'b>(&'b self, out: &mut serialize::Output<'b, '_, Sqlite>) -> serialize::Result {
+        out.set_value(self.to_string());
+        Ok(IsNull::No)
+    }
+}
+
+impl FromSql<Text, Sqlite> for ItemType {
+    fn from_sql(bytes: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
+        let value = <String as FromSql<Text, Sqlite>>::from_sql(bytes)?;
+        value.parse().map_err(Into::into)
     }
 }
 
@@ -71,6 +113,8 @@ impl ItemType {
         match ty {
             "message" => Some(ItemType::ResponseText),
             "reasoning" => Some(ItemType::Reasoning),
+            "function_call" => Some(ItemType::ToolCall),
+            "function_call_output" => Some(ItemType::ToolOutput),
             _ => None,
         }
     }
@@ -123,11 +167,6 @@ impl Session {
     }
 }
 
-/// Exposed fields:
-/// - id: number
-/// - name: string
-/// - created_at: string (ISO 8601)
-/// - updated_at: string (ISO 8601)
 impl DataQuery for Session {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -146,13 +185,18 @@ impl DataQuery for Session {
     }
 }
 
+/// A container for items. In a user-guided conversation, turn alternates
+/// between user and assistant. In a subagent session (roadmap), there is only
+/// one turn.
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = turn)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct Turn {
     pub id: i32,
+    /// Maps to TurnType
     pub ty: String,
     pub session_id: i32,
+    /// Agent turn fields
     pub provider_id: Option<i32>,
     pub provider_name: Option<String>,
     pub model_id: Option<String>,
@@ -160,33 +204,14 @@ pub struct Turn {
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Insertable)]
+#[diesel(table_name = turn)]
 pub struct NewTurn<'a> {
     pub session_id: i32,
     pub ty: TurnType,
     pub provider_id: Option<i32>,
     pub provider_name: Option<&'a str>,
     pub model_id: Option<&'a str>,
-}
-
-impl<'a> diesel::insertable::Insertable<turn::table> for NewTurn<'a> {
-    type Values = <(
-        Option<diesel::dsl::Eq<turn::session_id, i32>>,
-        Option<diesel::dsl::Eq<turn::ty, String>>,
-        Option<diesel::dsl::Eq<turn::provider_id, i32>>,
-        Option<diesel::dsl::Eq<turn::provider_name, &'a str>>,
-        Option<diesel::dsl::Eq<turn::model_id, &'a str>>,
-    ) as diesel::insertable::Insertable<turn::table>>::Values;
-
-    fn values(self) -> Self::Values {
-        diesel::insertable::Insertable::<turn::table>::values((
-            Some(turn::session_id.eq(self.session_id)),
-            Some(turn::ty.eq(self.ty.to_string())),
-            self.provider_id.map(|x| turn::provider_id.eq(x)),
-            self.provider_name.map(|x| turn::provider_name.eq(x)),
-            self.model_id.map(|x| turn::model_id.eq(x)),
-        ))
-    }
 }
 
 impl Turn {
@@ -234,19 +259,10 @@ impl Turn {
     }
 
     pub fn ty(&self) -> AnyResult<TurnType> {
-        Ok(TurnType::from_str(&self.ty)?)
+        TurnType::from_str(&self.ty)
     }
 }
 
-/// Exposed fields:
-/// - id: number
-/// - ty: string
-/// - session_id: number
-/// - provider_id: number | null
-/// - provider_name: string | null
-/// - model_id: string | null
-/// - created_at: string (ISO 8601)
-/// - updated_at: string (ISO 8601)
 impl DataQuery for Turn {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -273,6 +289,8 @@ impl DataQuery for Turn {
     }
 }
 
+/// A response from the upstream API. Contains text, reasoning, and tool call
+/// outputs.
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = response)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
@@ -282,11 +300,14 @@ pub struct Response {
     pub turn_id: i32,
     pub upstream_id: Option<String>,
     pub upstream_status: Option<String>,
+    // Usage data
     pub input_tokens: Option<i64>,
     pub cached_input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub reasoning_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    // Raw event data
+    // TODO: There needs to be a config item to disable storing this
     pub raw_request: Option<String>,
     pub raw_response: Option<String>,
     pub created_at: NaiveDateTime,
@@ -379,21 +400,6 @@ impl Response {
     }
 }
 
-/// Exposed fields:
-/// - id: number
-/// - session_id: number
-/// - turn_id: number
-/// - upstream_id: string | null
-/// - upstream_status: string | null
-/// - input_tokens: number | null
-/// - cached_input_tokens: number | null
-/// - output_tokens: number | null
-/// - reasoning_tokens: number | null
-/// - total_tokens: number | null
-/// - raw_request: string | null
-/// - raw_response: string | null
-/// - created_at: string (ISO 8601)
-/// - updated_at: string (ISO 8601)
 impl DataQuery for Response {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -432,6 +438,27 @@ impl DataQuery for Response {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ToolCallArgs {
+    pub name: String,
+    pub args: Value,
+}
+
+impl DataQuery for ToolCallArgs {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "name": self.query("/name")?,
+                "args": self.query("/args")?,
+            }))),
+            "name" => Ok(QueryField::Value(self.name.clone().into())),
+            "args" => Ok(QueryField::Value(self.args.clone())),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+/// Basic datum in human/agent/tool loop history.
 #[derive(Debug, Clone, Eq, PartialEq, Queryable, Selectable)]
 #[diesel(table_name = item)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
@@ -441,67 +468,80 @@ pub struct Item {
     pub turn_id: i32,
     pub response_id: Option<i32>,
     pub provider_id: Option<i32>,
+    /// Maps to ItemType, may be converted from upstream_type
     pub ty: String,
     pub upstream_id: Option<String>,
+    /// Raw type from API
     pub upstream_type: Option<String>,
+    /// Correlates tool call and tool output
     pub upstream_call_id: Option<String>,
+    /// Used by user_text, response_text, and reasoning. Also stores the tool
+    /// name on tool_call and text output on tool_output
     pub text: Option<String>,
+    /// Reasoning summary
     pub summary: Option<String>,
+    /// Encrypted reasoning
     pub encrypted_text: Option<String>,
+    /// Used by tool_call args and JSON tool output
     pub json: Option<String>,
     pub raw_data: Option<String>,
+    /// Position in the session's item ordering; unique per session.
+    pub seqno: i64,
+    /// For tool outputs, set to `true` when the tool call is finished.
+    pub completed: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default, Insertable)]
+#[diesel(table_name = item)]
 pub struct NewItem<'a> {
-    pub session_id: i32,
-    pub turn_id: i32,
+    pub session_id: Option<i32>,
+    pub turn_id: Option<i32>,
     pub response_id: Option<i32>,
     pub provider_id: Option<i32>,
-    pub ty: ItemType,
+    pub ty: Option<ItemType>,
     pub upstream_id: Option<&'a str>,
     pub upstream_type: Option<&'a str>,
     pub upstream_call_id: Option<&'a str>,
     pub text: Option<&'a str>,
-}
-
-impl<'a> diesel::insertable::Insertable<item::table> for NewItem<'a> {
-    type Values = <(
-        Option<diesel::dsl::Eq<item::session_id, i32>>,
-        Option<diesel::dsl::Eq<item::turn_id, i32>>,
-        Option<diesel::dsl::Eq<item::response_id, i32>>,
-        Option<diesel::dsl::Eq<item::provider_id, i32>>,
-        Option<diesel::dsl::Eq<item::ty, String>>,
-        Option<diesel::dsl::Eq<item::upstream_id, &'a str>>,
-        Option<diesel::dsl::Eq<item::upstream_type, &'a str>>,
-        Option<diesel::dsl::Eq<item::upstream_call_id, &'a str>>,
-        Option<diesel::dsl::Eq<item::text, &'a str>>,
-    ) as diesel::insertable::Insertable<item::table>>::Values;
-
-    fn values(self) -> Self::Values {
-        diesel::insertable::Insertable::<item::table>::values((
-            Some(item::session_id.eq(self.session_id)),
-            Some(item::turn_id.eq(self.turn_id)),
-            self.response_id.map(|x| item::response_id.eq(x)),
-            self.provider_id.map(|x| item::provider_id.eq(x)),
-            Some(item::ty.eq(self.ty.to_string())),
-            self.upstream_id.map(|x| item::upstream_id.eq(x)),
-            self.upstream_type.map(|x| item::upstream_type.eq(x)),
-            self.upstream_call_id.map(|x| item::upstream_call_id.eq(x)),
-            self.text.map(|x| item::text.eq(x)),
-        ))
-    }
+    /// Explicit seqno, or `None` to autoincrement
+    pub seqno: Option<i64>,
+    pub completed: Option<bool>,
 }
 
 impl Item {
     pub fn create(conn: &mut SqliteConnection, new: NewItem<'_>) -> AnyResult<Item> {
+        if new.seqno.is_some() {
+            return Self::insert(conn, new);
+        }
+        let Some(session_id) = new.session_id else {
+            return Self::insert(conn, new);
+        };
+        conn.transaction(|conn| {
+            let seqno = Self::max_seqno(conn, session_id)?.unwrap_or(0) + 1;
+            Self::insert(conn, NewItem {
+                seqno: Some(seqno),
+                ..new
+            })
+        })
+    }
+
+    fn insert(conn: &mut SqliteConnection, new: NewItem<'_>) -> AnyResult<Item> {
         let item = diesel::insert_into(item::table)
             .values(new)
             .returning(item::all_columns)
             .get_result(conn)?;
         Ok(item)
+    }
+
+    /// Returns the highest seqno for the session, if any.
+    pub fn max_seqno(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Option<i64>> {
+        let result = item::table
+            .filter(item::session_id.eq(session_id))
+            .select(diesel::dsl::max(item::seqno))
+            .first::<Option<i64>>(conn)?;
+        Ok(result)
     }
 
     pub fn get_by_id(conn: &mut SqliteConnection, id: i32) -> AnyResult<Option<Item>> {
@@ -515,7 +555,7 @@ impl Item {
     pub fn list_by_session(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Vec<Item>> {
         let items = item::table
             .filter(item::session_id.eq(session_id))
-            .order(item::id.asc())
+            .order(item::seqno.asc())
             .load::<Item>(conn)?;
         Ok(items)
     }
@@ -523,7 +563,20 @@ impl Item {
     pub fn list_by_turn(conn: &mut SqliteConnection, turn_id: i32) -> AnyResult<Vec<Item>> {
         let items = item::table
             .filter(item::turn_id.eq(turn_id))
-            .order(item::id.asc())
+            .order(item::seqno.asc())
+            .load::<Item>(conn)?;
+        Ok(items)
+    }
+
+    pub fn tool_calls_by_response(
+        conn: &mut SqliteConnection,
+        response_id: i32,
+    ) -> AnyResult<Vec<Item>> {
+        use crate::schema::item::dsl;
+        let items = dsl::item
+            .filter(dsl::response_id.eq(response_id))
+            .filter(dsl::ty.eq(ItemType::ToolCall.to_string()))
+            .order(dsl::seqno.asc())
             .load::<Item>(conn)?;
         Ok(items)
     }
@@ -549,6 +602,35 @@ impl Item {
         Ok(())
     }
 
+    pub fn update_json(conn: &mut SqliteConnection, id: i32, json: &str) -> AnyResult<()> {
+        use crate::schema::item::dsl;
+        diesel::update(dsl::item.filter(dsl::id.eq(id)))
+            .set(dsl::json.eq(json))
+            .execute(conn)?;
+        Ok(())
+    }
+
+    /// Writes a tool output's result and marks it completed.
+    pub fn complete_output(
+        &mut self,
+        conn: &mut SqliteConnection,
+        text: Option<String>,
+        json: Option<String>,
+    ) -> AnyResult<()> {
+        use crate::schema::item::dsl;
+        diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
+            .set((
+                dsl::text.eq(text.as_ref()),
+                dsl::json.eq(json.as_ref()),
+                dsl::completed.eq(true),
+            ))
+            .execute(conn)?;
+        self.completed = true;
+        self.text = text;
+        self.json = json;
+        Ok(())
+    }
+
     pub fn set_raw_data(conn: &mut SqliteConnection, id: i32, raw_data: &Value) -> AnyResult<()> {
         use crate::schema::item::dsl;
         diesel::update(dsl::item.filter(dsl::id.eq(id)))
@@ -558,7 +640,7 @@ impl Item {
     }
 
     pub fn ty(&self) -> AnyResult<ItemType> {
-        Ok(ItemType::from_str(&self.ty)?)
+        ItemType::from_str(&self.ty)
     }
 
     /// Parse the stored JSON blob, if present.
@@ -569,25 +651,33 @@ impl Item {
             .transpose()
             .map_err(Into::into)
     }
+
+    pub fn tool_args(&self) -> AnyResult<Option<ToolCallArgs>> {
+        if self.ty()? != ItemType::ToolCall {
+            Ok(None)
+        } else if let Some(name) = self.text.clone()
+            && let Some(args) = self.json()?.clone()
+        {
+            Ok(Some(ToolCallArgs { name, args }))
+        } else {
+            bail!("tool call item {} has no output", self.id);
+        }
+    }
+
+    /// For tool output items, returns the output content, if present.
+    pub fn tool_output(&self) -> AnyResult<Option<ToolResult>> {
+        Ok(if !self.completed || self.ty()? != ItemType::ToolOutput {
+            None
+        } else if let Some(json) = self.json()? {
+            Some(ToolResult::Json(json))
+        } else if let Some(text) = self.text.clone() {
+            Some(ToolResult::Text(text))
+        } else {
+            bail!("tool output item {} has no output", self.id);
+        })
+    }
 }
 
-/// Exposed fields:
-/// - id: number
-/// - session_id: number
-/// - turn_id: number
-/// - response_id: number | null
-/// - provider_id: number | null
-/// - ty: string
-/// - upstream_id: string | null
-/// - upstream_type: string | null
-/// - upstream_call_id: string | null
-/// - text: string | null
-/// - summary: string | null
-/// - encrypted_text: string | null
-/// - json: string | null
-/// - raw_data: string | null
-/// - created_at: string (ISO 8601)
-/// - updated_at: string (ISO 8601)
 impl DataQuery for Item {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -606,6 +696,8 @@ impl DataQuery for Item {
                 "encrypted_text": self.query("/encrypted_text")?,
                 "json": self.query("/json")?,
                 "raw_data": self.query("/raw_data")?,
+                "seqno": self.query("/seqno")?,
+                "completed": self.query("/completed")?,
                 "created_at": self.query("/created_at")?,
                 "updated_at": self.query("/updated_at")?,
             }))),
@@ -627,6 +719,8 @@ impl DataQuery for Item {
                     .unwrap_or(Value::Null),
             )),
             "raw_data" => Ok(QueryField::Value(json!(self.raw_data))),
+            "seqno" => Ok(QueryField::Value(json!(self.seqno))),
+            "completed" => Ok(QueryField::Value(json!(self.completed))),
             "created_at" => Ok(QueryField::Value(self.created_at.to_json())),
             "updated_at" => Ok(QueryField::Value(self.updated_at.to_json())),
             _ => Err(QueryError::InvalidField(field.to_string())),
@@ -681,6 +775,12 @@ mod tests {
         assert_eq!(user_turn.provider_id, None);
         assert_eq!(user_turn.provider_name, None);
         assert_eq!(user_turn.model_id, None);
+        let turn_ty = turn::table
+            .filter(turn::id.eq(user_turn.id))
+            .select(turn::ty)
+            .first::<TurnType>(&mut conn)
+            .expect("read turn type");
+        assert_eq!(turn_ty, TurnType::User);
 
         let assistant_turn = Turn::create(
             &mut conn,
@@ -747,15 +847,12 @@ mod tests {
         let prompt = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: user_turn.id,
-                response_id: None,
-                provider_id: None,
-                ty: ItemType::UserText,
-                upstream_id: None,
-                upstream_type: None,
-                upstream_call_id: None,
+                session_id: Some(session.id),
+                turn_id: Some(user_turn.id),
+                ty: Some(ItemType::UserText),
                 text: Some("hello"),
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create prompt item");
@@ -765,19 +862,25 @@ mod tests {
         assert_eq!(prompt.ty().unwrap(), ItemType::UserText);
         assert_eq!(prompt.text.as_deref(), Some("hello"));
         assert_eq!(prompt.response_id, None);
+        let item_ty = item::table
+            .filter(item::id.eq(prompt.id))
+            .select(item::ty)
+            .first::<ItemType>(&mut conn)
+            .expect("read item type");
+        assert_eq!(item_ty, ItemType::UserText);
 
         let reasoning = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: assistant_turn.id,
+                session_id: Some(session.id),
+                turn_id: Some(assistant_turn.id),
                 response_id: Some(response.id),
                 provider_id: Some(999),
-                ty: ItemType::Reasoning,
+                ty: Some(ItemType::Reasoning),
                 upstream_id: Some("rs_1"),
                 upstream_type: Some("reasoning"),
-                upstream_call_id: None,
-                text: None,
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create reasoning item");
@@ -801,30 +904,74 @@ mod tests {
         let answer = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: assistant_turn.id,
+                session_id: Some(session.id),
+                turn_id: Some(assistant_turn.id),
                 response_id: Some(response.id),
                 provider_id: Some(999),
-                ty: ItemType::ResponseText,
+                ty: Some(ItemType::ResponseText),
                 upstream_id: Some("msg_1"),
                 upstream_type: Some("message"),
-                upstream_call_id: None,
-                text: None,
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create answer item");
 
+        let tool_call = Item::create(
+            &mut conn,
+            NewItem {
+                session_id: Some(session.id),
+                turn_id: Some(assistant_turn.id),
+                response_id: Some(response.id),
+                provider_id: Some(999),
+                ty: Some(ItemType::ToolCall),
+                upstream_id: Some("fc_1"),
+                upstream_type: Some("function_call"),
+                upstream_call_id: Some("call_1"),
+                text: Some("read_file"),
+                completed: Some(true),
+                ..Default::default()
+            },
+        )
+        .expect("create tool call item");
+        assert_eq!(tool_call.ty, "tool_call");
+        assert_eq!(tool_call.ty().unwrap(), ItemType::ToolCall);
+        assert_eq!(tool_call.upstream_call_id.as_deref(), Some("call_1"));
+
+        let tool_output = Item::create(
+            &mut conn,
+            NewItem {
+                session_id: Some(session.id),
+                turn_id: Some(assistant_turn.id),
+                provider_id: Some(999),
+                ty: Some(ItemType::ToolOutput),
+                upstream_id: Some("fco_1"),
+                upstream_type: Some("function_call_output"),
+                upstream_call_id: Some("call_1"),
+                text: Some("file contents"),
+                completed: Some(true),
+                ..Default::default()
+            },
+        )
+        .expect("create tool output item");
+        assert_eq!(tool_output.ty, "tool_output");
+        assert_eq!(tool_output.ty().unwrap(), ItemType::ToolOutput);
+
         let session_items =
             Item::list_by_session(&mut conn, session.id).expect("list session items");
-        assert_eq!(session_items.len(), 3);
+        assert_eq!(session_items.len(), 5);
         assert_eq!(session_items[0].id, prompt.id);
         assert_eq!(session_items[1].id, reasoning.id);
         assert_eq!(session_items[2].id, answer.id);
+        assert_eq!(session_items[3].id, tool_call.id);
+        assert_eq!(session_items[4].id, tool_output.id);
 
         let turn_items = Item::list_by_turn(&mut conn, assistant_turn.id).expect("list turn items");
-        assert_eq!(turn_items.len(), 2);
+        assert_eq!(turn_items.len(), 4);
         assert_eq!(turn_items[0].id, reasoning.id);
         assert_eq!(turn_items[1].id, answer.id);
+        assert_eq!(turn_items[2].id, tool_call.id);
+        assert_eq!(turn_items[3].id, tool_output.id);
 
         let turn_responses =
             Response::list_by_turn(&mut conn, assistant_turn.id).expect("list turn responses");
@@ -835,7 +982,9 @@ mod tests {
         assert!(Response::delete_by_id(&mut conn, response.id).expect("delete response"));
         assert!(Item::get_by_id(&mut conn, reasoning.id).unwrap().is_none());
         assert!(Item::get_by_id(&mut conn, answer.id).unwrap().is_none());
+        assert!(Item::get_by_id(&mut conn, tool_call.id).unwrap().is_none());
         assert!(Item::get_by_id(&mut conn, prompt.id).unwrap().is_some());
+        assert!(Item::get_by_id(&mut conn, tool_output.id).unwrap().is_some());
         assert!(
             Turn::get_by_id(&mut conn, assistant_turn.id)
                 .unwrap()
@@ -854,15 +1003,13 @@ mod tests {
         let orphan = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: assistant_turn.id,
+                session_id: Some(session.id),
+                turn_id: Some(assistant_turn.id),
                 response_id: Some(response2.id),
-                provider_id: None,
-                ty: ItemType::ResponseText,
-                upstream_id: None,
-                upstream_type: None,
-                upstream_call_id: None,
+                ty: Some(ItemType::ResponseText),
                 text: Some("orphan"),
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create orphan item");
@@ -873,6 +1020,7 @@ mod tests {
                 .is_none()
         );
         assert!(Item::get_by_id(&mut conn, orphan.id).unwrap().is_none());
+        assert!(Item::get_by_id(&mut conn, tool_output.id).unwrap().is_none());
 
         // Deleting the session cascades to remaining turns and items
         assert!(Session::delete_by_id(&mut conn, session.id).expect("delete session"));
@@ -887,7 +1035,22 @@ mod tests {
             ItemType::from_upstream("reasoning"),
             Some(ItemType::Reasoning)
         );
-        assert_eq!(ItemType::from_upstream("function_call"), None);
+        assert_eq!(
+            ItemType::from_upstream("function_call"),
+            Some(ItemType::ToolCall)
+        );
+        assert_eq!(
+            ItemType::from_upstream("function_call_output"),
+            Some(ItemType::ToolOutput)
+        );
+        assert_eq!(
+            "tool_call".parse::<ItemType>().unwrap(),
+            ItemType::ToolCall
+        );
+        assert_eq!(
+            "tool_output".parse::<ItemType>().unwrap(),
+            ItemType::ToolOutput
+        );
         assert!("bogus".parse::<ItemType>().is_err());
         assert!("bogus".parse::<TurnType>().is_err());
     }
@@ -1004,15 +1167,16 @@ mod tests {
         let item = Item::create(
             &mut conn,
             NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
                 response_id: Some(response.id),
                 provider_id: Some(1),
-                ty: ItemType::Reasoning,
+                ty: Some(ItemType::Reasoning),
                 upstream_id: Some("rs_1"),
                 upstream_type: Some("reasoning"),
-                upstream_call_id: None,
                 text: Some("thinking"),
+                completed: Some(true),
+                ..Default::default()
             },
         )
         .expect("create item failed");
@@ -1037,6 +1201,8 @@ mod tests {
                 "encrypted_text": item.encrypted_text,
                 "json": item.json().unwrap(),
                 "raw_data": item.raw_data,
+                "seqno": item.seqno,
+                "completed": item.completed,
                 "created_at": item.created_at.to_json(),
                 "updated_at": item.updated_at.to_json(),
             })
@@ -1048,5 +1214,75 @@ mod tests {
         );
         assert_eq!(item.query("/text").unwrap(), json!(item.text));
         assert_eq!(item.query("/raw_data").unwrap(), json!(item.raw_data));
+        assert_eq!(item.query("/seqno").unwrap(), json!(item.seqno));
+        assert_eq!(item.query("/completed").unwrap(), json!(item.completed));
+    }
+
+    fn make_item(
+        conn: &mut SqliteConnection,
+        session_id: i32,
+        turn_id: i32,
+        seqno: Option<i64>,
+        completed: bool,
+    ) -> Item {
+        Item::create(
+            conn,
+            NewItem {
+                session_id: Some(session_id),
+                turn_id: Some(turn_id),
+                ty: Some(ItemType::UserText),
+                text: Some("hi"),
+                seqno,
+                completed: Some(completed),
+                ..Default::default()
+            },
+        )
+        .expect("create item")
+    }
+
+    #[test]
+    fn test_seqno() {
+        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
+        let session = Session::create(&mut conn, "Session").expect("create session");
+        let turn = Turn::create(&mut conn, session.id, TurnType::User, None, None, None)
+            .expect("create turn");
+
+        // None appends after the session's highest seqno.
+        let a = make_item(&mut conn, session.id, turn.id, None, true);
+        let b = make_item(&mut conn, session.id, turn.id, None, true);
+        let c = make_item(&mut conn, session.id, turn.id, None, true);
+        assert_eq!([a.seqno, b.seqno, c.seqno], [1, 2, 3]);
+        assert_eq!(Item::max_seqno(&mut conn, session.id).unwrap(), Some(3));
+
+        // Explicit seqnos win over insertion order.
+        let late = make_item(&mut conn, session.id, turn.id, Some(10), true);
+        let early = make_item(&mut conn, session.id, turn.id, Some(5), true);
+        let items = Item::list_by_session(&mut conn, session.id).unwrap();
+        let ids: Vec<i32> = items.iter().map(|i| i.id).collect();
+        assert_eq!(
+            ids,
+            [a.id, b.id, c.id, early.id, late.id],
+            "expected seqno ordering, not insertion order"
+        );
+        assert_eq!(Item::max_seqno(&mut conn, session.id).unwrap(), Some(10));
+
+        // Duplicate (session_id, seqno) is rejected by the unique index.
+        let duplicate = Item::create(
+            &mut conn,
+            NewItem {
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
+                ty: Some(ItemType::UserText),
+                text: Some("dup"),
+                seqno: Some(5),
+                completed: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(duplicate.is_err());
+
+        // list_by_turn orders by seqno too.
+        let turn_items = Item::list_by_turn(&mut conn, turn.id).unwrap();
+        assert_eq!(turn_items.len(), 5);
     }
 }

@@ -128,9 +128,6 @@ impl Component for HistoryView {
     }
 }
 
-/// Exposed fields:
-/// - history: History
-/// - scroll_bar: ScrollBar
 impl DataQuery for HistoryView {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

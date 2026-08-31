@@ -56,20 +56,28 @@ impl<C: Component> Component for Padded<C> {
         }
 
         // Vertical pad
-        for i in 0..self.v_padding {
-            canvas[i].pad(self.width());
+        for row in canvas.iter_mut().take(self.v_padding) {
+            row.pad(self.width());
         }
-        for i in self.height() - self.v_padding..self.height() {
-            canvas[i].pad(self.width());
+        for row in canvas.iter_mut().skip(self.height() - self.v_padding) {
+            row.pad(self.width());
         }
 
         // Render child
-        for i in self.v_padding..self.height() - self.v_padding {
-            canvas[i].pad(self.h_padding);
+        for row in canvas
+            .iter_mut()
+            .skip(self.v_padding)
+            .take(self.height() - 2 * self.v_padding)
+        {
+            row.pad(self.h_padding);
         }
         self.inner.draw(&mut canvas[self.v_padding..self.height() - self.v_padding]);
-        for i in self.v_padding..self.height() - self.v_padding {
-            canvas[i].pad(self.h_padding);
+        for row in canvas
+            .iter_mut()
+            .skip(self.v_padding)
+            .take(self.height() - 2 * self.v_padding)
+        {
+            row.pad(self.h_padding);
         }
     }
 
@@ -108,11 +116,6 @@ impl<C: Component> Component for Padded<C> {
     }
 }
 
-/// Exposed fields:
-/// - h_padding: number
-/// - v_padding: number
-/// - background_color: color | null
-/// - inner: C
 impl<C: DataQuery> DataQuery for Padded<C> {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

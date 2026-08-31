@@ -140,8 +140,8 @@ impl Component for StackedView {
 
     fn draw(&self, canvas: Canvas) {
         let empty_rows = self.height - self.history.height() - self.input.height() - 1;
-        for i in 0..empty_rows {
-            canvas[i].pad(self.width);
+        for row in canvas.iter_mut().take(empty_rows) {
+            row.pad(self.width);
         }
         self.history
             .draw(&mut canvas[empty_rows..empty_rows + self.history.height()]);
@@ -224,12 +224,6 @@ impl Component for StackedView {
     }
 }
 
-/// Exposed fields:
-/// - width: number
-/// - height: number
-/// - focus_state: string
-/// - history: HistoryView
-/// - input: CommandEditor
 impl DataQuery for StackedView {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

@@ -14,6 +14,7 @@ use serde_json::json;
 
 use crate::app::AppEvent;
 use crate::arena::{Arena, Id};
+use crate::command::Command;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::ui::canvas::Canvas;
 use crate::ui::text::{Row, SPACES, strip_cr, wrap_line};
@@ -946,7 +947,7 @@ impl InputBox {
 
     fn word_end(&self) -> GraphemePos {
         let mut iter = self.iter_graphemes(self.cursor_pos(), self.grapheme_end());
-        (&mut iter).find(|(_, g)| g.is_alphanumeric());
+        iter.find(|(_, g)| g.is_alphanumeric());
         iter.find(|(_, g)| !g.is_alphanumeric())
             .map(|(pos, _)| pos)
             .unwrap_or(self.last_grapheme())
@@ -988,7 +989,7 @@ impl InputBox {
         let mut text = self.get_text();
         self.set_text("");
         if text.ends_with('\n') { text.pop(); }
-        AppEvent::Command(text)
+        AppEvent::SubmitPrompt(text)
     }
 
     /// Handles a single keyboard event, applying the corresponding edit or
@@ -1018,6 +1019,9 @@ impl InputBox {
                 } else {
                     response = Some(AppEvent::Interrupt);
                 }
+            }
+            (KeyCode::Char('d'), true, _, _) => {
+                response = Some(AppEvent::SubmitCommand(Command::Quit));
             }
             // Alt + char
             (KeyCode::Char('f'), _, _, true) => self.go_to_word_end(),
@@ -1136,21 +1140,6 @@ impl Component for InputBox {
     }
 }
 
-/// Exposed fields:
-/// - width: number
-/// - max_height: number
-/// - num_rows: number
-/// - num_lines: number
-/// - text: string
-/// - head: id
-/// - viewport_top: id
-/// - viewport_top_pos: number
-/// - viewport_bottom: id
-/// - viewport_bottom_pos: number
-/// - cursor_row: id
-/// - cursor_col: number
-/// - buffer: string
-/// - overwrite_buffer: bool
 impl DataQuery for InputBox {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -2164,14 +2153,14 @@ That on himself such murd'rous shame commits.
         assert_eq!(response, None);
         assert_eq!(input.get_text(), "hello\n\n");
         let response = input.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
-        assert_eq!(response, Some(AppEvent::Command("hello\n".to_string())));
+        assert_eq!(response, Some(AppEvent::SubmitPrompt("hello\n".to_string())));
         assert_eq!(input.get_text(), "\n");
 
         // Special commands: Enter submits, Alt+Enter inserts a newline.
         input.set_text("/clear");
         assert!(input.is_special_command());
         let response = input.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(response, Some(AppEvent::Command("/clear".to_string())));
+        assert_eq!(response, Some(AppEvent::SubmitPrompt("/clear".to_string())));
         assert_eq!(input.get_text(), "\n");
         input.set_text("!deploy");
         input.go_to_end();
@@ -2193,6 +2182,10 @@ That on himself such murd'rous shame commits.
         assert_eq!(input.get_text(), "multi\n\n\n");
         input.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT));
         assert_eq!(input.get_text(), "multi\n\n\n\n");
+
+        // Ctrl+D submits a quit command.
+        let response = input.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        assert_eq!(response, Some(AppEvent::SubmitCommand(Command::Quit)));
         check_positions(&input);
     }
 

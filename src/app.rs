@@ -13,22 +13,22 @@ use crossterm::terminal::{
 use diesel::SqliteConnection;
 use fnv::FnvHashSet;
 use futures::StreamExt;
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::agent::Agent;
 use crate::command::Command;
 use crate::error::AnyResult;
 use crate::model::Model;
-use crate::model::revalidate_models;
+use crate::model::RevalidateModelsTask;
 use crate::provider::Provider;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::DefaultClient;
-use crate::session::{Item, ItemType, NewItem, Session, Turn, TurnType};
+use crate::session::{Item, Session};
 use crate::settings::{ModelRef, Settings};
 use crate::tasks::{Task, TaskContext, TaskError, TaskHandle, Tid};
 use crate::terminal::{DefaultTerminal, Terminal};
-use crate::tools::{DefaultToolServer, ToolServer};
+use crate::tools::DefaultToolServer;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::chat::{Chat, Update};
@@ -38,7 +38,13 @@ use crate::ui::text::truncate_line;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
-    Command(String),
+    SubmitPrompt(String),
+    /// A parsed command to execute directly.
+    SubmitCommand(Command),
+    /// Prompt shown in the history for a running host command.
+    CommandPrompt(String),
+    /// Output of a host command, rendered after its prompt.
+    CommandOutput(String),
     ItemCreated {
         item: Item,
     },
@@ -65,28 +71,6 @@ pub enum AppEvent {
 enum Poll {
     Input(crossterm::event::Event),
     Event(Box<AppEvent>),
-}
-
-/// Background task that refreshes cached provider model lists.
-struct RevalidateModelsTask {
-    db_url: String,
-}
-
-impl Task for RevalidateModelsTask {
-    type Output = ();
-
-    async fn run(self, _context: TaskContext) {
-        let mut conn = match crate::db::open(&self.db_url) {
-            Ok(conn) => conn,
-            Err(e) => {
-                log::error!("failed to open db for revalidation: {e}");
-                return;
-            }
-        };
-        if let Err(e) = revalidate_models(&mut conn).await {
-            log::error!("failed to revalidate models: {e}");
-        }
-    }
 }
 
 pub struct App {
@@ -140,7 +124,7 @@ impl App {
             db_url,
             settings,
             session: None,
-            tools: DefaultToolServer::default(),
+            tools: DefaultToolServer::new(),
             send,
             recv,
             tid_counter: Arc::new(AtomicU64::new(0)),
@@ -268,9 +252,7 @@ impl App {
 
     /// Spawns a background task to revalidate stale model lists.
     fn spawn_revalidate_models(&mut self) {
-        self.spawn_background(RevalidateModelsTask {
-            db_url: self.db_url.clone(),
-        });
+        self.spawn_background(RevalidateModelsTask);
     }
 
     /// Runs the main event loop.
@@ -311,6 +293,11 @@ impl App {
             Ok(x) => x,
             Err(e) => return Ok(e.to_string()),
         };
+        self.run_command(command).await
+    }
+
+    /// Executes a parsed command and returns its output.
+    async fn run_command(&mut self, command: Command) -> AnyResult<String> {
         match command {
             Command::Provider(cmd) => crate::command::run_provider_command(self, cmd),
             Command::Model(cmd) => crate::command::run_model_command(self, cmd),
@@ -355,8 +342,13 @@ impl App {
     }
 
     /// Returns a root task context for spawning tasks.
-    fn context(&self) -> TaskContext {
-        TaskContext::root(Arc::clone(&self.tid_counter), self.send.clone())
+    pub fn context(&self) -> TaskContext {
+        TaskContext::root(
+            Arc::clone(&self.tid_counter),
+            self.send.clone(),
+            self.db_url.clone(),
+            self.tools.clone(),
+        )
     }
 
     /// Spawns a task as the current foreground task. Interrupts any currently
@@ -424,50 +416,17 @@ impl App {
         let line = prompt.trim().lines().next().unwrap_or("");
         let name = truncate_line(SESSION_NAME_WIDTH, line).to_padded_string(0);
         let session = self.create_session(&name)?;
-        let turn = Turn::create(&mut self.conn, session.id, TurnType::User, None, None, None)?;
-        let item = Item::create(
-            &mut self.conn,
-            NewItem {
-                session_id: session.id,
-                turn_id: turn.id,
-                response_id: None,
-                provider_id: None,
-                ty: ItemType::UserText,
-                upstream_id: None,
-                upstream_type: None,
-                upstream_call_id: None,
-                text: Some(prompt),
-            },
-        )?;
-
-        let _ = self.send.send(AppEvent::ItemCreated { item: item.clone() });
 
         let agent = Agent::new(
             session,
             provider,
             model,
             self.client.clone(),
-            crate::db::open(&self.db_url)?,
+            prompt.to_owned(),
         );
         self.spawn_foreground(agent).await;
 
         Ok(())
-    }
-
-    // TODO eventually: execute these as an asynchronous and interruptable
-    // agent and stream stdout to history
-    fn process_bang_command(&mut self, command: &str) -> AnyResult<String> {
-        let result = self.tools.call("sh", serde_json::json!(command))?;
-        let output = if let Some(obj) = result.content.as_object() {
-            let stdout = obj.get("stdout").and_then(Value::as_str).unwrap_or("");
-            let stderr = obj.get("stderr").and_then(Value::as_str).unwrap_or("");
-            format!("{stdout}{stderr}")
-        } else if let Some(s) = result.content.as_str() {
-            s.to_string()
-        } else {
-            result.content.to_string()
-        };
-        Ok(output)
     }
 
     pub(crate) async fn process_command(&mut self, command: &str) -> AnyResult<()> {
@@ -485,10 +444,8 @@ impl App {
                     self.chat.handle_update(Update::HelpMessage(&output));
                 }
             } else {
-                let output = self.process_bang_command(command)?;
-                let prompt = format!("$ {command}");
-                self.chat.handle_update(Update::CommandPrompt(&prompt));
-                self.chat.handle_update(Update::CommandOutput(&output));
+                let task = crate::command::BangCommand::new(command.to_string());
+                self.spawn_foreground(task).await;
             }
         } else {
             self.submit_prompt(command).await?;
@@ -499,7 +456,26 @@ impl App {
 
     pub(crate) async fn process_event(&mut self, event: AppEvent) {
         let res = match event {
-            AppEvent::Command(cmd) => self.process_command(&cmd).await,
+            AppEvent::SubmitPrompt(cmd) => self.process_command(&cmd).await,
+            AppEvent::SubmitCommand(command) => {
+                match self.run_command(command).await {
+                    Ok(output) => {
+                        if !output.trim().is_empty() {
+                            self.chat.handle_update(Update::HelpMessage(&output));
+                        }
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            AppEvent::CommandPrompt(prompt) => {
+                self.chat.handle_update(Update::CommandPrompt(&prompt));
+                Ok(())
+            }
+            AppEvent::CommandOutput(output) => {
+                self.chat.handle_update(Update::CommandOutput(&output));
+                Ok(())
+            }
             AppEvent::ItemCreated { item } => {
                 self.chat.handle_update(Update::ItemCreated { item: &item });
                 Ok(())
@@ -539,15 +515,17 @@ impl App {
                 .handle_update(Update::ErrorMessage(&e.to_string()));
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn drain_events(&mut self) -> Vec<AppEvent> {
+        let mut result = Vec::new();
+        while let Ok(event) = self.recv.try_recv() {
+            result.push(event);
+        }
+        result
+    }
 }
 
-/// Exposed fields:
-/// - chat: Chat
-/// - selected_model: Model | null
-/// - db_url: string
-/// - session: Session | null
-/// - current_task: int | null
-/// - task_count: int
 impl DataQuery for App {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

@@ -102,7 +102,7 @@ impl Component for ScrollBar {
             return;
         }
         let (start, end) = self.scroll_bar_range();
-        for row in 0..self.height {
+        for (row, canvas_row) in canvas.iter_mut().enumerate().take(self.height) {
             let text_style = if (start..end).contains(&row) {
                 if self.focused {
                     self.theme.text_scroll_bar_focused
@@ -112,10 +112,10 @@ impl Component for ScrollBar {
             } else {
                 self.theme.text_scroll_bar_track
             };
-            canvas[row].set_bg_color(self.theme.bg_base);
-            canvas[row].set_text(text_style);
-            canvas[row].push("▐", 1);
-            canvas[row].pad(self.width - 1);
+            canvas_row.set_bg_color(self.theme.bg_base);
+            canvas_row.set_text(text_style);
+            canvas_row.push("▐", 1);
+            canvas_row.pad(self.width - 1);
         }
     }
 
@@ -150,13 +150,6 @@ impl Component for ScrollBar {
     }
 }
 
-/// Exposed fields:
-/// - height: number
-/// - width: number
-/// - num_rows: number
-/// - top: number
-/// - bottom: number
-/// - focused: bool
 impl DataQuery for ScrollBar {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {

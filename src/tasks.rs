@@ -4,11 +4,14 @@ use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use diesel::SqliteConnection;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::app::AppEvent;
+use crate::error::AnyResult;
+use crate::tools::DefaultToolServer;
 
 /// Unique identifier for a spawned task.
 pub type Tid = u64;
@@ -21,19 +24,32 @@ pub enum TaskError {
 }
 
 /// Handle passed to a running task.
+// TODO: Should probably expose some of these fields directly instead of hiding
+// behind methods to deal with conflicting borrows
 pub struct TaskContext {
     tid_counter: Arc<AtomicU64>,
     cancel: CancellationToken,
     sender: UnboundedSender<AppEvent>,
+    db_url: String,
+    connection: Option<SqliteConnection>,
+    tools: DefaultToolServer,
 }
 
 impl TaskContext {
     /// Creates a root context for spawning top-level tasks.
-    pub(crate) fn root(tid_counter: Arc<AtomicU64>, sender: UnboundedSender<AppEvent>) -> Self {
+    pub(crate) fn root(
+        tid_counter: Arc<AtomicU64>,
+        sender: UnboundedSender<AppEvent>,
+        db_url: String,
+        tools: DefaultToolServer,
+    ) -> Self {
         Self {
             tid_counter,
             cancel: CancellationToken::new(),
             sender,
+            db_url,
+            connection: None,
+            tools,
         }
     }
 
@@ -42,24 +58,67 @@ impl TaskContext {
         let _ = self.sender.send(event);
     }
 
+    /// Returns the channel used to send events to the app.
+    pub fn sender(&self) -> &UnboundedSender<AppEvent> {
+        &self.sender
+    }
+
+    /// Returns the task's database connection, opening it on first use.
+    pub fn connection(&mut self) -> AnyResult<&mut SqliteConnection> {
+        if self.connection.is_none() {
+            self.connection = Some(crate::db::open(&self.db_url)?);
+        }
+        Ok(self.connection.as_mut().expect("connection opened"))
+    }
+
+    /// Returns the tool server.
+    pub fn tools(&self) -> &DefaultToolServer {
+        &self.tools
+    }
+
+    /// Returns a mutable reference to the tool server.
+    pub fn tools_mut(&mut self) -> &mut DefaultToolServer {
+        &mut self.tools
+    }
+
+    /// Creates a child context sharing this context's state, using `cancel`.
+    pub fn fork(&self, cancel: CancellationToken) -> Self {
+        Self {
+            tid_counter: Arc::clone(&self.tid_counter),
+            cancel,
+            sender: self.sender.clone(),
+            db_url: self.db_url.clone(),
+            connection: None,
+            tools: self.tools.clone(),
+        }
+    }
+
+    /// Creates a Future out of a Task.
+    pub fn subtask<T: Task>(&self, task: T) -> impl Future<Output = T::Output> + Send {
+        let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
+        let mut context = self.fork(self.cancel.clone());
+        async move {
+            let _ = context.sender.send(AppEvent::TaskStarted(tid));
+            let output = task.run(&mut context).await;
+            let _ = context.sender.send(AppEvent::TaskEnded(tid));
+            output
+        }
+    }
+
     /// Spawns `task` as a child of this context. Canceling the parent
     /// cancels all descendants transitively.
     pub fn spawn<T: Task>(&self, task: T) -> TaskHandle<T::Output> {
         let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
         let cancel = self.cancel.child_token();
-        let context = Self {
-            tid_counter: Arc::clone(&self.tid_counter),
-            cancel: cancel.clone(),
-            sender: self.sender.clone(),
-        };
+        let mut context = self.fork(cancel.clone());
         let sender = self.sender.clone();
-        let watch = cancel.clone();
+        let inner = cancel.clone();
         let join = tokio::spawn(async move {
             let _ = sender.send(AppEvent::TaskStarted(tid));
             let result = tokio::select! {
                 biased;
-                _ = watch.cancelled() => Err(TaskError::Canceled),
-                output = task.run(context) => Ok(output),
+                _ = inner.cancelled() => Err(TaskError::Canceled),
+                output = task.run(&mut context) => Ok(output),
             };
             let _ = sender.send(AppEvent::TaskEnded(tid));
             result
@@ -92,11 +151,39 @@ impl<R> TaskHandle<R> {
     }
 }
 
-/// Unit of async work.
+/// Light wrapper for helping with cancelation and statistic tracking. In
+/// future will help with status bar messages.
 pub trait Task: Send + 'static {
     type Output: Send + 'static;
 
     /// Runs the task. The task may be canceled at any time, so expect early
     /// return at all await points.
-    fn run(self, context: TaskContext) -> impl Future<Output = Self::Output> + Send;
+    fn run(self, context: &mut TaskContext) -> impl Future<Output = Self::Output> + Send;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+
+    use tokio::sync::mpsc::unbounded_channel;
+
+    use crate::tasks::{TaskContext, TaskError};
+    use crate::testing::DummyTask;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_spawn_cancels() {
+        let (sender, mut recv) = unbounded_channel();
+        let url = crate::db::db_url().unwrap();
+        let tools = crate::tools::DefaultToolServer::new();
+        let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender, url, tools);
+        let handle = context.spawn(DummyTask::new());
+        handle.cancel();
+        let result = handle.join().await.unwrap();
+        assert_eq!(result, Err(TaskError::Canceled));
+        assert_eq!(recv.try_recv().unwrap(), AppEvent::TaskStarted(0));
+        assert_eq!(recv.try_recv().unwrap(), AppEvent::TaskEnded(0));
+    }
 }
