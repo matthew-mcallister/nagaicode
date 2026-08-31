@@ -18,14 +18,14 @@ use crate::tasks::{Task, TaskContext};
 use crate::tools::{ToolResult, ToolServer};
 use serde_json::{Value, json};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
     Provider(ProviderCommand),
     Model(ModelCommand),
     Quit,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderCommand {
     Ls,
     New {
@@ -37,7 +37,7 @@ pub enum ProviderCommand {
     Rm(String),
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModelCommand {
     Ls,
     Switch { provider: String, model: String },

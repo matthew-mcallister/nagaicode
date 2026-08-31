@@ -100,7 +100,7 @@ impl Component for CommandEditor {
     fn handle_input(&mut self, event: Event) -> Self::Event {
         let response = self.input.handle_input(event);
         let response = match response {
-            Some(AppEvent::Command(text)) => {
+            Some(AppEvent::SubmitPrompt(text)) => {
                 if text.trim_end_matches('\n').is_empty() {
                     return None;
                 }
@@ -109,7 +109,7 @@ impl Component for CommandEditor {
                 }
                 self.command_history_pos = self.command_history.len();
                 self.buffered_command.clear();
-                Some(AppEvent::Command(text))
+                Some(AppEvent::SubmitPrompt(text))
             }
             Some(AppEvent::HistoryPrev) => {
                 if self.command_history_pos > 0 {
@@ -140,6 +140,7 @@ impl Component for CommandEditor {
                 None
             }
             Some(AppEvent::Interrupt) => Some(AppEvent::Interrupt),
+            Some(AppEvent::SubmitCommand(command)) => Some(AppEvent::SubmitCommand(command)),
             _ => None,
         };
         self.sync_scroll_bar();

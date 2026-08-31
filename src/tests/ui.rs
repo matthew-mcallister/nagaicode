@@ -284,7 +284,7 @@ async fn test_app_process_command() {
     assert_eq!(calls.len(), 4);
 
     app.tools_mut().add_result("sh", ToolResult::Text("tool error".to_owned()));
-    app.process_event(AppEvent::Command("!failing_tool".to_string()))
+    app.process_event(AppEvent::SubmitPrompt("!failing_tool".to_string()))
         .await;
     app.await_task().await.unwrap();
     app.process_pending_events().await;

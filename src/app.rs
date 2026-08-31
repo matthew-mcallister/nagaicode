@@ -37,7 +37,9 @@ use crate::ui::styled_string::StyledString;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
-    Command(String),
+    SubmitPrompt(String),
+    /// A parsed command to execute directly.
+    SubmitCommand(Command),
     /// Prompt shown in the history for a running host command.
     CommandPrompt(String),
     /// Output of a host command, rendered after its prompt.
@@ -285,6 +287,11 @@ impl App {
             Ok(x) => x,
             Err(e) => return Ok(e.to_string()),
         };
+        self.run_command(command)
+    }
+
+    /// Executes a parsed command and returns its output.
+    fn run_command(&mut self, command: Command) -> AnyResult<String> {
         match command {
             Command::Provider(cmd) => crate::command::run_provider_command(self, cmd),
             Command::Model(cmd) => crate::command::run_model_command(self, cmd),
@@ -425,7 +432,18 @@ impl App {
 
     pub(crate) async fn process_event(&mut self, event: AppEvent) {
         let res = match event {
-            AppEvent::Command(cmd) => self.process_command(&cmd).await,
+            AppEvent::SubmitPrompt(cmd) => self.process_command(&cmd).await,
+            AppEvent::SubmitCommand(command) => {
+                match self.run_command(command) {
+                    Ok(output) => {
+                        if !output.trim().is_empty() {
+                            self.chat.handle_update(Update::HelpMessage(&output));
+                        }
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
+            }
             AppEvent::CommandPrompt(prompt) => {
                 self.chat.handle_update(Update::CommandPrompt(&prompt));
                 Ok(())
