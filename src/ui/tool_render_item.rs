@@ -11,7 +11,7 @@ use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::RenderItem;
 use crate::ui::style::{Style, Theme};
 use crate::ui::styled_string::StyledString;
-use crate::ui::text::{Row, SPACES, wrap_line_naive};
+use crate::ui::text::{Row, SPACES, ellipsize, wrap_line_naive};
 
 /// Implementor is able to render a class of tool call outputs that share a
 /// common input/output format.
@@ -195,7 +195,7 @@ fn render_default_tool(theme: &Theme, width: usize, name: &str) -> Vec<StyledStr
 }
 
 const PADDING: usize = 2;
-const MAX_LINES: usize = 11;
+const MAX_ROWS: usize = 11;
 
 fn render_sh_stdout(
     theme: &Theme,
@@ -217,7 +217,6 @@ fn render_sh_stdout(
     let mut padding = StyledString::new(style, width);
     padding.push(&SPACES[..width], width);
 
-    let lead = (MAX_LINES - 1) / 2;
     let inner_width = width - 2 * PADDING;
 
     let mut rows = vec![padding.clone()];
@@ -229,37 +228,27 @@ fn render_sh_stdout(
             for g in &row.graphemes {
                 s.push(g.formatted(), g.width as usize);
             }
+            s.pad_to_width(width - PADDING);
             s.push(&SPACES[..PADDING], PADDING);
             rows.push(s);
         }
     };
 
     // Command line
-    let mut c = "$ ".to_owned();
-    c.extend(cmd_line.lines());
-    push_rows(&mut rows, &wrap_line_naive(inner_width, cmd_line));
+    let prompt = format!("$ {cmd_line}");
+    push_rows(&mut rows, &wrap_line_naive(inner_width, &prompt));
 
     // Output
-    let lines: Vec<&str> = stdout.lines().collect();
-    if lines.len() > MAX_LINES {
-        // Ellipsized
-        for line in &lines[..lead] {
-            push_rows(&mut rows, &wrap_line_naive(inner_width, line));
-        }
-        {
-            let mut s = StyledString::new(ellipsis_style, inner_width);
-            s.push("...", inner_width);
-            s.push(&SPACES[..inner_width - 3], inner_width);
-            rows.push(s);
-        }
-        for line in &lines[lines.len() - lead..] {
-            push_rows(&mut rows, &wrap_line_naive(inner_width, line));
-        }
-    } else {
-        // Full output
-        for line in lines {
-            push_rows(&mut rows, &wrap_line_naive(inner_width, line));
-        }
+    let (head, tail) = ellipsize(inner_width, MAX_ROWS, stdout);
+    push_rows(&mut rows, &head);
+    if let Some(tail) = tail {
+        let mut s = StyledString::new(ellipsis_style, width);
+        s.push(&SPACES[..PADDING], PADDING);
+        s.push("...", 3);
+        s.push(&SPACES[..inner_width - 3], inner_width - 3);
+        s.push(&SPACES[..PADDING], PADDING);
+        rows.push(s);
+        push_rows(&mut rows, &tail);
     }
 
     rows.push(padding);
@@ -313,15 +302,31 @@ mod tests {
         assert_eq!(
             render(&tools, 14, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
             format!(
-                "{style}              \n{style}  echo hi  \n{style}  hello  \n{style}              "
+                "{style}              \n{style}  $ echo hi   \n{style}  hello       \n{style}              "
             )
         );
         let output = ToolResult::Json(json!({"stdout": "hi\n", "stderr": "", "return_code": 0}));
         assert_eq!(
             render(&tools, 14, "sh", &json!({"command": "echo hello world"}), &output).unwrap(),
             format!(
-                "{style}              \n{style}  echo hello  \n{style}   world  \n{style}  hi  \n{style}              "
+                "{style}              \n{style}  $ echo hel  \n{style}  lo world    \n{style}  hi          \n{style}              "
             )
+        );
+
+        // Long stdout is ellipsized; the final row is filled to the full width
+        let ellipsis_style = Style::new(theme.text_subtle, theme.bg_prompt);
+        let output = ToolResult::Json(json!({"stdout": "x".repeat(120), "stderr": "", "return_code": 0}));
+        let line = || format!("{style}  xxxxxxxxxx  ");
+        assert_eq!(
+            render(&tools, 14, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
+            [
+                format!("{style}              "),
+                format!("{style}  $ echo hi   "),
+                line(), line(), line(), line(), line(),
+                format!("{ellipsis_style}  ...         "),
+                line(), line(), line(), line(), line(),
+                format!("{style}              "),
+            ].join("\n")
         );
 
         assert_eq!(

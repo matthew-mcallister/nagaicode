@@ -288,7 +288,9 @@ impl<'a> FlowBuilder<'a> {
         push_spaces(&mut self.row, pad);
         let remain = self.width - self.prefix.width();
         let row = self.prefix.clone_with_capacity(self.prefix.len() + 2 * remain);
-        self.rows.push(std::mem::replace(&mut self.row, row));
+        let mut completed = std::mem::replace(&mut self.row, row);
+        completed.freeze_style(false);
+        self.rows.push(completed);
     }
 
     fn save(&mut self) -> SavePoint {
@@ -654,6 +656,7 @@ mod test_paragraph {
     use crate::ui::canvas::render_canvas;
     use crate::ui::style::{Style, THEME_DARK, UpdateStyle};
     use crate::ui::style::testing::{ResetBold, ResetItalic, SetBold, SetItalic};
+    use crate::ui::styled_string::StyledString;
 
     fn render(text: &str, width: usize) -> String {
         let mut result = super::render_markdown(&THEME_DARK, width, text);
@@ -753,6 +756,30 @@ mod test_paragraph {
             render("```\nabcdefgh\n```", 4),
             format!("{code}abcd\n{code}efgh"),
         );
+    }
+
+    #[test]
+    fn completed_rows_not_frozen() {
+        let base = THEME_DARK.base_style();
+        let header = base.bolded();
+        let code = Style::new(THEME_DARK.text_code, THEME_DARK.bg_base);
+        let to_header = UpdateStyle(code, header);
+
+        let result = super::render_markdown(&THEME_DARK, 20, "```\nx\n```");
+        let mut s = StyledString::new(base, 32);
+        s.push_styled(&result.rows[0]);
+        s.set_style(header);
+        s.push("|", 1);
+        assert_eq!(format!("{s}"), format!("{code}x                   {to_header}|"));
+
+        let quote = Style::new(THEME_DARK.text_quote, THEME_DARK.bg_base);
+        let to_header = UpdateStyle(quote, header);
+        let result = super::render_markdown(&THEME_DARK, 20, "> hi");
+        let mut s = StyledString::new(base, 32);
+        s.push_styled(&result.rows[0]);
+        s.set_style(header);
+        s.push("|", 1);
+        assert_eq!(format!("{s}"), format!("{quote}▐ hi                {to_header}|"));
     }
 
     #[test]
