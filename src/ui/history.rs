@@ -459,7 +459,7 @@ impl History {
                 }
             }
         }
-        self.head
+        result
     }
 
     fn add_item(
@@ -1125,6 +1125,9 @@ mod tests {
     #[test]
     fn test_item_created_order() {
         let mut h = history(80, 10);
+
+        h.handle_update(Update::HelpMessage("help"));
+
         let mut items: Vec<_> = [3, 1, 2]
             .into_iter()
             .enumerate()
@@ -1140,16 +1143,16 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|item| item["seqno"].as_i64().unwrap())
+            .filter_map(|item| item["seqno"].as_i64())
             .collect();
         assert_eq!(seqnos, [1, 2, 3]);
-        assert_eq!(item_contents(&h), ["message 1", "message 2", "message 3"]);
+        assert_eq!(item_contents(&h), ["help", "message 1", "message 2", "message 3"]);
 
         // No seqno: append at tail
         h.handle_update(Update::HelpMessage("help"));
         assert_eq!(
             item_contents(&h),
-            ["message 1", "message 2", "message 3", "help"]
+            ["help", "message 1", "message 2", "message 3", "help"]
         );
 
         // Append after items without seqno
@@ -1157,7 +1160,7 @@ mod tests {
         h.handle_update(Update::ItemCreated { item: &items[3] });
         assert_eq!(
             item_contents(&h),
-            ["message 1", "message 2", "message 3", "help", "message 4"]
+            ["help", "message 1", "message 2", "message 3", "help", "message 4"]
         );
 
         // Updated items are rerendered in place.
@@ -1166,7 +1169,7 @@ mod tests {
         h.handle_update(Update::ItemUpdated { item: &item });
         assert_eq!(
             item_contents(&h),
-            ["message 1", "updated", "message 3", "help", "message 4"]
+            ["help", "message 1", "updated", "message 3", "help", "message 4"]
         );
     }
 

@@ -46,8 +46,7 @@ impl ToolRenderer {
         if let Some(renderer) = self.renderers.get(name) {
             renderer.build_render_item(name, args, output)
         } else {
-            // FIXME: Default renderer, should display "Called tool '{name}'"
-            todo!()
+            DefaultToolRenderItemBuilder.build_render_item(name, args, output)
         }
     }
 
@@ -126,6 +125,73 @@ impl RenderItem for ShRenderItem {
         );
         (rows, Default::default())
     }
+}
+
+/// Builds RenderItem for tools without a dedicated renderer.
+#[derive(Debug)]
+pub struct DefaultToolRenderItemBuilder;
+
+/// Renders a placeholder for tools without a dedicated renderer.
+#[derive(Debug)]
+pub struct DefaultToolRenderItem {
+    name: String,
+}
+
+impl ToolRenderItemBuilder for DefaultToolRenderItemBuilder {
+    fn build_render_item(
+        &self,
+        name: &str,
+        _args: &Value,
+        _output: &ToolResult,
+    ) -> AnyResult<Box<dyn RenderItem>> {
+        Ok(Box::new(DefaultToolRenderItem {
+            name: name.to_owned(),
+        }))
+    }
+}
+
+impl DataQuery for DefaultToolRenderItem {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "type": "default",
+                "name": self.name,
+            }))),
+            "type" => Ok(QueryField::Value(json!("default"))),
+            "name" => Ok(QueryField::Value(self.name.clone().into())),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+impl RenderItem for DefaultToolRenderItem {
+    fn render(
+        &self,
+        theme: &Theme,
+        width: usize,
+        _resume_point: ResumePoint,
+    ) -> (Vec<StyledString>, ResumePoint) {
+        (render_default_tool(theme, width, &self.name), Default::default())
+    }
+}
+
+fn render_default_tool(theme: &Theme, width: usize, name: &str) -> Vec<StyledString> {
+    if width < 8 {
+        return Vec::new();
+    }
+
+    let style = Style::new(theme.text_subtle, theme.bg_base);
+    let content = format!("Called tool '{name}'");
+    wrap_line_naive(width - 4, &content)
+        .into_iter()
+        .map(|row| {
+            let mut s = StyledString::new(style, width + 4);
+            s.push("  ", 2);
+            s.push(&row.to_padded_string(width - 4), width - 4);
+            s.push("  ", 2);
+            s
+        })
+        .collect()
 }
 
 const PADDING: usize = 2;
@@ -269,5 +335,46 @@ mod tests {
 
         assert!(render(&tools, 14, "sh", &json!({}), &ok_output()).is_err());
         assert!(render(&tools, 14, "sh", &json!({"command": "echo hi"}), &ToolResult::Json(json!({}))).is_err());
+    }
+
+    #[test]
+    fn test_default_render_item_query() {
+        let item = DefaultToolRenderItem { name: "foo".into() };
+        let expected = json!({
+            "type": "default",
+            "name": "foo",
+        });
+        assert_eq!(item.query("/").unwrap(), expected);
+        assert_eq!(item.query("/type").unwrap(), json!("default"));
+        assert_eq!(item.query("/name").unwrap(), json!("foo"));
+        assert!(matches!(item.query("/missing"), Err(crate::query::QueryError::InvalidField(_))));
+        assert!(item.trailing_padding());
+    }
+
+    #[test]
+    fn test_default_renderer() {
+        let tools = load_tool_renderers();
+        let theme = &THEME_DARK;
+        let style = Style::new(theme.text_subtle, theme.bg_base);
+
+        let output = ToolResult::Json(json!({"stdout": "ignored", "stderr": "", "return_code": 0}));
+
+        // Single line
+        assert_eq!(
+            render(&tools, 24, "grep", &json!({"pattern": "foo"}), &output).unwrap(),
+            format!("{style}  Called tool 'grep'    ")
+        );
+
+        // Wrapped to multiple lines
+        assert_eq!(
+            render(&tools, 24, "web_search", &json!({}), &output).unwrap(),
+            format!("{style}  Called tool 'web_sea  \n{style}  rch'                  ")
+        );
+
+        // Too narrow to render
+        assert_eq!(
+            render(&tools, 7, "grep", &json!({}), &output).unwrap(),
+            ""
+        );
     }
 }
