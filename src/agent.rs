@@ -1,4 +1,3 @@
-use diesel::Connection;
 use futures::future::join_all;
 
 use crate::app::AppEvent;
@@ -6,7 +5,7 @@ use crate::error::AnyResult;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
-use crate::session::{Item, ItemType, NewItem, Session};
+use crate::session::{Item, Session};
 use crate::task::{Task, TaskContext};
 use self::create_prompt::CreatePrompt;
 use self::execute_tool_call::ExecuteToolCall;
@@ -65,35 +64,10 @@ impl Agent {
                 return Ok(());
             }
 
-            let outputs = context.connection()?.transaction(|conn| {
-                let base = Item::max_seqno(conn, self.session.id)?.unwrap_or(0);
-                tool_calls
-                    .iter()
-                    .enumerate()
-                    .map(|(i, call)| {
-                        Item::create(
-                            conn,
-                            NewItem {
-                                session_id: Some(call.session_id),
-                                turn_id: Some(call.turn_id),
-                                provider_id: call.provider_id,
-                                ty: Some(ItemType::ToolOutput),
-                                upstream_type: Some("function_call_output"),
-                                upstream_call_id: call.upstream_call_id.as_deref(),
-                                seqno: Some(base + 1 + i as i64),
-                                completed: Some(false),
-                                ..Default::default()
-                            },
-                        )
-                    })
-                    .collect::<AnyResult<Vec<_>>>()
-            })?;
-
             let executions: Vec<_> = tool_calls
                 .into_iter()
-                .zip(outputs)
-                .map(|(tool_call, output)| {
-                    Box::pin(context.subtask(ExecuteToolCall::new(tool_call, output)))
+                .map(|tool_call| {
+                    Box::pin(context.subtask(ExecuteToolCall::new(tool_call)))
                 })
                 .collect();
             for result in join_all(executions).await {
