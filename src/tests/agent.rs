@@ -644,7 +644,10 @@ async fn test_agent_tool_call_loop() {
             {
                 "type": "function_call_output",
                 "call_id": "call_1",
-                "output": r#"{"result":3}"#,
+                "output": [{
+                    "type": "input_text",
+                    "text": r#"{"result":3}"#,
+                }],
             },
         ])
     );

@@ -1,6 +1,7 @@
 pub mod openai;
 pub mod stream;
 
+use std::borrow::Cow;
 use std::str::FromStr;
 
 use anyhow::anyhow;
@@ -67,6 +68,25 @@ pub enum ReasoningEffort {
     Max,
 }
 
+/// Output from a tool call.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(tag = "type")]
+pub enum ToolOutputContent<'a> {
+    #[serde(rename = "input_text")]
+    Text {
+        #[serde(rename = "text")]
+        text: Cow<'a, str>,
+    },
+    #[serde(rename = "input_file")]
+    File {
+        #[serde(rename = "filename")]
+        filepath: &'a str,
+        // Base64-encoded binary
+        #[serde(rename = "file_data")]
+        data: &'a str,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChatMessage<'a> {
     /// A user prompt.
@@ -82,7 +102,10 @@ pub enum ChatMessage<'a> {
         arguments: &'a str,
     },
     /// The output of a tool invocation.
-    ToolOutput { call_id: &'a str, output: &'a str },
+    ToolOutput {
+        call_id: &'a str,
+        output: Vec<ToolOutputContent<'a>>,
+    },
 }
 
 /// Builds the conversation history from a session's items.
@@ -139,6 +162,9 @@ pub fn build_history<'a>(
                 } else {
                     "error: tool call interrupted"
                 };
+                let output = vec![ToolOutputContent::Text {
+                    text: Cow::Borrowed(output),
+                }];
                 messages.push(ChatMessage::ToolOutput { call_id, output });
             }
         }
@@ -431,7 +457,9 @@ mod tests {
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_1",
-                    output: r#"{"result":3}"#,
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Borrowed(r#"{"result":3}"#),
+                    }],
                 },
                 ChatMessage::ToolCall {
                     call_id: "call_2",
@@ -440,7 +468,9 @@ mod tests {
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_2",
-                    output: "file contents",
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Borrowed("file contents"),
+                    }],
                 },
                 ChatMessage::ToolCall {
                     call_id: "call_3",
@@ -449,7 +479,9 @@ mod tests {
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_3",
-                    output: "error: tool call interrupted",
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Borrowed("error: tool call interrupted"),
+                    }],
                 },
             ]
         );
@@ -466,7 +498,9 @@ mod tests {
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_1",
-                    output: r#"{"result":3}"#,
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Borrowed(r#"{"result":3}"#),
+                    }],
                 },
                 ChatMessage::ToolCall {
                     call_id: "call_2",
@@ -475,7 +509,9 @@ mod tests {
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_2",
-                    output: "file contents",
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Borrowed("file contents"),
+                    }],
                 },
                 ChatMessage::ToolCall {
                     call_id: "call_3",
@@ -484,7 +520,9 @@ mod tests {
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_3",
-                    output: "error: tool call interrupted",
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Borrowed("error: tool call interrupted"),
+                    }],
                 },
             ]
         );

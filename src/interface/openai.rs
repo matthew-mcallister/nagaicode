@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::error::AnyResult;
 use crate::interface::{
     ChatMessage, InferenceEvent, InferenceParams, InterfaceModel, ItemDelta, OutputItemEvent,
-    ReasoningEffort, ResponseCompleted, ResponseCreated, ResponseFailed, Usage,
+    ReasoningEffort, ResponseCompleted, ResponseCreated, ResponseFailed, ToolOutputContent, Usage,
 };
 use crate::request::DefaultClient;
 use crate::tool::{ToolInfo, ToolServer};
@@ -135,7 +135,7 @@ enum InputItem<'a> {
         #[serde(rename = "type")]
         r#type: &'static str,
         call_id: &'a str,
-        output: &'a str,
+        output: Vec<ToolOutputContent<'a>>,
     },
 }
 
@@ -231,7 +231,7 @@ impl<'a> CreateResponseRequest<'a> {
                 ChatMessage::ToolOutput { call_id, output } => InputItem::FunctionCallOutput {
                     r#type: "function_call_output",
                     call_id,
-                    output,
+                    output: output.clone(),
                 },
             })
             .collect();
@@ -555,6 +555,8 @@ impl OpenaiInterface {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use serde_json::json;
 
     use super::*;
@@ -1115,7 +1117,9 @@ mod tests {
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_1",
-                    output: r#"{"result":3}"#,
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Borrowed(r#"{"result":3}"#),
+                    }],
                 },
             ],
         };
@@ -1139,7 +1143,10 @@ mod tests {
                 {
                     "type": "function_call_output",
                     "call_id": "call_1",
-                    "output": r#"{"result":3}"#,
+                    "output": [{
+                        "type": "input_text",
+                        "text": r#"{"result":3}"#,
+                    }],
                 },
             ])
         );
