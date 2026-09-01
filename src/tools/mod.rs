@@ -49,7 +49,7 @@ impl ToolRegistry {
         // - edit
         // - grep
         // - glob
-        // - not_found
+        // - invalid
         // - unknown
         let mut tools: FnvHashMap<String, Box<dyn Tool>> = FnvHashMap::default();
         let sh = sh::ShTool::new(cwd.to_path_buf());
