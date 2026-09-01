@@ -16,7 +16,7 @@ use crate::provider::Provider;
 use crate::schema::provider::dsl;
 use crate::session::Session;
 use crate::task::{Task, TaskContext};
-use crate::tool::{ToolResult, ToolServer};
+use crate::tool::ToolServer;
 use crate::ui::text::truncate_line;
 use serde_json::{Value, json};
 
@@ -488,27 +488,23 @@ impl BangCommand {
             .tools_mut()
             .call("sh", json!({ "command": self.command }))
             .await;
-        match result {
-            ToolResult::Text(msg) => Err(anyhow!(msg)),
-            ToolResult::Json(value) => {
-                let obj = value
-                    .as_object()
-                    .ok_or_else(|| anyhow!("invalid result for 'sh': expected an object"))?;
-                let stdout = obj.get("stdout").and_then(Value::as_str).unwrap_or("");
-                let stderr = obj.get("stderr").and_then(Value::as_str).unwrap_or("");
-                let return_code = obj
-                    .get("return_code")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(-1);
-                if return_code == 0 {
-                    context.send(AppEvent::CommandOutput(format!("{stdout}{stderr}")));
-                    Ok(())
-                } else {
-                    Err(anyhow!(
-                        "command exited with code {return_code}: {stdout}{stderr}"
-                    ))
-                }
-            }
+        if let Some(msg) = result.get("error").and_then(Value::as_str) {
+            return Err(anyhow!(msg.to_owned()));
+        }
+        let obj = result
+            .as_object()
+            .ok_or_else(|| anyhow!("invalid result for 'sh': expected an object"))?;
+        let stdout = obj.get("stdout").and_then(Value::as_str).unwrap_or("");
+        let stderr = obj.get("stderr").and_then(Value::as_str).unwrap_or("");
+        let return_code = obj
+            .get("return_code")
+            .and_then(Value::as_i64)
+            .unwrap_or(-1);
+        if return_code == 0 {
+            context.send(AppEvent::CommandOutput(format!("{stdout}{stderr}")));
+            Ok(())
+        } else {
+            Err(anyhow!("command exited with code {return_code}: {stdout}{stderr}"))
         }
     }
 }

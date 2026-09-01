@@ -126,9 +126,6 @@ impl<'a, S> StreamProcessor<'a, S> {
 
     fn handle_item_done(&mut self, done: OutputItemEvent) -> AnyResult<Option<AppEvent>> {
         if let Some(item) = self.items.get_mut(&done.output_index) {
-            if let Some(json) = item.json.as_deref() {
-                Item::update_json(self.conn, item.id, json)?;
-            }
             Item::set_raw_data(self.conn, item.id, &done.raw)?;
             item.raw_data = Some(done.raw.to_string());
             Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))
@@ -169,14 +166,15 @@ impl<'a, S> StreamProcessor<'a, S> {
         Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))
     }
 
+    // TODO: stop streaming call args; extract them in handle_item_done instead
     fn handle_args_delta(&mut self, delta: ItemDelta) -> AnyResult<Option<AppEvent>> {
         self.ensure_item(delta.output_index, ItemType::ToolCall)?;
         let item = self
             .items
             .get_mut(&delta.output_index)
             .expect("item exists");
-        let json = format!("{}{}", item.json.as_deref().unwrap_or(""), &delta.delta);
-        item.json = Some(json);
+        let tool_args = format!("{}{}", item.tool_args.as_deref().unwrap_or(""), &delta.delta);
+        item.tool_args = Some(tool_args);
         Ok(None)
     }
 
@@ -204,7 +202,6 @@ impl<'a, S> StreamProcessor<'a, S> {
                 upstream_call_id,
                 text,
                 seqno: Some(self.base_seqno + output_index),
-                completed: Some(true),
             },
         )?;
         self.items.insert(output_index, item.clone());
