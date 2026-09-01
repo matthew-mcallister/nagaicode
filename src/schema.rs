@@ -15,12 +15,12 @@ diesel::table! {
         text -> Nullable<Text>,
         summary -> Nullable<Text>,
         encrypted_text -> Nullable<Text>,
-        json -> Nullable<Text>,
+        tool_args -> Nullable<Text>,
         raw_data -> Nullable<Text>,
         seqno -> BigInt,
-        completed -> Bool,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        tool_output -> Nullable<Text>,
     }
 }
 
