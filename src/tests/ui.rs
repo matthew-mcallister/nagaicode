@@ -6,7 +6,6 @@ use crate::interface::InterfaceId;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::query::DataQuery;
-use crate::tool::ToolResult;
 use crate::tool::mock::ToolCall;
 use crate::ui::canvas::render_canvas;
 use crate::ui::chat::Chat;
@@ -200,11 +199,11 @@ async fn test_app_process_command() {
 
     app.tools_mut().add_result(
         "sh",
-        ToolResult::Json(json!({
+        json!({
             "stdout": "output line\n",
             "stderr": "",
             "return_code": 0,
-        })),
+        }),
     );
 
     app.process_command("!echo test").await.unwrap();
@@ -235,11 +234,11 @@ async fn test_app_process_command() {
 
     app.tools_mut().add_result(
         "sh",
-        ToolResult::Json(json!({
+        json!({
             "stdout": "string output\n",
             "stderr": "",
             "return_code": 0,
-        })),
+        }),
     );
     app.process_command("!pwd").await.unwrap();
     app.await_task().await.unwrap();
@@ -250,11 +249,11 @@ async fn test_app_process_command() {
 
     app.tools_mut().add_result(
         "sh",
-        ToolResult::Json(json!({
+        json!({
             "stdout": "",
             "stderr": "error message\n",
             "return_code": 1,
-        })),
+        }),
     );
     app.process_command("!false").await.unwrap();
     app.await_task().await.unwrap();
@@ -271,11 +270,11 @@ async fn test_app_process_command() {
 
     app.tools_mut().add_result(
         "sh",
-        ToolResult::Json(json!({
+        json!({
             "stdout": "",
             "stderr": "",
             "return_code": 0,
-        })),
+        }),
     );
     app.process_command("!true").await.unwrap();
     app.await_task().await.unwrap();
@@ -283,7 +282,7 @@ async fn test_app_process_command() {
     let calls = app.tools().get_calls();
     assert_eq!(calls.len(), 4);
 
-    app.tools_mut().add_result("sh", ToolResult::Text("tool error".to_owned()));
+    app.tools_mut().add_result("sh", json!({"error": "tool error"}));
     app.process_event(AppEvent::SubmitPrompt("!failing_tool".to_string()))
         .await;
     app.await_task().await.unwrap();
@@ -502,7 +501,6 @@ async fn test_app_session_switch() {
                 turn_id: Some(turn.id),
                 ty: Some(ty),
                 text: Some(text),
-                completed: Some(true),
                 ..Default::default()
             },
         )

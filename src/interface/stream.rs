@@ -126,6 +126,9 @@ impl<'a, S> StreamProcessor<'a, S> {
 
     fn handle_item_done(&mut self, done: OutputItemEvent) -> AnyResult<Option<AppEvent>> {
         if let Some(item) = self.items.get_mut(&done.output_index) {
+            if let Some(tool_args) = item.tool_args.as_deref() {
+                Item::update_tool_args(self.conn, item.id, tool_args)?;
+            }
             Item::set_raw_data(self.conn, item.id, &done.raw)?;
             item.raw_data = Some(done.raw.to_string());
             Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))

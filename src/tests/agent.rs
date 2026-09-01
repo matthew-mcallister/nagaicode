@@ -13,7 +13,6 @@ use crate::provider::Provider;
 use crate::query::DataQuery;
 use crate::request::test_client::ResponseData;
 use crate::testing::QueueStream;
-use crate::tool::ToolResult;
 use crate::tool::mock::ToolCall;
 
 fn create_message_event(data: &str) -> SseEvent {
@@ -558,8 +557,7 @@ async fn test_agent_tool_call_loop() {
     let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
     app.switch_model(provider, model).unwrap();
 
-    app.tools_mut()
-        .add_result("add", ToolResult::Json(json!({"result": 3})));
+    app.tools_mut().add_result("add", json!({"result": 3}));
 
     let url = "https://example.test/v1/responses";
 
@@ -678,18 +676,15 @@ async fn test_agent_tool_call_loop() {
     assert_eq!(responses[1].upstream_status.as_deref(), Some("completed"));
 
     let items = Item::list_by_session(app.conn(), session_id).unwrap();
-    assert_eq!(items.len(), 4);
+    assert_eq!(items.len(), 3);
     assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
     assert_eq!(items[1].ty().unwrap(), ItemType::ToolCall);
     assert_eq!(items[1].upstream_id.as_deref(), Some("fc_1"));
     assert_eq!(items[1].upstream_call_id.as_deref(), Some("call_1"));
     assert_eq!(items[1].text.as_deref(), Some("add"));
-    assert_eq!(items[1].json.as_deref(), Some(r#"{"a": 1, "b": 2}"#));
-    assert_eq!(items[2].ty().unwrap(), ItemType::ToolOutput);
-    assert_eq!(items[2].upstream_call_id.as_deref(), Some("call_1"));
-    assert_eq!(items[2].json.as_deref(), Some(r#"{"result":3}"#));
-    assert_eq!(items[2].text, None);
-    assert_eq!(items[3].ty().unwrap(), ItemType::ResponseText);
-    assert_eq!(items[3].upstream_id.as_deref(), Some("msg_2"));
-    assert_eq!(items[3].text.as_deref(), Some("The answer is 3."));
+    assert_eq!(items[1].tool_args.as_deref(), Some(r#"{"a": 1, "b": 2}"#));
+    assert_eq!(items[1].tool_output().unwrap(), Some(json!({"result": 3})));
+    assert_eq!(items[2].ty().unwrap(), ItemType::ResponseText);
+    assert_eq!(items[2].upstream_id.as_deref(), Some("msg_2"));
+    assert_eq!(items[2].text.as_deref(), Some("The answer is 3."));
 }
