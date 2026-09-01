@@ -11,6 +11,7 @@ use crate::ui::render_item::RenderItem;
 
 pub mod failed;
 pub mod sh;
+pub mod unknown;
 
 /// Interfaces for interacting with tools and rendering their output.
 pub trait Tool: std::fmt::Debug + DataQuery {
