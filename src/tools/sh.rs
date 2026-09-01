@@ -8,7 +8,6 @@ use serde_json::{Value, json};
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tool::ToolResult;
 use crate::tools::Tool;
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::RenderItem;
@@ -131,7 +130,7 @@ impl ToolRenderItemBuilder for ShRenderItemBuilder {
         &self,
         _name: &str,
         args: &Value,
-        output: &ToolResult,
+        output: &Value,
     ) -> AnyResult<Box<dyn RenderItem>> {
         let cmd_line = args
             .get("command")
@@ -139,8 +138,8 @@ impl ToolRenderItemBuilder for ShRenderItemBuilder {
             .ok_or_else(|| anyhow!("invalid tool input"))?
             .to_owned();
         let stdout = output
-            .as_json()
-            .and_then(|v| v.as_object()?.get("stdout")?.as_str())
+            .get("stdout")
+            .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("invalid tool output"))?
             .to_owned();
         Ok(Box::new(ShRenderItem { cmd_line, stdout }))
@@ -273,7 +272,7 @@ mod tests {
         width: usize,
         name: &str,
         args: &Value,
-        output: &ToolResult,
+        output: &Value,
     ) -> AnyResult<String> {
         let item = tools.build_render_item(name, args, output)?;
         let (mut lines, _) = item.render(&THEME_DARK, width, Default::default());
@@ -303,16 +302,16 @@ mod tests {
         let tools = load_tool_renderers();
         let theme = &THEME_DARK;
         let style = Style::new(theme.text_base, theme.bg_prompt);
-        let ok_output = || ToolResult::Json(json!({"stdout": "", "stderr": "", "return_code": 0}));
+        let ok_output = || json!({"stdout": "", "stderr": "", "return_code": 0});
 
-        let output = ToolResult::Json(json!({"stdout": "hello\n", "stderr": "", "return_code": 0}));
+        let output = json!({"stdout": "hello\n", "stderr": "", "return_code": 0});
         assert_eq!(
             render(&tools, 14, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
             format!(
                 "{style}              \n{style}  $ echo hi   \n{style}  hello       \n{style}              "
             )
         );
-        let output = ToolResult::Json(json!({"stdout": "hi\n", "stderr": "", "return_code": 0}));
+        let output = json!({"stdout": "hi\n", "stderr": "", "return_code": 0});
         assert_eq!(
             render(&tools, 14, "sh", &json!({"command": "echo hello world"}), &output).unwrap(),
             format!(
@@ -322,7 +321,7 @@ mod tests {
 
         // Long stdout is ellipsized; the final row is filled to the full width
         let ellipsis_style = Style::new(theme.text_subtle, theme.bg_prompt);
-        let output = ToolResult::Json(json!({"stdout": "x".repeat(120), "stderr": "", "return_code": 0}));
+        let output = json!({"stdout": "x".repeat(120), "stderr": "", "return_code": 0});
         let line = || format!("{style}  xxxxxxxxxx  ");
         assert_eq!(
             render(&tools, 14, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
@@ -346,7 +345,7 @@ mod tests {
         );
 
         assert!(render(&tools, 14, "sh", &json!({}), &ok_output()).is_err());
-        assert!(render(&tools, 14, "sh", &json!({"command": "echo hi"}), &ToolResult::Json(json!({}))).is_err());
+        assert!(render(&tools, 14, "sh", &json!({"command": "echo hi"}), &json!({})).is_err());
     }
 
     #[tokio::test]

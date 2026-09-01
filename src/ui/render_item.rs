@@ -1,10 +1,8 @@
-use fnv::FnvHashMap;
 use serde_json::json;
 
 use crate::error::AnyResult;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::session::{Item, ItemType};
-use crate::session::ToolCallArgs;
 use crate::ui::markdown::{MarkdownResult, ResumePoint};
 use crate::ui::style::{Style, Theme};
 use crate::ui::styled_string::StyledString;
@@ -156,7 +154,6 @@ impl RenderItem for CommandOutputRenderItem {
 
 pub fn get_item_content(
     tools: &ToolRenderer,
-    tool_calls: &FnvHashMap<String, ToolCallArgs>,
     item: &Item,
 ) -> AnyResult<Option<Box<dyn RenderItem>>> {
     Ok(Some(match item.ty()? {
@@ -174,19 +171,13 @@ pub fn get_item_content(
                 else { return Ok(None) };
             Box::new(ThoughtRenderItem::new(text))
         }
-        ItemType::ToolCall => return Ok(None),
-        ItemType::ToolOutput => {
-            let call_id = item.upstream_call_id.as_ref()
-                .ok_or_else(|| anyhow::anyhow!("item {} missing call id", item.id))?;
-            let args = tool_calls.get(call_id)
-                .ok_or_else(|| anyhow::anyhow!("missing args for item {}", item.id))?;
+        ItemType::ToolCall => {
             let Some(output) = item.tool_output()? else { return Ok(None) };
-            tools.build_render_item(
-                &args.name,
-                &args.args,
-                &output
-            )?
-        },
+            let name = item.text.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("item {} missing tool name", item.id))?;
+            let args = item.tool_args_json()?.unwrap_or_default();
+            tools.build_render_item(name, &args, &output)?
+        }
     }))
 }
 
@@ -474,7 +465,6 @@ mod tests {
     fn test_render_item_query() {
         use super::*;
         use crate::query::QueryError;
-        use crate::tool::ToolResult;
         use crate::ui::tool_render_item::load_tool_renderers;
 
         let user = UserRenderItem::new("hello");
@@ -492,7 +482,7 @@ mod tests {
         let item = tools.build_render_item(
             "sh",
             &json!({"command": "echo hi"}),
-            &ToolResult::Json(json!({"stdout": "hi\n", "stderr": "", "return_code": 0})),
+            &json!({"stdout": "hi\n", "stderr": "", "return_code": 0}),
         ).unwrap();
         assert_eq!(
             item.query("/").unwrap(),

@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use crate::arena::{Arena, Id};
 use crate::error::AnyResult;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
-use crate::session::{Item, ToolCallArgs};
+use crate::session::{Item, ItemType};
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::render_item::{
@@ -242,8 +242,6 @@ pub struct History {
     by_item_id: FnvHashMap<i32, Id<HistoryItem>>,
     /// Renders tool call outputs.
     tool_renderer: ToolRenderer,
-    /// Maps upstream tool call ids to their call args.
-    tool_calls: FnvHashMap<String, ToolCallArgs>,
 }
 
 impl History {
@@ -274,7 +272,6 @@ impl History {
             viewport_bottom_pos: 0,
             by_item_id: FnvHashMap::default(),
             tool_renderer: load_tool_renderers(),
-            tool_calls: FnvHashMap::default(),
         }
     }
 
@@ -495,17 +492,16 @@ impl History {
 
     /// Creates (or updates) an item
     fn on_item_created(&mut self, item: &Item) -> AnyResult<()> {
-        // Tool calls
-        if let Some(call_id) = item.upstream_call_id.clone()
-            && let Some(args) = item.tool_args()?
-        {
-            self.tool_calls.insert(call_id, args);
+        if item.ty()? == ItemType::ToolCall {
+            if item.tool_output.is_none() {
+                return Ok(());
+            }
+            // TODO: insert tool calls in completion order, not seqno order
         }
 
-        // Normal content
         if self.by_item_id.contains_key(&item.id) {
             self.on_item_updated(item)?;
-        } else if let Some(content) = get_item_content(&self.tool_renderer, &self.tool_calls, item)? {
+        } else if let Some(content) = get_item_content(&self.tool_renderer, item)? {
             self.add_item(content, Some(item.id), Some(item.seqno));
         }
 
@@ -516,7 +512,7 @@ impl History {
     /// error.
     fn on_item_updated(&mut self, item: &Item) -> AnyResult<()> {
         if let Some(&item_id) = self.by_item_id.get(&item.id) {
-            let Some(content) = get_item_content(&self.tool_renderer, &self.tool_calls, item)?
+            let Some(content) = get_item_content(&self.tool_renderer, item)?
                 else { return Ok(()) };
             self.item[item_id].update(
                 &self.theme,
@@ -660,7 +656,6 @@ impl DataQuery for History {
                 "viewport_bottom": self.query("/viewport_bottom")?,
                 "viewport_bottom_pos": self.query("/viewport_bottom_pos")?,
                 "by_item_id": self.query("/by_item_id")?,
-                "tool_calls": self.query("/tool_calls")?,
             }))),
             "num_rows" => Ok(QueryField::Value(json!(self.num_rows()))),
             "items" => Ok(QueryField::Boxed(Box::new(HistoryItemsData {
@@ -674,7 +669,6 @@ impl DataQuery for History {
             "viewport_bottom" => Ok(QueryField::Value(self.viewport_bottom.to_json())),
             "viewport_bottom_pos" => Ok(QueryField::Value(json!(self.viewport_bottom_pos))),
             "by_item_id" => Ok(QueryField::Value(by_item_id_json(&self.by_item_id))),
-            "tool_calls" => Ok(QueryField::DataQuery(&self.tool_calls)),
             // "rows" not exposed
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
@@ -983,7 +977,14 @@ mod tests {
         assert_eq!(item.query("/num_rows").unwrap(), json!(0));
     }
 
-    fn make_tool_call(id: i32, seqno: i64, call_id: &str, name: &str, args: Value) -> Item {
+    fn make_tool_call(
+        id: i32,
+        seqno: i64,
+        call_id: &str,
+        name: &str,
+        args: Value,
+        output: Option<Value>,
+    ) -> Item {
         Item {
             id,
             session_id: 1,
@@ -997,41 +998,12 @@ mod tests {
             text: Some(name.into()),
             summary: None,
             encrypted_text: None,
-            json: Some(args.to_string()),
+            tool_args: Some(args.to_string()),
             raw_data: None,
             seqno,
-            completed: true,
             created_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
             updated_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
-        }
-    }
-
-    fn make_tool_output(
-        id: i32,
-        seqno: i64,
-        call_id: &str,
-        output: Option<Value>,
-        completed: bool,
-    ) -> Item {
-        Item {
-            id,
-            session_id: 1,
-            turn_id: 1,
-            response_id: None,
-            provider_id: None,
-            ty: ItemType::ToolOutput.to_string(),
-            upstream_id: None,
-            upstream_type: Some("function_call_output".into()),
-            upstream_call_id: Some(call_id.into()),
-            text: None,
-            summary: None,
-            encrypted_text: None,
-            json: output.map(|v| v.to_string()),
-            raw_data: None,
-            seqno,
-            completed,
-            created_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
-            updated_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
+            tool_output: output.map(|v| v.to_string()),
         }
     }
 
@@ -1040,33 +1012,20 @@ mod tests {
         let theme = &THEME_DARK;
         let style = Style::new(theme.text_base, theme.bg_prompt);
         let base_style = theme.base_style();
+        let output = json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 });
 
         let mut h = history(14, 10);
-        let call = make_tool_call(1, 1, "call_1", "sh", json!({ "command": "echo hi" }));
+        let call = make_tool_call(1, 1, "call_1", "sh", json!({ "command": "echo hi" }), None);
         h.handle_update(Update::ItemCreated { item: &call });
 
-        // Tool calls are not rendered, but their args are tracked.
-        assert_eq!(h.num_rows(), 0);
-        assert_eq!(h.tool_calls.len(), 1);
-        assert_eq!(h.tool_calls.get("call_1").unwrap().name, "sh");
-        assert_eq!(
-            h.tool_calls.get("call_1").unwrap().args,
-            json!({ "command": "echo hi" })
-        );
-
-        // An incomplete tool output is not rendered yet.
-        let output = make_tool_output(2, 2, "call_1", None, false);
-        h.handle_update(Update::ItemCreated { item: &output });
+        // Tool calls without output are ignored.
         assert_eq!(h.num_rows(), 0);
         assert_eq!(h.by_item_id.len(), 0);
 
-        // When the output completes, the item is updated and rendered.
-        let mut output = output.clone();
-        output.json = Some(
-            json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 }).to_string(),
-        );
-        output.completed = true;
-        h.handle_update(Update::ItemUpdated { item: &output });
+        // When the output arrives, the item is inserted and rendered.
+        let mut call = call.clone();
+        call.tool_output = Some(output.to_string());
+        h.handle_update(Update::ItemUpdated { item: &call });
 
         // Rendered with the prompt background and padding, plus the item's
         // own trailing padding row.
@@ -1082,21 +1041,36 @@ mod tests {
             h.query("/items/0/content").unwrap(),
             json!({"type": "sh", "cmd_line": "echo hi", "stdout": "hello\n"})
         );
+
+        // Items created with output render immediately.
+        let mut h = history(14, 10);
+        let call = make_tool_call(
+            2,
+            2,
+            "call_2",
+            "sh",
+            json!({ "command": "echo hi" }),
+            Some(output),
+        );
+        h.handle_update(Update::ItemCreated { item: &call });
+        assert_eq!(h.num_rows(), 5);
     }
 
     #[test]
-    fn test_tool_output_missing_call() {
+    fn test_tool_call_missing_name() {
         let mut h = history(14, 10);
-        let output = make_tool_output(
+        let mut call = make_tool_call(
             1,
             1,
-            "missing",
+            "call_1",
+            "sh",
+            json!({ "command": "echo hi" }),
             Some(json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 })),
-            true,
         );
-        h.handle_update(Update::ItemUpdated { item: &output });
+        call.text = None;
+        h.handle_update(Update::ItemCreated { item: &call });
 
-        // Output with no matching tool call is ignored.
+        // Calls with no tool name are ignored.
         assert_eq!(h.num_rows(), 0);
         assert_eq!(h.by_item_id.len(), 0);
     }
@@ -1126,12 +1100,12 @@ mod tests {
             text: Some(format!("message {seqno}")),
             summary: None,
             encrypted_text: None,
-            json: None,
+            tool_args: None,
             raw_data: None,
             seqno,
-            completed: true,
             created_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
             updated_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
+            tool_output: None,
         }
     }
 
@@ -1200,7 +1174,6 @@ mod tests {
             "viewport_bottom": history.viewport_bottom.to_json(),
             "viewport_bottom_pos": 0,
             "by_item_id": {},
-            "tool_calls": {},
         });
         assert_eq!(history.query("/").unwrap(), expected);
         assert_eq!(history.query("/num_rows").unwrap(), json!(0));
@@ -1219,6 +1192,5 @@ mod tests {
         );
         assert_eq!(history.query("/viewport_bottom_pos").unwrap(), json!(0));
         assert_eq!(history.query("/by_item_id").unwrap(), json!({}));
-        assert_eq!(history.query("/tool_calls").unwrap(), json!({}));
     }
 }

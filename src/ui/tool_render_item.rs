@@ -6,7 +6,6 @@ use serde_json::{Value, json};
 
 use crate::error::AnyResult;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tool::ToolResult;
 use crate::tools::sh::ShRenderItemBuilder;
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::RenderItem;
@@ -22,7 +21,7 @@ pub trait ToolRenderItemBuilder: std::fmt::Debug {
         &self,
         name: &str,
         args: &Value,
-        output: &ToolResult,
+        output: &Value,
     ) -> AnyResult<Box<dyn RenderItem>>;
 }
 
@@ -43,7 +42,7 @@ impl ToolRenderer {
     ///
     /// `name` is the name of the renderer to use, not necessarily the name
     /// of the tool.
-    pub fn build_render_item(&self, name: &str, args: &Value, output: &ToolResult) -> AnyResult<Box<dyn RenderItem>> {
+    pub fn build_render_item(&self, name: &str, args: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
         if let Some(renderer) = self.renderers.get(name) {
             renderer.build_render_item(name, args, output)
         } else {
@@ -78,7 +77,7 @@ impl ToolRenderItemBuilder for DefaultToolRenderItemBuilder {
         &self,
         name: &str,
         _args: &Value,
-        _output: &ToolResult,
+        _output: &Value,
     ) -> AnyResult<Box<dyn RenderItem>> {
         Ok(Box::new(DefaultToolRenderItem {
             name: name.to_owned(),
@@ -141,7 +140,7 @@ mod tests {
         width: usize,
         name: &str,
         args: &Value,
-        output: &ToolResult,
+        output: &Value,
     ) -> AnyResult<String> {
         let item = tools.build_render_item(name, args, output)?;
         let (mut lines, _) = item.render(&THEME_DARK, width, Default::default());
@@ -168,7 +167,7 @@ mod tests {
         let theme = &THEME_DARK;
         let style = Style::new(theme.text_subtle, theme.bg_base);
 
-        let output = ToolResult::Json(json!({"stdout": "ignored", "stderr": "", "return_code": 0}));
+        let output = json!({"stdout": "ignored", "stderr": "", "return_code": 0});
 
         // Single line
         assert_eq!(
