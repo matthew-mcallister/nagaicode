@@ -9,6 +9,7 @@ use crate::interface::ToolOutputContent;
 use crate::query::DataQuery;
 use crate::ui::render_item::RenderItem;
 
+pub mod failed;
 pub mod sh;
 
 /// Interfaces for interacting with tools and rendering their output.
@@ -19,6 +20,11 @@ pub trait Tool: std::fmt::Debug + DataQuery {
 
     /// Description provided to the agent.
     fn description(&self) -> &str;
+
+    /// Whether the tool is advertised to the model.
+    fn is_visible(&self) -> bool {
+        true
+    }
 
     /// JSON schema used by the model to generate tool calls. Must obey
     /// "strict" rules: all inputs required, no additional fields allowed.
@@ -37,7 +43,7 @@ pub trait Tool: std::fmt::Debug + DataQuery {
 /// Maps tool names to tools.
 #[derive(Debug)]
 pub struct ToolRegistry {
-    tools: FnvHashMap<String, Box<dyn Tool>>,
+    _tools: FnvHashMap<String, Box<dyn Tool>>,
 }
 
 impl ToolRegistry {
@@ -49,11 +55,11 @@ impl ToolRegistry {
         // - edit
         // - grep
         // - glob
-        // - invalid
+        // - failed
         // - unknown
         let mut tools: FnvHashMap<String, Box<dyn Tool>> = FnvHashMap::default();
         let sh = sh::ShTool::new(cwd.to_path_buf());
         tools.insert(sh.name().to_owned(), Box::new(sh));
-        Self { tools }
+        Self { _tools: tools }
     }
 }

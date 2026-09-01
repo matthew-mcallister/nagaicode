@@ -8,9 +8,10 @@
   - `src/agent.rs`: LLM agents
   - `src/app.rs`: main entrypoint
   - `src/task.rs`: task spawning and lifecycle
-  - `src/tools.rs`: tool server
   - `src/query.rs`: debug query trait
   - `src/session.rs`: core database tables
+  - `src/tools/`:
+    - `src/tools/mod.rs`: tool registry and task definition
   - `src/interface/`
     - `src/interface/mod.rs`: inference API interface
   - `src/ui/`
