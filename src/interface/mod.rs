@@ -112,9 +112,9 @@ pub enum ChatMessage<'a> {
 ///
 /// Text items are always included; reasoning items are only included when
 /// `include_reasoning` is true, preferring the summary over the raw text.
-/// Tool call and output items are only included when they carry an upstream
-/// call id, which the API requires to correlate them. Incomplete tool outputs
-/// render with a fixed tool-call-interrupted error message.
+///
+/// Tool calls are rendered as a call/response pair, with a fallback for
+/// incomplete output.
 pub fn build_history<'a>(
     items: &'a [Item],
     include_reasoning: bool,
@@ -145,27 +145,22 @@ pub fn build_history<'a>(
                 let (Some(call_id), Some(name)) =
                     (item.upstream_call_id.as_deref(), item.text.as_deref())
                 else {
+                    // Fallback in case database is corrupted
                     continue;
                 };
                 messages.push(ChatMessage::ToolCall {
                     call_id,
                     name,
-                    arguments: item.json.as_deref().unwrap_or(""),
+                    arguments: item.tool_args.as_deref().unwrap_or(""),
                 });
-            }
-            ItemType::ToolOutput => {
-                let Some(call_id) = item.upstream_call_id.as_deref() else {
-                    continue;
+                let output = match item.tool_output()? {
+                    Some(value) => Cow::Owned(value.to_string()),
+                    None => Cow::Borrowed("error: tool call interrupted"),
                 };
-                let output = if item.completed {
-                    item.json.as_deref().or(item.text.as_deref()).unwrap_or("")
-                } else {
-                    "error: tool call interrupted"
-                };
-                let output = vec![ToolOutputContent::Text {
-                    text: Cow::Borrowed(output),
-                }];
-                messages.push(ChatMessage::ToolOutput { call_id, output });
+                messages.push(ChatMessage::ToolOutput {
+                    call_id,
+                    output: vec![ToolOutputContent::Text { text: output }],
+                });
             }
         }
     }
@@ -318,6 +313,8 @@ impl Interface {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::db;
     use crate::session::{Item, NewItem, Session, Turn, TurnType};
@@ -339,11 +336,39 @@ mod tests {
                 ty: Some(ty),
                 text,
                 upstream_call_id,
-                completed: Some(true),
                 ..Default::default()
             },
         )
         .expect("create item")
+    }
+
+    fn create_tool_call(
+        conn: &mut SqliteConnection,
+        session_id: i32,
+        turn_id: i32,
+        name: &str,
+        call_id: Option<&str>,
+        args: Option<&str>,
+        output: Option<&Value>,
+    ) -> Item {
+        let call = create_item(
+            conn,
+            session_id,
+            turn_id,
+            ItemType::ToolCall,
+            Some(name),
+            call_id,
+        );
+        if let Some(args) = args {
+            Item::update_tool_args(conn, call.id, args).expect("update tool args");
+        }
+        let mut call = Item::get_by_id(conn, call.id)
+            .expect("get item")
+            .expect("item not found");
+        if let Some(output) = output {
+            call.set_tool_output(conn, output).expect("set tool output");
+        }
+        call
     }
 
     #[test]
@@ -366,72 +391,51 @@ mod tests {
             Some("hi there"),
             None,
         );
-        let tool_call =
-            create_item(&mut conn, session.id, turn.id, ItemType::ToolCall, Some("add"), Some("call_1"));
-        Item::update_json(&mut conn, tool_call.id, r#"{"a":1}"#).expect("update json");
-        let tool_output = create_item(
+        let tool_call = create_tool_call(
             &mut conn,
             session.id,
             turn.id,
-            ItemType::ToolOutput,
-            None,
+            "add",
             Some("call_1"),
+            Some(r#"{"a":1}"#),
+            Some(&json!({"result": 3})),
         );
-        Item::update_json(&mut conn, tool_output.id, r#"{"result":3}"#).expect("update json");
-        let text_tool_call = create_item(
+        let error_tool_call = create_tool_call(
             &mut conn,
             session.id,
             turn.id,
-            ItemType::ToolCall,
-            Some("cat"),
+            "cat",
             Some("call_2"),
+            Some(r#"{"path":"a.txt"}"#),
+            Some(&json!({"error": "file not found"})),
         );
-        Item::update_json(&mut conn, text_tool_call.id, r#"{"path":"a.txt"}"#).expect("update json");
-        let text_tool_output = create_item(
+        let orphan_call = create_tool_call(
             &mut conn,
             session.id,
             turn.id,
-            ItemType::ToolOutput,
-            Some("file contents"),
-            Some("call_2"),
+            "add",
+            None,
+            None,
+            Some(&json!({"result": 3})),
         );
-        let orphan_call =
-            create_item(&mut conn, session.id, turn.id, ItemType::ToolCall, Some("add"), None);
-        let orphan_output =
-            create_item(&mut conn, session.id, turn.id, ItemType::ToolOutput, Some("add"), None);
-        let interrupted_call = create_item(
+        let interrupted_call = create_tool_call(
             &mut conn,
             session.id,
             turn.id,
-            ItemType::ToolCall,
-            Some("rm"),
+            "rm",
             Some("call_3"),
+            None,
+            None,
         );
-        let interrupted_output = Item::create(
-            &mut conn,
-            NewItem {
-                session_id: Some(session.id),
-                turn_id: Some(turn.id),
-                ty: Some(ItemType::ToolOutput),
-                upstream_call_id: Some("call_3"),
-                completed: Some(false),
-                ..Default::default()
-            },
-        )
-        .expect("create item");
 
         let ids = [
             user_text.id,
             reasoning.id,
             response_text.id,
             tool_call.id,
-            tool_output.id,
-            text_tool_call.id,
-            text_tool_output.id,
+            error_tool_call.id,
             orphan_call.id,
-            orphan_output.id,
             interrupted_call.id,
-            interrupted_output.id,
         ];
         let items: Vec<Item> = ids
             .iter()
@@ -458,7 +462,7 @@ mod tests {
                 ChatMessage::ToolOutput {
                     call_id: "call_1",
                     output: vec![ToolOutputContent::Text {
-                        text: Cow::Borrowed(r#"{"result":3}"#),
+                        text: Cow::Owned(r#"{"result":3}"#.to_owned()),
                     }],
                 },
                 ChatMessage::ToolCall {
@@ -469,7 +473,7 @@ mod tests {
                 ChatMessage::ToolOutput {
                     call_id: "call_2",
                     output: vec![ToolOutputContent::Text {
-                        text: Cow::Borrowed("file contents"),
+                        text: Cow::Owned(r#"{"error":"file not found"}"#.to_owned()),
                     }],
                 },
                 ChatMessage::ToolCall {
@@ -499,7 +503,7 @@ mod tests {
                 ChatMessage::ToolOutput {
                     call_id: "call_1",
                     output: vec![ToolOutputContent::Text {
-                        text: Cow::Borrowed(r#"{"result":3}"#),
+                        text: Cow::Owned(r#"{"result":3}"#.to_owned()),
                     }],
                 },
                 ChatMessage::ToolCall {
@@ -510,7 +514,7 @@ mod tests {
                 ChatMessage::ToolOutput {
                     call_id: "call_2",
                     output: vec![ToolOutputContent::Text {
-                        text: Cow::Borrowed("file contents"),
+                        text: Cow::Owned(r#"{"error":"file not found"}"#.to_owned()),
                     }],
                 },
                 ChatMessage::ToolCall {
