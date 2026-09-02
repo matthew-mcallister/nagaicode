@@ -639,10 +639,10 @@ async fn test_agent_tool_call_loop() {
             {
                 "type": "function_call_output",
                 "call_id": "call_1",
-                "output": [{
-                    "type": "input_text",
-                    "text": r#"{"return_code":0,"stderr":"","stdout":"3"}"#,
-                }],
+                "output": [
+                    {"type": "input_text", "text": "stdout:\n3"},
+                    {"type": "input_text", "text": "return code: 0"},
+                ],
             },
         ])
     );

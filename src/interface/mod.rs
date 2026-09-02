@@ -117,7 +117,6 @@ pub enum ChatMessage<'a> {
 ///
 /// Tool calls are rendered as a call/response pair, with a fallback for
 /// incomplete output.
-#[allow(unused_variables)]
 pub fn build_history<'a>(
     tools: &ToolRegistry,
     items: &'a [Item],
@@ -157,14 +156,15 @@ pub fn build_history<'a>(
                     name,
                     arguments: item.tool_args.as_deref().unwrap_or(""),
                 });
-                let output = match item.tool_output()? {
-                    Some(value) => Cow::Owned(value.to_string()),
-                    None => Cow::Borrowed("error: tool call interrupted"),
+                let output = if item.tool_output()?.is_some() {
+                    tools.render_to_interface(item).content
+                } else {
+                    // Fallback for calls which never produced output
+                    vec![ToolOutputContent::Text {
+                        text: Cow::Borrowed("error: tool call interrupted"),
+                    }]
                 };
-                messages.push(ChatMessage::ToolOutput {
-                    call_id,
-                    output: vec![ToolOutputContent::Text { text: output }],
-                });
+                messages.push(ChatMessage::ToolOutput { call_id, output });
             }
         }
     }
@@ -400,10 +400,10 @@ mod tests {
             &mut conn,
             session.id,
             turn.id,
-            "add",
+            "sh",
             Some("call_1"),
-            Some(r#"{"a":1}"#),
-            Some(&json!({"result": 3})),
+            Some(r#"{"command":"echo hi"}"#),
+            Some(&json!({"stdout": "hi\n", "stderr": "", "return_code": 0})),
         );
         let error_tool_call = create_tool_call(
             &mut conn,
@@ -461,15 +461,21 @@ mod tests {
                 ChatMessage::Response { content: "hi there" },
                 ChatMessage::ToolCall {
                     call_id: "call_1",
-                    name: "add",
-                    arguments: r#"{"a":1}"#,
+                    name: "sh",
+                    arguments: r#"{"command":"echo hi"}"#,
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_1",
-                    output: vec![ToolOutputContent::Text {
-                        text: Cow::Owned(r#"{"result":3}"#.to_owned()),
-                    }],
+                    output: vec![
+                        ToolOutputContent::Text {
+                            text: Cow::Owned("stdout:\nhi\n".to_owned()),
+                        },
+                        ToolOutputContent::Text {
+                            text: Cow::Owned("return code: 0".to_owned()),
+                        },
+                    ],
                 },
+                // Calls to unknown tools render a placeholder
                 ChatMessage::ToolCall {
                     call_id: "call_2",
                     name: "cat",
@@ -478,7 +484,7 @@ mod tests {
                 ChatMessage::ToolOutput {
                     call_id: "call_2",
                     output: vec![ToolOutputContent::Text {
-                        text: Cow::Owned(r#"{"error":"file not found"}"#.to_owned()),
+                        text: Cow::Borrowed("error: could not parse output"),
                     }],
                 },
                 ChatMessage::ToolCall {
@@ -502,15 +508,21 @@ mod tests {
                 ChatMessage::Response { content: "hi there" },
                 ChatMessage::ToolCall {
                     call_id: "call_1",
-                    name: "add",
-                    arguments: r#"{"a":1}"#,
+                    name: "sh",
+                    arguments: r#"{"command":"echo hi"}"#,
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_1",
-                    output: vec![ToolOutputContent::Text {
-                        text: Cow::Owned(r#"{"result":3}"#.to_owned()),
-                    }],
+                    output: vec![
+                        ToolOutputContent::Text {
+                            text: Cow::Owned("stdout:\nhi\n".to_owned()),
+                        },
+                        ToolOutputContent::Text {
+                            text: Cow::Owned("return code: 0".to_owned()),
+                        },
+                    ],
                 },
+                // Calls to unknown tools render a placeholder
                 ChatMessage::ToolCall {
                     call_id: "call_2",
                     name: "cat",
@@ -519,7 +531,7 @@ mod tests {
                 ChatMessage::ToolOutput {
                     call_id: "call_2",
                     output: vec![ToolOutputContent::Text {
-                        text: Cow::Owned(r#"{"error":"file not found"}"#.to_owned()),
+                        text: Cow::Borrowed("error: could not parse output"),
                     }],
                 },
                 ChatMessage::ToolCall {
