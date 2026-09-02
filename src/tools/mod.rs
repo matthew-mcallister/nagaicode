@@ -10,6 +10,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::DataQuery;
 use crate::session::Item;
+use crate::try_nested;
 use crate::ui::render_item::RenderItem;
 
 pub mod failed;
@@ -115,19 +116,21 @@ impl ToolRegistry {
     }
 
     /// Builds a render item to display a tool call. Handles all possible
-    /// errors.
-    pub fn render_to_ui(&self, item: &Item) -> Box<dyn RenderItem> {
-        match self.resolve(item) {
-            Some((tool, input, output)) => match tool.render_to_ui(&input, &output) {
-                Ok(render) => render,
-                Err(_) => {
-                    warn!("item {}: tool call output parse error: {}", item.id, item.text.as_deref().unwrap_or_default());
-                    Self::unknown_ui(item)
-                }
-            },
-            None => {
-                warn!("item {}: unknown tool: '{}'", item.id, item.text.as_deref().unwrap_or_default());
-                Self::unknown_ui(item)
+    /// errors. Returns `None` if the item is not a tool call with output.
+    pub fn render_to_ui(&self, item: &Item) -> Option<Box<dyn RenderItem>> {
+        fn inner(reg: &ToolRegistry, item: &Item) -> AnyResult<Option<Box<dyn RenderItem>>> {
+            let args = try_nested!(item.tool_args());
+            let output = try_nested!(item.tool_output());
+            let tool = reg.tools.get(&args.name)
+                .ok_or_else(|| anyhow::anyhow!("unknown tool: '{}'", args.name))?;
+            Ok(Some(tool.render_to_ui(&args.args, &output)?))
+        }
+
+        match inner(self, item).transpose()? {
+            Ok(item) => Some(item),
+            Err(e) => {
+                warn!("item {}: tool call parse error: {}", item.id, e);
+                Some(Self::unknown_ui(item))
             }
         }
     }
@@ -187,6 +190,7 @@ impl ToolRegistry {
 mod tests {
     use super::*;
     use crate::cwd::cwd;
+    use crate::session::{ItemType, NewItem};
     use crate::testing::{session_turn, tool_call};
 
     #[tokio::test]
@@ -229,7 +233,7 @@ mod tests {
         let (_, turn) = session_turn(&mut conn);
 
         let item = tool_call(&mut conn, &turn, "no_such_tool", json!({}), Some(json!({})));
-        let ui = registry.render_to_ui(&item);
+        let ui = registry.render_to_ui(&item).unwrap();
         assert_eq!(ui.query("/type").unwrap(), json!("help"));
         let out = registry.render_to_interface(&item);
         assert_eq!(out.name, "no_such_tool");
@@ -245,7 +249,7 @@ mod tests {
 
         let output = json!({ "tool_name": "sh", "error": "boom" });
         let item = tool_call(&mut conn, &turn, "failed", json!({}), Some(output));
-        let ui = registry.render_to_ui(&item);
+        let ui = registry.render_to_ui(&item).unwrap();
         assert_eq!(ui.query("/type").unwrap(), json!("error"));
         let out = registry.render_to_interface(&item);
         assert_eq!(out.name, "sh");
@@ -267,10 +271,42 @@ mod tests {
             json!({ "command": "echo hello" }),
             Some(output),
         );
-        let ui = registry.render_to_ui(&item);
+        let ui = registry.render_to_ui(&item).unwrap();
         assert_eq!(ui.query("/type").unwrap(), json!("sh"));
         let out = registry.render_to_interface(&item);
         assert_eq!(out.name, "sh");
         assert_eq!(out.content.len(), 2);
+    }
+
+    #[test]
+    fn test_render_incomplete_item() {
+        let dir = Arc::new(cwd());
+        let registry = ToolRegistry::new(&dir);
+        let mut conn = crate::db::open_new().expect("open db");
+        let (_, turn) = session_turn(&mut conn);
+
+        // A tool call which hasn't produced output yet isn't rendered.
+        let pending = tool_call(
+            &mut conn,
+            &turn,
+            "sh",
+            json!({ "command": "echo hello" }),
+            None,
+        );
+        assert!(registry.render_to_ui(&pending).is_none());
+
+        // Items which aren't tool calls aren't rendered.
+        let text_item = Item::create(
+            &mut conn,
+            NewItem {
+                session_id: Some(turn.session_id),
+                turn_id: Some(turn.id),
+                ty: Some(ItemType::UserText),
+                text: Some("hello"),
+                ..Default::default()
+            },
+        )
+        .expect("create text item");
+        assert!(registry.render_to_ui(&text_item).is_none());
     }
 }
