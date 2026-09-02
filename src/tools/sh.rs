@@ -44,11 +44,11 @@ impl DataQuery for ShTool {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "type": "tool",
                 "name": self.name(),
+                "is_visible": self.is_visible(),
             }))),
-            "type" => Ok(QueryField::Value(json!("tool"))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
+            "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }

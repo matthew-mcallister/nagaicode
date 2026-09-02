@@ -48,9 +48,11 @@ impl DataQuery for FailedTool {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "type": "failed",
+                "name": self.name(),
+                "is_visible": self.is_visible(),
             }))),
-            "type" => Ok(QueryField::Value(json!("failed"))),
+            "name" => Ok(QueryField::Value(self.name().into())),
+            "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -142,11 +144,6 @@ mod tests {
         FailedTool::write_failure(&mut item, "sh", "invalid arguments");
         assert_eq!(item.text.as_deref(), Some("sh"));
         assert_eq!(item.tool_output, Some(output.to_string()));
-        assert_eq!(tool.query("/").unwrap(), json!({ "type": "failed" }));
-        assert_eq!(tool.query("/type").unwrap(), json!("failed"));
-        assert!(matches!(tool.query("/tool_name"), Err(QueryError::InvalidField(_))));
-        assert!(matches!(tool.query("/name"), Err(QueryError::InvalidField(_))));
-        assert!(matches!(tool.query("/missing"), Err(QueryError::InvalidField(_))));
 
         let input = json!({});
         let result = tool.render_to_interface(&input, &output).unwrap();
@@ -163,5 +160,14 @@ mod tests {
         let (mut lines, _) = item.render(&THEME_DARK, 20, Default::default());
         let mut expected = render_error(&THEME_DARK, 20, "Called 'sh': invalid arguments");
         assert_eq!(render_canvas(&mut lines[..]), render_canvas(&mut expected[..]));
+    }
+
+    #[test]
+    fn test_query() {
+        let tool = FailedTool::new();
+        assert_eq!(tool.query("/").unwrap(), json!({ "name": "failed", "is_visible": false }));
+        assert_eq!(tool.query("/name").unwrap(), json!("failed"));
+        assert_eq!(tool.query("/is_visible").unwrap(), json!(false));
+        assert!(matches!(tool.query("/missing"), Err(QueryError::InvalidField(_))));
     }
 }

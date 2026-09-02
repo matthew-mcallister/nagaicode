@@ -39,15 +39,11 @@ impl DataQuery for UnknownTool {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
-                "type": "unknown",
                 "name": self.name(),
-                "tool_name": self.tool_name,
-                "error": "could not parse output",
+                "is_visible": self.is_visible(),
             }))),
-            "type" => Ok(QueryField::Value(json!("unknown"))),
             "name" => Ok(QueryField::Value(self.name().into())),
-            "tool_name" => Ok(QueryField::Value(self.tool_name.clone().into())),
-            "error" => Ok(QueryField::Value(json!("could not parse output"))),
+            "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -104,27 +100,21 @@ mod tests {
     use crate::ui::style::THEME_DARK;
 
     #[test]
-    fn test_unknown_tool() {
+    fn test_unknown_data_query() {
+        let tool = UnknownTool::new("sh");
+        let expected = json!({ "tool_name": "sh", "error": "could not parse output" });
+        assert_eq!(tool.output(), expected);
+        assert_eq!(tool.query("/").unwrap(), json!({ "name": "sh", "is_visible": false }));
+        assert_eq!(tool.query("/name").unwrap(), json!("sh"));
+        assert_eq!(tool.query("/is_visible").unwrap(), json!(false));
+        assert!(matches!(tool.query("/missing"), Err(QueryError::InvalidField(_))));
+    }
+
+    #[test]
+    fn test_unknown() {
         let tool = UnknownTool::new("sh");
         assert_eq!(tool.name(), "sh");
         assert!(!tool.is_visible());
-
-        let expected = json!({ "tool_name": "sh", "error": "could not parse output" });
-        assert_eq!(tool.output(), expected);
-        assert_eq!(
-            tool.query("/").unwrap(),
-            json!({
-                "type": "unknown",
-                "name": "sh",
-                "tool_name": "sh",
-                "error": "could not parse output",
-            })
-        );
-        assert_eq!(tool.query("/type").unwrap(), json!("unknown"));
-        assert_eq!(tool.query("/name").unwrap(), json!("sh"));
-        assert_eq!(tool.query("/tool_name").unwrap(), json!("sh"));
-        assert_eq!(tool.query("/error").unwrap(), json!("could not parse output"));
-        assert!(matches!(tool.query("/missing"), Err(QueryError::InvalidField(_))));
 
         let input = json!({});
         let result = tool.render_to_interface(&input, &input).unwrap();
