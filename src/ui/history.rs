@@ -1,6 +1,8 @@
 //! Scrolling chat history. Data is constructed as a linked list of rows for
 //! fast viewport scrolling and rendering.
 
+use std::sync::Arc;
+
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use fnv::FnvHashMap;
 use log::error;
@@ -10,8 +12,10 @@ use crate::arena::{Arena, Id};
 use crate::error::AnyResult;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::session::{Item, ItemType};
+use crate::tools::ToolRegistry;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
+use crate::ui::UiContext;
 use crate::ui::render_item::{
     CommandOutputRenderItem, CommandPromptRenderItem, ErrorRenderItem, HelpRenderItem,
     RenderItem, get_item_content,
@@ -242,10 +246,11 @@ pub struct History {
     by_item_id: FnvHashMap<i32, Id<HistoryItem>>,
     /// Renders tool call outputs.
     tool_renderer: ToolRenderer,
+    tools: Arc<ToolRegistry>,
 }
 
 impl History {
-    pub fn new(width: usize, max_height: usize, theme: &'static Theme) -> Self {
+    pub fn new(ctx: &UiContext, width: usize, max_height: usize, theme: &'static Theme) -> Self {
         let item = Arena::new();
         let mut rows = Arena::new();
 
@@ -272,7 +277,13 @@ impl History {
             viewport_bottom_pos: 0,
             by_item_id: FnvHashMap::default(),
             tool_renderer: load_tool_renderers(),
+            tools: ctx.tools().clone(),
         }
+    }
+
+    /// Returns the tool registry.
+    pub fn tools(&self) -> &Arc<ToolRegistry> {
+        &self.tools
     }
 
     pub fn num_rows(&self) -> usize {
@@ -753,7 +764,7 @@ mod tests {
     use serde_json::json;
 
     fn history(width: usize, max_height: usize) -> History {
-        History::new(width, max_height, &THEME_DARK)
+        History::new(&crate::testing::ui_context(), width, max_height, &THEME_DARK)
     }
 
     fn update_item(history: &mut History, index: usize, delta: &str) {

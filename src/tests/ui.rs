@@ -318,7 +318,8 @@ async fn test_app_query() {
     use crate::ui::chat::Update;
     use crate::ui::Component;
 
-    let mut chat = Chat::new(80, 24, &THEME_DARK);
+    let ui = crate::testing::ui_context();
+    let mut chat = Chat::new(&ui, 80, 24, &THEME_DARK);
     chat.handle_update(Update::HelpMessage(
         "Welcome to NagaiCode!\n\nType /help for a list of commands.",
     ));

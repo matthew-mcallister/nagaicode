@@ -20,7 +20,7 @@ use failed::FailedTool;
 use unknown::UnknownTool;
 
 /// Interfaces for interacting with tools and rendering their output.
-pub trait Tool: std::fmt::Debug + DataQuery {
+pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
     /// Name provided to the agent and persisted to the database. Must be
     /// unique.
     fn name(&self) -> &str;

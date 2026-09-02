@@ -15,6 +15,7 @@ use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, ItemType};
 use crate::tool::ToolServer;
+use crate::tools::ToolRegistry;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum InterfaceId {
@@ -116,7 +117,9 @@ pub enum ChatMessage<'a> {
 ///
 /// Tool calls are rendered as a call/response pair, with a fallback for
 /// incomplete output.
+#[allow(unused_variables)]
 pub fn build_history<'a>(
+    tools: &ToolRegistry,
     items: &'a [Item],
     include_reasoning: bool,
 ) -> AnyResult<Vec<ChatMessage<'a>>> {
@@ -374,6 +377,7 @@ mod tests {
 
     #[test]
     fn test_build_history() {
+        let registry = crate::testing::tool_registry();
         let mut conn = db::open_new().expect("failed to open in-memory db");
         let session = Session::create(&mut conn, "Session").expect("create session");
         let turn = Turn::create(&mut conn, session.id, TurnType::Assistant, None, None, None)
@@ -448,7 +452,7 @@ mod tests {
             .collect();
 
         assert_eq!(
-            build_history(&items, true).unwrap(),
+            build_history(&registry, &items, true).unwrap(),
             vec![
                 ChatMessage::Message { content: "hello" },
                 ChatMessage::Reasoning {
@@ -492,7 +496,7 @@ mod tests {
         );
 
         assert_eq!(
-            build_history(&items, false).unwrap(),
+            build_history(&registry, &items, false).unwrap(),
             vec![
                 ChatMessage::Message { content: "hello" },
                 ChatMessage::Response { content: "hi there" },

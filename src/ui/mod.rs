@@ -1,6 +1,10 @@
 // TODO maybe: write a diffing system that compares each row with the row from
 // the previous draw and only redraws the portions which changed.
 
+use std::sync::Arc;
+
+use crate::tools::ToolRegistry;
+
 pub mod canvas;
 pub mod chat;
 pub mod command_editor;
@@ -19,3 +23,21 @@ pub mod text;
 pub mod tool_render_item;
 
 pub use component::Component;
+
+/// Shared state threaded down to UI components.
+#[derive(Clone, Debug)]
+pub struct UiContext {
+    tools: Arc<ToolRegistry>,
+}
+
+impl UiContext {
+    /// Creates a context sharing the given tool registry.
+    pub fn new(tools: Arc<ToolRegistry>) -> Self {
+        Self { tools }
+    }
+
+    /// Returns the tool registry.
+    pub fn tools(&self) -> &Arc<ToolRegistry> {
+        &self.tools
+    }
+}

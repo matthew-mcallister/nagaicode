@@ -2,12 +2,40 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::task::Poll;
 
 use futures::{Stream, pin_mut};
 use tokio::sync::Notify;
+use tokio::sync::mpsc::UnboundedSender;
 
+use crate::app::AppEvent;
 use crate::task::{Task, TaskContext};
+use crate::tool::DefaultToolServer;
+use crate::tools::ToolRegistry;
+use crate::ui::UiContext;
+
+/// Creates a tool registry over a scratch working directory.
+pub fn tool_registry() -> Arc<ToolRegistry> {
+    Arc::new(ToolRegistry::new(&Arc::new(crate::cwd::cwd())))
+}
+
+/// Creates a UI context for components constructed directly in tests.
+pub fn ui_context() -> UiContext {
+    UiContext::new(tool_registry())
+}
+
+/// Creates a root task context which sends events to `sender`.
+pub fn task_context(sender: UnboundedSender<AppEvent>) -> TaskContext {
+    TaskContext::root(
+        Arc::new(AtomicU64::new(0)),
+        sender,
+        crate::db::db_url().expect("db url"),
+        DefaultToolServer::new(),
+        tool_registry(),
+        Arc::new(crate::cwd::cwd()),
+    )
+}
 
 /// A task that does nothing until it is signaled to complete. Used for
 /// testing task lifecycle behavior.

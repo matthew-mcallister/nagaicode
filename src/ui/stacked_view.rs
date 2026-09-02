@@ -7,6 +7,7 @@ use crate::session::Item;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::command_editor::CommandEditor;
+use crate::ui::UiContext;
 use crate::ui::history_view;
 use crate::ui::history_view::HistoryView;
 use crate::ui::style::Theme;
@@ -44,6 +45,7 @@ pub struct StackedView {
 
 impl StackedView {
     pub fn new(
+        ctx: &UiContext,
         width: usize,
         height: usize,
         input_max_height: usize,
@@ -52,7 +54,7 @@ impl StackedView {
         let mut this = Self {
             width,
             height,
-            history: HistoryView::new(width, 0, theme),
+            history: HistoryView::new(ctx, width, 0, theme),
             input: CommandEditor::new(width, input_max_height, theme),
             focus_state: FocusState::default(),
         };
@@ -252,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let stacked = StackedView::new(80, 24, 8, &THEME_DARK);
+        let stacked = StackedView::new(&crate::testing::ui_context(), 80, 24, 8, &THEME_DARK);
         let expected = json!({
             "width": 80,
             "height": 24,

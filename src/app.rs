@@ -31,9 +31,11 @@ use crate::settings::{ModelRef, Settings};
 use crate::task::{Task, TaskContext, TaskError, TaskHandle, Tid};
 use crate::terminal::{DefaultTerminal, Terminal};
 use crate::tool::DefaultToolServer;
+use crate::tools::ToolRegistry;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::chat::{Chat, Update};
+use crate::ui::UiContext;
 use crate::ui::style::{THEME_DARK, Theme};
 use crate::ui::styled_string::StyledString;
 use crate::ui::text::truncate_line;
@@ -95,6 +97,7 @@ pub struct App {
     settings: Settings,
     session: Option<Session>,
     tools: DefaultToolServer,
+    tool_registry: Arc<ToolRegistry>,
     // Channel for async events
     send: UnboundedSender<AppEvent>,
     recv: UnboundedReceiver<AppEvent>,
@@ -114,11 +117,14 @@ impl App {
         let terminal = DefaultTerminal::default();
         let (w, h) = terminal.size()?;
         let theme = &THEME_DARK;
-        let mut chat = Chat::new(w, h, theme);
-        chat.handle_update(Update::HelpMessage(WELCOME));
         let (send, recv) = unbounded_channel();
         let db_url = crate::db::db_url()?;
         let mut conn = crate::db::open(&db_url)?;
+        let cwd = Arc::new(crate::cwd::cwd());
+        let tool_registry = Arc::new(ToolRegistry::new(&cwd));
+        let ui = UiContext::new(Arc::clone(&tool_registry));
+        let mut chat = Chat::new(&ui, w, h, theme);
+        chat.handle_update(Update::HelpMessage(WELCOME));
         let settings = Settings::open(&db_url)?;
         let selected_model = settings
             .current_model()
@@ -136,12 +142,13 @@ impl App {
             settings,
             session: None,
             tools: DefaultToolServer::new(),
+            tool_registry,
             send,
             recv,
             tid_counter: Arc::new(AtomicU64::new(0)),
             tasks: FnvHashSet::default(),
             current_task: None,
-            cwd: Arc::new(crate::cwd::cwd()),
+            cwd,
         })
     }
 
@@ -212,6 +219,11 @@ impl App {
     /// Returns a mutable reference to the tool server.
     pub fn tools_mut(&mut self) -> &mut DefaultToolServer {
         &mut self.tools
+    }
+
+    /// Returns the tool registry.
+    pub fn tool_registry(&self) -> &Arc<ToolRegistry> {
+        &self.tool_registry
     }
 
     /// Returns a mutable reference to the HTTP client.
@@ -347,7 +359,8 @@ impl App {
         (self.send, self.recv) = unbounded_channel();
         self.session = None;
         let (w, h) = self.terminal.size()?;
-        self.chat = Chat::new(w, h, self.theme);
+        let ui = UiContext::new(Arc::clone(&self.tool_registry));
+        self.chat = Chat::new(&ui, w, h, self.theme);
         Ok(())
     }
 
@@ -389,6 +402,7 @@ impl App {
             self.send.clone(),
             self.db_url.clone(),
             self.tools.clone(),
+            Arc::clone(&self.tool_registry),
             Arc::clone(&self.cwd),
         )
     }

@@ -37,7 +37,11 @@ impl StreamResponse {
         let interface = self.provider.create_interface(&self.client)?;
 
         let history = Item::list_by_session(context.connection()?, self.session.id)?;
-        let messages = build_history(&history, interface.supports_reasoning_input())?;
+        let messages = build_history(
+            context.tool_registry(),
+            &history,
+            interface.supports_reasoning_input(),
+        )?;
         let mut params = self.build_params();
         params.input = &messages;
         let stream = interface.generate(params, context.tools());

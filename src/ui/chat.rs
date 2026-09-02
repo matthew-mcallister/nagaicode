@@ -6,6 +6,7 @@ use crate::query::{DataQuery, QueryError, QueryField};
 use crate::session::Item;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
+use crate::ui::UiContext;
 use crate::ui::padded::Padded;
 use crate::ui::stacked_view::{self, StackedView};
 use crate::ui::style::Theme;
@@ -18,7 +19,7 @@ pub struct Chat {
 }
 
 impl Chat {
-    pub fn new(w: u16, h: u16, theme: &'static Theme) -> Self {
+    pub fn new(ctx: &UiContext, w: u16, h: u16, theme: &'static Theme) -> Self {
         // Minimum dimensions are 80x24. If the terminal is smaller the UI will
         // just overflow the screen. This helps avoid crashes or bizarre bugs
         // caused by pathologically tiny terminals.
@@ -26,6 +27,7 @@ impl Chat {
         let h = h.max(24);
 
         let stacked = StackedView::new(
+            ctx,
             w as usize - 4,
             h as usize - 2,
             TEXT_INPUT_MAX_HEIGHT.min(h.saturating_sub(2)) as usize,
@@ -136,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let chat = Chat::new(80, 24, &THEME_DARK);
+        let chat = Chat::new(&crate::testing::ui_context(), 80, 24, &THEME_DARK);
         let expected = json!({
             "stacked": chat.stacked.query("/").unwrap(),
         });

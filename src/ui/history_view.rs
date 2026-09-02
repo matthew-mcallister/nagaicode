@@ -11,6 +11,7 @@ use crate::query::{DataQuery, QueryError, QueryField};
 use crate::session::Item;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
+use crate::ui::UiContext;
 use crate::ui::history::{self, History};
 use crate::ui::scroll_bar::ScrollBar;
 use crate::ui::style::Theme;
@@ -23,10 +24,10 @@ pub struct HistoryView {
 }
 
 impl HistoryView {
-    pub fn new(width: usize, max_height: usize, theme: &'static Theme) -> Self {
+    pub fn new(ctx: &UiContext, width: usize, max_height: usize, theme: &'static Theme) -> Self {
         let mut this = Self {
             // Reserve one column for the scroll bar
-            history: History::new(width.saturating_sub(1), max_height, theme),
+            history: History::new(ctx, width.saturating_sub(1), max_height, theme),
             scroll_bar: ScrollBar::new(theme),
         };
         this.scroll_bar.set_width(1);
@@ -150,7 +151,7 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let view = HistoryView::new(20, 5, &THEME_DARK);
+        let view = HistoryView::new(&crate::testing::ui_context(), 20, 5, &THEME_DARK);
         let expected = json!({
             "history": view.history.query("/").unwrap(),
             "scroll_bar": view.scroll_bar.query("/").unwrap(),

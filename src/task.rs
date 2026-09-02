@@ -13,6 +13,7 @@ use crate::app::AppEvent;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::tool::DefaultToolServer;
+use crate::tools::ToolRegistry;
 
 /// Unique identifier for a spawned task.
 pub type Tid = u64;
@@ -34,6 +35,7 @@ pub struct TaskContext {
     db_url: String,
     connection: Option<SqliteConnection>,
     tools: DefaultToolServer,
+    tool_registry: Arc<ToolRegistry>,
     cwd: Arc<Cwd>,
 }
 
@@ -44,6 +46,7 @@ impl TaskContext {
         sender: UnboundedSender<AppEvent>,
         db_url: String,
         tools: DefaultToolServer,
+        tool_registry: Arc<ToolRegistry>,
         cwd: Arc<Cwd>,
     ) -> Self {
         Self {
@@ -53,6 +56,7 @@ impl TaskContext {
             db_url,
             connection: None,
             tools,
+            tool_registry,
             cwd,
         }
     }
@@ -85,6 +89,11 @@ impl TaskContext {
         &mut self.tools
     }
 
+    /// Returns the tool registry.
+    pub fn tool_registry(&self) -> &Arc<ToolRegistry> {
+        &self.tool_registry
+    }
+
     /// Returns the current working directory.
     pub fn cwd(&self) -> &Arc<Cwd> {
         &self.cwd
@@ -99,6 +108,7 @@ impl TaskContext {
             db_url: self.db_url.clone(),
             connection: None,
             tools: self.tools.clone(),
+            tool_registry: Arc::clone(&self.tool_registry),
             cwd: Arc::clone(&self.cwd),
         }
     }
@@ -173,12 +183,8 @@ pub trait Task: Send + 'static {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicU64;
-
     use tokio::sync::mpsc::unbounded_channel;
 
-    use crate::task::{TaskContext, TaskError};
     use crate::testing::DummyTask;
 
     use super::*;
@@ -186,9 +192,7 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_cancels() {
         let (sender, mut recv) = unbounded_channel();
-        let url = crate::db::db_url().unwrap();
-        let tools = crate::tool::DefaultToolServer::new();
-        let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender, url, tools, Arc::new(crate::cwd::cwd()));
+        let context = crate::testing::task_context(sender);
         let handle = context.spawn(DummyTask::new());
         handle.cancel();
         let result = handle.join().await.unwrap();
