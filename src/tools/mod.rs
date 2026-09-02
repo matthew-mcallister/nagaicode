@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use fnv::FnvHashMap;
+use log::warn;
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
 
@@ -118,21 +119,27 @@ impl ToolRegistry {
         match self.resolve(item) {
             Some((tool, input, output)) => match tool.render_to_ui(&input, &output) {
                 Ok(render) => render,
-                Err(_) => Self::unknown_ui(item),
+                Err(_) => {
+                    warn!("item {}: tool call output parse error: {}", item.id, item.text.as_deref().unwrap_or_default());
+                    Self::unknown_ui(item)
+                }
             },
-            None => Self::unknown_ui(item),
+            None => {
+                warn!("item {}: unknown tool: '{}'", item.id, item.text.as_deref().unwrap_or_default());
+                Self::unknown_ui(item)
+            }
         }
     }
 
     /// Builds input to the inference API. Handles all possible errors.
     pub fn render_to_interface(&self, item: &Item) -> InterfaceToolOutput {
-        match self.resolve(item) {
-            Some((tool, input, output)) => match tool.render_to_interface(&input, &output) {
-                Ok(out) => out,
-                Err(_) => Self::unknown_interface(item),
-            },
-            None => Self::unknown_interface(item),
-        }
+        let res: Option<_> = self.resolve(item).and_then(|(tool, input, output)| {
+            match tool.render_to_interface(&input, &output) {
+                Ok(out) => Some(out),
+                Err(_) => None,
+            }
+        });
+        res.unwrap_or_else(|| Self::unknown_interface(item))
     }
 
     /// Resolves a tool call item to its tool and parsed input/output.
