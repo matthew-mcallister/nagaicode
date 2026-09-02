@@ -13,7 +13,6 @@ use crate::provider::Provider;
 use crate::query::DataQuery;
 use crate::request::test_client::ResponseData;
 use crate::testing::QueueStream;
-use crate::tool::mock::ToolCall;
 
 fn create_message_event(data: &str) -> SseEvent {
     SseEvent::Message(eventsource_stream::Event {
@@ -557,8 +556,6 @@ async fn test_agent_tool_call_loop() {
     let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
     app.switch_model(provider, model).unwrap();
 
-    app.tools_mut().add_result("add", json!({"result": 3}));
-
     let url = "https://example.test/v1/responses";
 
     // First response: the model requests a tool call. The arguments stream in
@@ -571,16 +568,16 @@ async fn test_agent_tool_call_loop() {
                 r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#,
             )),
             Ok(create_message_event(
-                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"add","call_id":"call_1","arguments":""}}"#,
+                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"sh","call_id":"call_1","arguments":""}}"#,
             )),
             Ok(create_message_event(
-                r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"a\": 1"}"#,
+                r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"command\": \"printf"}"#,
             )),
             Ok(create_message_event(
-                r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":", \"b\": 2}"}"#,
+                r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":" 3\"}"}"#,
             )),
             Ok(create_message_event(
-                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"add","call_id":"call_1","arguments":"{\"a\": 1, \"b\": 2}"}}"#,
+                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"sh","call_id":"call_1","arguments":"{\"command\": \"printf 3\"}"}}"#,
             )),
             Ok(create_message_event(
                 r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed"}}"#,
@@ -613,7 +610,7 @@ async fn test_agent_tool_call_loop() {
         ])),
     );
 
-    for c in "call the add tool".chars() {
+    for c in "call the sh tool".chars() {
         app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
             .await;
     }
@@ -632,33 +629,22 @@ async fn test_agent_tool_call_loop() {
     assert_eq!(
         body["input"],
         json!([
-            {"type": "message", "role": "user", "content": "call the add tool"},
+            {"type": "message", "role": "user", "content": "call the sh tool"},
             {
                 "type": "function_call",
                 "call_id": "call_1",
-                "name": "add",
-                "arguments": r#"{"a": 1, "b": 2}"#,
+                "name": "sh",
+                "arguments": r#"{"command": "printf 3"}"#,
             },
             {
                 "type": "function_call_output",
                 "call_id": "call_1",
                 "output": [{
                     "type": "input_text",
-                    "text": r#"{"result":3}"#,
+                    "text": r#"{"return_code":0,"stderr":"","stdout":"3"}"#,
                 }],
             },
         ])
-    );
-
-    // The tool server executed the call with the model's arguments.
-    let calls = app.tools().get_calls();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(
-        calls[0],
-        ToolCall {
-            name: "add".to_owned(),
-            args: json!({"a": 1, "b": 2}),
-        }
     );
 
     // Both responses live in one assistant turn.
@@ -681,9 +667,12 @@ async fn test_agent_tool_call_loop() {
     assert_eq!(items[1].ty().unwrap(), ItemType::ToolCall);
     assert_eq!(items[1].upstream_id.as_deref(), Some("fc_1"));
     assert_eq!(items[1].upstream_call_id.as_deref(), Some("call_1"));
-    assert_eq!(items[1].text.as_deref(), Some("add"));
-    assert_eq!(items[1].tool_args.as_deref(), Some(r#"{"a": 1, "b": 2}"#));
-    assert_eq!(items[1].tool_output().unwrap(), Some(json!({"result": 3})));
+    assert_eq!(items[1].text.as_deref(), Some("sh"));
+    assert_eq!(items[1].tool_args.as_deref(), Some(r#"{"command": "printf 3"}"#));
+    assert_eq!(
+        items[1].tool_output().unwrap(),
+        Some(json!({ "stdout": "3", "stderr": "", "return_code": 0 }))
+    );
     assert_eq!(items[2].ty().unwrap(), ItemType::ResponseText);
     assert_eq!(items[2].upstream_id.as_deref(), Some("msg_2"));
     assert_eq!(items[2].text.as_deref(), Some("The answer is 3."));

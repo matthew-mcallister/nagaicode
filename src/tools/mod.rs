@@ -93,7 +93,7 @@ impl ToolRegistry {
 
     /// Invokes a tool from raw name and input text. Handles all possible
     /// errors. Modifies the item but doesn't make any DB queries.
-    pub async fn call_tool(&self, item: &mut Item) -> ToolResult {
+    pub async fn call(&self, item: &mut Item) -> ToolResult {
         let args = match item.tool_args() {
             Ok(Some(args)) => args,
             Ok(None) => {
@@ -187,54 +187,28 @@ impl ToolRegistry {
 mod tests {
     use super::*;
     use crate::cwd::cwd;
-    use crate::session::{ItemType, NewItem, Session, Turn, TurnType};
-
-    fn make_tool_call(
-        conn: &mut diesel::SqliteConnection,
-        name: &str,
-        args: Value,
-        output: Option<Value>,
-    ) -> Item {
-        let session = Session::create(conn, "Session").expect("create session");
-        let turn = Turn::create(conn, session.id, TurnType::Assistant, None, None, None)
-            .expect("create turn");
-        let mut item = Item::create(
-            conn,
-            NewItem {
-                session_id: Some(session.id),
-                turn_id: Some(turn.id),
-                ty: Some(ItemType::ToolCall),
-                text: Some(name),
-                ..Default::default()
-            },
-        )
-        .expect("create tool call");
-        Item::update_tool_args(conn, item.id, &args.to_string()).expect("set tool args");
-        if let Some(output) = output {
-            item.set_tool_output(conn, &output).expect("set tool output");
-        }
-        Item::get_by_id(conn, item.id).unwrap().unwrap()
-    }
+    use crate::testing::{session_turn, tool_call};
 
     #[tokio::test]
     async fn test_call_tool() {
         let dir = Arc::new(cwd());
         let registry = ToolRegistry::new(&dir);
         let mut conn = crate::db::open_new().expect("open db");
+        let (_, turn) = session_turn(&mut conn);
 
-        let mut item = make_tool_call(&mut conn, "sh", json!({ "command": "printf 'hi'" }), None);
-        let result = registry.call_tool(&mut item).await;
+        let mut item = tool_call(&mut conn, &turn, "sh", json!({ "command": "printf 'hi'" }), None);
+        let result = registry.call(&mut item).await;
         assert_eq!(result.name, "sh");
         assert_eq!(result.output["stdout"], json!("hi"));
 
-        let mut item = make_tool_call(&mut conn, "sh", json!({ "command": 123 }), None);
-        let result = registry.call_tool(&mut item).await;
+        let mut item = tool_call(&mut conn, &turn, "sh", json!({ "command": 123 }), None);
+        let result = registry.call(&mut item).await;
         assert_eq!(result.name, "sh");
         assert_eq!(result.output["error"], json!("invalid arguments for 'sh': expected {\"command\": \"...\"}"));
         assert_eq!(item.tool_output, Some(result.output.to_string()));
 
-        let mut item = make_tool_call(&mut conn, "no_such_tool", json!({}), None);
-        let result = registry.call_tool(&mut item).await;
+        let mut item = tool_call(&mut conn, &turn, "no_such_tool", json!({}), None);
+        let result = registry.call(&mut item).await;
         assert_eq!(result.name, "no_such_tool");
         assert_eq!(result.output["error"], json!("unknown tool"));
     }
@@ -252,8 +226,9 @@ mod tests {
         let dir = Arc::new(cwd());
         let registry = ToolRegistry::new(&dir);
         let mut conn = crate::db::open_new().expect("open db");
+        let (_, turn) = session_turn(&mut conn);
 
-        let item = make_tool_call(&mut conn, "no_such_tool", json!({}), Some(json!({})));
+        let item = tool_call(&mut conn, &turn, "no_such_tool", json!({}), Some(json!({})));
         let ui = registry.render_to_ui(&item);
         assert_eq!(ui.query("/type").unwrap(), json!("help"));
         let out = registry.render_to_interface(&item);
@@ -266,9 +241,10 @@ mod tests {
         let dir = Arc::new(cwd());
         let registry = ToolRegistry::new(&dir);
         let mut conn = crate::db::open_new().expect("open db");
+        let (_, turn) = session_turn(&mut conn);
 
         let output = json!({ "tool_name": "sh", "error": "boom" });
-        let item = make_tool_call(&mut conn, "failed", json!({}), Some(output));
+        let item = tool_call(&mut conn, &turn, "failed", json!({}), Some(output));
         let ui = registry.render_to_ui(&item);
         assert_eq!(ui.query("/type").unwrap(), json!("error"));
         let out = registry.render_to_interface(&item);
@@ -281,10 +257,12 @@ mod tests {
         let dir = Arc::new(cwd());
         let registry = ToolRegistry::new(&dir);
         let mut conn = crate::db::open_new().expect("open db");
+        let (_, turn) = session_turn(&mut conn);
 
         let output = json!({ "stdout": "hello", "stderr": "", "return_code": 0 });
-        let item = make_tool_call(
+        let item = tool_call(
             &mut conn,
+            &turn,
             "sh",
             json!({ "command": "echo hello" }),
             Some(output),

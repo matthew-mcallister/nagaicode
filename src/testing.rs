@@ -5,7 +5,9 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::task::Poll;
 
+use diesel::SqliteConnection;
 use futures::{Stream, pin_mut};
+use serde_json::Value;
 use tokio::sync::Notify;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -13,11 +15,47 @@ use crate::app::AppEvent;
 use crate::task::{Task, TaskContext};
 use crate::tool::DefaultToolServer;
 use crate::tools::ToolRegistry;
+use crate::session::{Item, ItemType, NewItem, Session, Turn, TurnType};
 use crate::ui::UiContext;
 
 /// Creates a tool registry over a scratch working directory.
 pub fn tool_registry() -> Arc<ToolRegistry> {
     Arc::new(ToolRegistry::new(&Arc::new(crate::cwd::cwd())))
+}
+
+/// Creates a session containing a single empty assistant turn.
+pub fn session_turn(conn: &mut SqliteConnection) -> (Session, Turn) {
+    let session = Session::create(conn, "Session").expect("create session");
+    let turn = Turn::create(conn, session.id, TurnType::Assistant, None, None, None)
+        .expect("create turn");
+    (session, turn)
+}
+
+/// Creates a tool call item in `turn`, named `name`, with JSON `args` and
+/// `output`.
+pub fn tool_call(
+    conn: &mut SqliteConnection,
+    turn: &Turn,
+    name: &str,
+    args: Value,
+    output: Option<Value>,
+) -> Item {
+    let mut item = Item::create(
+        conn,
+        NewItem {
+            session_id: Some(turn.session_id),
+            turn_id: Some(turn.id),
+            ty: Some(ItemType::ToolCall),
+            text: Some(name),
+            ..Default::default()
+        },
+    )
+    .expect("create tool call");
+    Item::update_tool_args(conn, item.id, &args.to_string()).expect("set tool args");
+    if let Some(output) = output {
+        item.set_tool_output(conn, &output).expect("set tool output");
+    }
+    Item::get_by_id(conn, item.id).expect("get item").expect("item exists")
 }
 
 /// Creates a UI context for components constructed directly in tests.
