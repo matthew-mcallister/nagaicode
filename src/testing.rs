@@ -13,7 +13,6 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::AppEvent;
 use crate::task::{Task, TaskContext};
-use crate::tool::DefaultToolServer;
 use crate::tools::ToolRegistry;
 use crate::session::{Item, ItemType, NewItem, Session, Turn, TurnType};
 use crate::ui::UiContext;
@@ -69,7 +68,6 @@ pub fn task_context(sender: UnboundedSender<AppEvent>) -> TaskContext {
         Arc::new(AtomicU64::new(0)),
         sender,
         crate::db::db_url().expect("db url"),
-        DefaultToolServer::new(),
         tool_registry(),
         Arc::new(crate::cwd::cwd()),
     )

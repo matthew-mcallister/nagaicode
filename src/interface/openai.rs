@@ -8,10 +8,10 @@ use serde_json::Value;
 use crate::error::AnyResult;
 use crate::interface::{
     ChatMessage, InferenceEvent, InferenceParams, InterfaceModel, ItemDelta, OutputItemEvent,
-    ReasoningEffort, ResponseCompleted, ResponseCreated, ResponseFailed, ToolOutputContent, Usage,
+    ReasoningEffort, ResponseCompleted, ResponseCreated, ResponseFailed, ToolInfo,
+    ToolOutputContent, Usage,
 };
 use crate::request::DefaultClient;
-use crate::tool::{ToolInfo, ToolServer};
 #[allow(unused_imports)]
 use crate::request::{Client as _, Response as _};
 
@@ -193,10 +193,7 @@ struct CreateResponseRequest<'a> {
 }
 
 impl<'a> CreateResponseRequest<'a> {
-    fn from_params<T: ToolServer + ?Sized>(
-        params: &InferenceParams<'a>,
-        tools: &'a T,
-    ) -> Self {
+    fn from_params(params: &'a InferenceParams<'a>) -> Self {
         let input = params
             .input
             .iter()
@@ -242,7 +239,7 @@ impl<'a> CreateResponseRequest<'a> {
             Some(params.system_prompt)
         };
 
-        let tools = tools.list_tools().map(RequestTool::from).collect();
+        let tools = params.tools.iter().map(RequestTool::from).collect();
 
         Self {
             model: params.model_id,
@@ -422,12 +419,11 @@ impl OpenaiInterface {
             .collect())
     }
 
-    pub fn generate<T: ToolServer + ?Sized>(
+    pub fn generate(
         &self,
         params: InferenceParams<'_>,
-        tools: &T,
-    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<T> {
-        let req_body = CreateResponseRequest::from_params(&params, tools);
+    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<> {
+        let req_body = CreateResponseRequest::from_params(&params);
         let req_body = serde_json::to_value(req_body).unwrap();
         let client = self.client.clone();
 
@@ -565,7 +561,6 @@ mod tests {
     use crate::request::DefaultClient;
     use crate::request::test_client::{Response, ResponseData};
     use crate::testing::QueueStream;
-    use crate::tool::{DefaultToolServer, ToolInfo};
     use reqwest::StatusCode;
     use reqwest::header::HeaderMap;
     use reqwest_eventsource::Event;
@@ -658,6 +653,33 @@ mod tests {
             system_prompt: "You are a helpful assistant.",
             temperature: 0.75,
             reasoning_effort: Some(ReasoningEffort::Low),
+            tools: vec![
+                ToolInfo {
+                    name: "sh".to_owned(),
+                    description: "Run a shell command".to_owned(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "command": { "type": "string" },
+                        },
+                        "required": ["command"],
+                        "additionalProperties": false,
+                    }),
+                },
+                ToolInfo {
+                    name: "noop".to_owned(),
+                    description: "Does nothing".to_owned(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "a": { "type": "integer" },
+                            "b": { "type": "integer" },
+                        },
+                        "required": ["a"],
+                        "additionalProperties": true,
+                    }),
+                },
+            ],
             input: &[
                 ChatMessage::Message { content: "Hello" },
                 ChatMessage::Response {
@@ -669,36 +691,7 @@ mod tests {
             ],
         };
 
-        let mut tools = DefaultToolServer::new();
-        tools.set_tools(vec![
-            ToolInfo {
-                name: "sh".to_owned(),
-                description: "Run a shell command".to_owned(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "command": { "type": "string" },
-                    },
-                    "required": ["command"],
-                    "additionalProperties": false,
-                }),
-            },
-            ToolInfo {
-                name: "noop".to_owned(),
-                description: "Does nothing".to_owned(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "a": { "type": "integer" },
-                        "b": { "type": "integer" },
-                    },
-                    "required": ["a"],
-                    "additionalProperties": true,
-                }),
-            },
-        ]);
-
-        let stream = iface.generate(params, &tools);
+        let stream = iface.generate(params);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -838,16 +831,16 @@ mod tests {
         );
 
         let iface = make_iface(client);
-        let tools = DefaultToolServer::new();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
             temperature: 0.0,
             reasoning_effort: None,
+            tools: vec![],
             input: &[],
         };
 
-        let stream = iface.generate(params, &tools);
+        let stream = iface.generate(params);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -907,16 +900,16 @@ mod tests {
         );
 
         let iface = make_iface(client);
-        let tools = DefaultToolServer::new();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
             temperature: 0.0,
             reasoning_effort: None,
+            tools: vec![],
             input: &[],
         };
 
-        let stream = iface.generate(params, &tools);
+        let stream = iface.generate(params);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -1025,16 +1018,16 @@ mod tests {
         );
 
         let iface = make_iface(client);
-        let tools = DefaultToolServer::new();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
             temperature: 0.0,
             reasoning_effort: None,
+            tools: vec![],
             input: &[],
         };
 
-        let stream = iface.generate(params, &tools);
+        let stream = iface.generate(params);
         let events: Vec<InferenceEvent> = stream
             .collect::<Vec<_>>()
             .await
@@ -1103,12 +1096,12 @@ mod tests {
         );
 
         let iface = make_iface(client);
-        let tools = DefaultToolServer::new();
         let params = InferenceParams {
             model_id: "test-model",
             system_prompt: "",
             temperature: 0.0,
             reasoning_effort: None,
+            tools: vec![],
             input: &[
                 ChatMessage::ToolCall {
                     call_id: "call_1",
@@ -1124,7 +1117,7 @@ mod tests {
             ],
         };
 
-        let stream = iface.generate(params, &tools);
+        let stream = iface.generate(params);
         let events: Vec<AnyResult<InferenceEvent>> = stream.collect().await;
         assert!(events.is_empty());
 
@@ -1157,7 +1150,6 @@ mod tests {
         let mut client = DefaultClient::default();
         let iface = make_iface(client.clone());
         let url = format!("{BASE_URL}/responses");
-        let tools = DefaultToolServer::new();
 
         // A top-level error event surfaces as a stream error.
         client.add_response(&url, sse(vec![Ok(create_message_event(
@@ -1169,10 +1161,11 @@ mod tests {
             system_prompt: "",
             temperature: 0.0,
             reasoning_effort: None,
+            tools: vec![],
             input: &[],
         };
 
-        let stream = iface.generate(params, &tools);
+        let stream = iface.generate(params);
         let results: Vec<_> = stream.collect().await;
         assert_eq!(results.len(), 1);
         assert!(results[0].is_err());
@@ -1192,10 +1185,11 @@ mod tests {
             system_prompt: "",
             temperature: 0.0,
             reasoning_effort: None,
+            tools: vec![],
             input: &[],
         };
 
-        let stream = iface.generate(params, &tools);
+        let stream = iface.generate(params);
         let results: Vec<_> = stream.collect().await;
         assert_eq!(results.len(), 1);
         match results[0].as_ref().unwrap() {

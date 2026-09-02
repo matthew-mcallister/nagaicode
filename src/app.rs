@@ -30,7 +30,6 @@ use crate::session::{Item, Session};
 use crate::settings::{ModelRef, Settings};
 use crate::task::{Task, TaskContext, TaskError, TaskHandle, Tid};
 use crate::terminal::{DefaultTerminal, Terminal};
-use crate::tool::DefaultToolServer;
 use crate::tools::ToolRegistry;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
@@ -96,7 +95,6 @@ pub struct App {
     db_url: String,
     settings: Settings,
     session: Option<Session>,
-    tools: DefaultToolServer,
     tool_registry: Arc<ToolRegistry>,
     // Channel for async events
     send: UnboundedSender<AppEvent>,
@@ -141,7 +139,6 @@ impl App {
             db_url,
             settings,
             session: None,
-            tools: DefaultToolServer::new(),
             tool_registry,
             send,
             recv,
@@ -206,19 +203,9 @@ impl App {
         &mut self.terminal
     }
 
-    /// Returns a reference to the tool server.
-    pub fn tools(&self) -> &DefaultToolServer {
-        &self.tools
-    }
-
     /// Returns a mutable reference to the database connection.
     pub(crate) fn conn(&mut self) -> &mut SqliteConnection {
         &mut self.conn
-    }
-
-    /// Returns a mutable reference to the tool server.
-    pub fn tools_mut(&mut self) -> &mut DefaultToolServer {
-        &mut self.tools
     }
 
     /// Returns the tool registry.
@@ -401,7 +388,6 @@ impl App {
             Arc::clone(&self.tid_counter),
             self.send.clone(),
             self.db_url.clone(),
-            self.tools.clone(),
             Arc::clone(&self.tool_registry),
             Arc::clone(&self.cwd),
         )

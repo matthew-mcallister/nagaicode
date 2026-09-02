@@ -42,9 +42,15 @@ impl StreamResponse {
             &history,
             interface.supports_reasoning_input(),
         )?;
-        let mut params = self.build_params();
-        params.input = &messages;
-        let stream = interface.generate(params, context.tools());
+        let params = InferenceParams {
+            model_id: &self.model.id,
+            system_prompt: "",
+            temperature: 1.0,
+            reasoning_effort: None,
+            tools: context.tool_registry().list_tool_infos(),
+            input: &messages,
+        };
+        let stream = interface.generate(params);
 
         let sender = context.sender().clone();
         let base_seqno = Item::max_seqno(context.connection()?, self.session.id)?.unwrap_or(0) + 1;
@@ -59,16 +65,6 @@ impl StreamResponse {
             self.model.id.clone(),
         );
         processor.process(&sender).await
-    }
-
-    fn build_params(&self) -> InferenceParams<'_> {
-        InferenceParams {
-            model_id: &self.model.id,
-            system_prompt: "",
-            temperature: 1.0,
-            reasoning_effort: None,
-            input: &[],
-        }
     }
 }
 

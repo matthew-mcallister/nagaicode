@@ -19,7 +19,6 @@ pub mod settings;
 pub mod task;
 pub mod terminal;
 pub mod testing;
-pub mod tool;
 pub mod tools;
 
 #[cfg(test)]

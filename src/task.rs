@@ -12,7 +12,6 @@ use tokio_util::sync::CancellationToken;
 use crate::app::AppEvent;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
-use crate::tool::DefaultToolServer;
 use crate::tools::ToolRegistry;
 
 /// Unique identifier for a spawned task.
@@ -34,7 +33,6 @@ pub struct TaskContext {
     sender: UnboundedSender<AppEvent>,
     db_url: String,
     connection: Option<SqliteConnection>,
-    tools: DefaultToolServer,
     tool_registry: Arc<ToolRegistry>,
     cwd: Arc<Cwd>,
 }
@@ -45,7 +43,6 @@ impl TaskContext {
         tid_counter: Arc<AtomicU64>,
         sender: UnboundedSender<AppEvent>,
         db_url: String,
-        tools: DefaultToolServer,
         tool_registry: Arc<ToolRegistry>,
         cwd: Arc<Cwd>,
     ) -> Self {
@@ -55,7 +52,6 @@ impl TaskContext {
             sender,
             db_url,
             connection: None,
-            tools,
             tool_registry,
             cwd,
         }
@@ -79,16 +75,6 @@ impl TaskContext {
         Ok(self.connection.as_mut().expect("connection opened"))
     }
 
-    /// Returns the tool server.
-    pub fn tools(&self) -> &DefaultToolServer {
-        &self.tools
-    }
-
-    /// Returns a mutable reference to the tool server.
-    pub fn tools_mut(&mut self) -> &mut DefaultToolServer {
-        &mut self.tools
-    }
-
     /// Returns the tool registry.
     pub fn tool_registry(&self) -> &Arc<ToolRegistry> {
         &self.tool_registry
@@ -107,7 +93,6 @@ impl TaskContext {
             sender: self.sender.clone(),
             db_url: self.db_url.clone(),
             connection: None,
-            tools: self.tools.clone(),
             tool_registry: Arc::clone(&self.tool_registry),
             cwd: Arc::clone(&self.cwd),
         }

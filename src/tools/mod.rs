@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
-use crate::interface::ToolOutputContent;
+use crate::interface::{ToolInfo, ToolOutputContent};
 use crate::query::DataQuery;
 use crate::session::Item;
 use crate::try_nested;
@@ -46,6 +46,15 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
 
     /// Builds inference call inputs from the tool's output.
     fn render_to_interface(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput>;
+
+    /// Describes the tool for the inference API.
+    fn tool_info(&self) -> ToolInfo {
+        ToolInfo {
+            name: self.name().to_owned(),
+            description: self.description().to_owned(),
+            input_schema: self.input_schema().clone(),
+        }
+    }
 }
 
 /// Output of a tool call. Returns fields to serialize to DB.
@@ -90,6 +99,11 @@ impl ToolRegistry {
     /// Lists tools available to the model.
     pub fn list_tools(&self) -> impl Iterator<Item = &dyn Tool> {
         self.tools.values().map(|t| t.as_ref()).filter(|t| t.is_visible())
+    }
+
+    /// Describes every tool available to the model for the inference API.
+    pub fn list_tool_infos(&self) -> Vec<ToolInfo> {
+        self.list_tools().map(|tool| tool.tool_info()).collect()
     }
 
     /// Invokes a tool from raw name and input text. Handles all possible
@@ -227,6 +241,21 @@ mod tests {
         let registry = ToolRegistry::new(&dir);
         let names: Vec<&str> = registry.list_tools().map(|t| t.name()).collect();
         assert_eq!(names, ["sh"]);
+
+        // Only visible tools are advertised to the model.
+        assert_eq!(
+            registry.list_tool_infos(),
+            [ToolInfo {
+                name: "sh".to_owned(),
+                description: "Run a shell command on the host system".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "command": { "type": "string" } },
+                    "required": ["command"],
+                    "additionalProperties": false,
+                }),
+            }]
+        );
     }
 
     #[test]

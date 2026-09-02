@@ -14,7 +14,6 @@ use crate::interface::openai::OpenaiInterface;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::{Item, ItemType};
-use crate::tool::ToolServer;
 use crate::tools::ToolRegistry;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -171,6 +170,14 @@ pub fn build_history<'a>(
     Ok(messages)
 }
 
+/// Describes a tool in human- and model-readable format.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolInfo {
+    pub name: String,
+    pub description: String,
+    pub input_schema: Value,
+}
+
 /// Parameters for inference.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InferenceParams<'a> {
@@ -180,6 +187,8 @@ pub struct InferenceParams<'a> {
     /// Reasoning effort. `Some(ReasoningEffort::None)` means *no* reasoning,
     /// while `None` means *default* reasoning.
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// Tools advertised to the model.
+    pub tools: Vec<ToolInfo>,
     pub input: &'a [ChatMessage<'a>],
 }
 
@@ -297,13 +306,12 @@ impl Interface {
         }
     }
 
-    pub fn generate<T: ToolServer + ?Sized>(
+    pub fn generate(
         &self,
         params: InferenceParams<'_>,
-        tools: &T,
-    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<T> {
+    ) -> impl Stream<Item = AnyResult<InferenceEvent>> + use<> {
         match self {
-            Self::Openai(iface) => iface.generate(params, tools),
+            Self::Openai(iface) => iface.generate(params),
         }
     }
 
