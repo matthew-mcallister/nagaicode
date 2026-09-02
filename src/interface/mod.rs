@@ -69,6 +69,7 @@ pub enum ReasoningEffort {
 }
 
 /// Output from a tool call.
+// XXX: Get rid of lifetime
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(tag = "type")]
 pub enum ToolOutputContent<'a> {
