@@ -265,7 +265,7 @@ fn render_sh_stdout(
 mod tests {
     use super::*;
     use crate::query::QueryError;
-    use crate::testing::cwd;
+    use crate::cwd::cwd;
     use crate::ui::canvas::render_canvas;
     use crate::ui::style::THEME_DARK;
     use crate::ui::tool_render_item::load_tool_renderers;

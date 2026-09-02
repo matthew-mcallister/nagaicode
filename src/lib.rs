@@ -3,6 +3,7 @@ pub mod app;
 pub mod arena;
 pub mod command;
 pub mod config;
+pub mod cwd;
 pub mod db;
 pub mod error;
 pub mod interface;
