@@ -23,7 +23,6 @@ use crate::ui::render_item::{
 use crate::ui::markdown::ResumePoint;
 use crate::ui::style::Theme;
 use crate::ui::styled_string::StyledString;
-use crate::ui::tool_render_item::{ToolRenderer, load_tool_renderers};
 
 #[derive(Debug)]
 pub struct HistoryRow {
@@ -244,8 +243,6 @@ pub struct History {
     /// Maps an `Item` id to the history item rendering it, so that
     /// `ItemUpdated` events can locate and rerender the right item.
     by_item_id: FnvHashMap<i32, Id<HistoryItem>>,
-    /// Renders tool call outputs.
-    tool_renderer: ToolRenderer,
     tools: Arc<ToolRegistry>,
 }
 
@@ -276,7 +273,6 @@ impl History {
             viewport_top_pos: 0,
             viewport_bottom_pos: 0,
             by_item_id: FnvHashMap::default(),
-            tool_renderer: load_tool_renderers(),
             tools: ctx.tools().clone(),
         }
     }
@@ -512,7 +508,7 @@ impl History {
 
         if self.by_item_id.contains_key(&item.id) {
             self.on_item_updated(item)?;
-        } else if let Some(content) = get_item_content(&self.tool_renderer, item)? {
+        } else if let Some(content) = get_item_content(&self.tools, item)? {
             self.add_item(content, Some(item.id), Some(item.seqno));
         }
 
@@ -523,7 +519,7 @@ impl History {
     /// error.
     fn on_item_updated(&mut self, item: &Item) -> AnyResult<()> {
         if let Some(&item_id) = self.by_item_id.get(&item.id) {
-            let Some(content) = get_item_content(&self.tool_renderer, item)?
+            let Some(content) = get_item_content(&self.tools, item)?
                 else { return Ok(()) };
             self.item[item_id].update(
                 &self.theme,
@@ -1081,9 +1077,21 @@ mod tests {
         call.text = None;
         h.handle_update(Update::ItemCreated { item: &call });
 
-        // Calls with no tool name are ignored.
-        assert_eq!(h.num_rows(), 0);
-        assert_eq!(h.by_item_id.len(), 0);
+        // Unparseable calls fall back to an unknown tool placeholder.
+        assert_eq!(h.by_item_id.len(), 1);
+        assert_eq!(
+            h.query("/items/0/content").unwrap(),
+            json!({"type": "help", "value": "Called '<missing name>'"})
+        );
+
+        // An empty name is treated the same way.
+        let mut h = history(14, 10);
+        call.text = Some(String::new());
+        h.handle_update(Update::ItemCreated { item: &call });
+        assert_eq!(
+            h.query("/items/0/content").unwrap(),
+            json!({"type": "help", "value": "Called '<missing name>'"})
+        );
     }
 
     fn item_contents(history: &History) -> Vec<String> {

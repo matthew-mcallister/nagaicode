@@ -20,7 +20,6 @@ pub mod stacked_view;
 pub mod style;
 pub mod styled_string;
 pub mod text;
-pub mod tool_render_item;
 
 pub use component::Component;
 

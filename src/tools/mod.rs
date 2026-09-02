@@ -119,8 +119,10 @@ impl ToolRegistry {
     /// errors. Returns `None` if the item is not a tool call with output.
     pub fn render_to_ui(&self, item: &Item) -> Option<Box<dyn RenderItem>> {
         fn inner(reg: &ToolRegistry, item: &Item) -> AnyResult<Option<Box<dyn RenderItem>>> {
-            let args = try_nested!(item.tool_args());
+            // Output is parsed first so that calls which are still pending
+            // are ignored instead of falling back to the placeholder.
             let output = try_nested!(item.tool_output());
+            let args = try_nested!(item.tool_args());
             let tool = reg.tools.get(&args.name)
                 .ok_or_else(|| anyhow::anyhow!("unknown tool: '{}'", args.name))?;
             Ok(Some(tool.render_to_ui(&args.args, &output)?))
@@ -173,7 +175,9 @@ impl ToolRegistry {
 
     /// Renders an unparseable tool call for the UI.
     fn unknown_ui(item: &Item) -> Box<dyn RenderItem> {
-        let name = item.text.clone().unwrap_or_default();
+        let name = item.text.as_deref()
+            .filter(|name| !name.is_empty())
+            .unwrap_or("<missing name>");
         let tool = UnknownTool::new(name);
         tool.render_to_ui(&Value::Null, &Value::Null).expect("infallible")
     }

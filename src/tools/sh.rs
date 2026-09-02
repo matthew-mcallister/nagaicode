@@ -15,7 +15,6 @@ use crate::ui::render_item::RenderItem;
 use crate::ui::style::{Style, Theme};
 use crate::ui::styled_string::StyledString;
 use crate::ui::text::{Row, SPACES, ellipsize, wrap_line_naive};
-use crate::ui::tool_render_item::ToolRenderItemBuilder;
 
 /// Runs shell commands on the host system.
 #[derive(Debug)]
@@ -122,31 +121,6 @@ impl Tool for ShTool {
             name: self.name().to_owned(),
             content: contents,
         })
-    }
-}
-
-/// Builds RenderItem for shell calls
-#[derive(Debug)]
-pub struct ShRenderItemBuilder;
-
-impl ToolRenderItemBuilder for ShRenderItemBuilder {
-    fn build_render_item(
-        &self,
-        _name: &str,
-        args: &Value,
-        output: &Value,
-    ) -> AnyResult<Box<dyn RenderItem>> {
-        let cmd_line = args
-            .get("command")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("invalid tool input"))?
-            .to_owned();
-        let stdout = output
-            .get("stdout")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("invalid tool output"))?
-            .to_owned();
-        Ok(Box::new(ShRenderItem { cmd_line, stdout }))
     }
 }
 
@@ -269,16 +243,10 @@ mod tests {
     use crate::cwd::cwd;
     use crate::ui::canvas::render_canvas;
     use crate::ui::style::THEME_DARK;
-    use crate::ui::tool_render_item::load_tool_renderers;
 
-    fn render(
-        tools: &crate::ui::tool_render_item::ToolRenderer,
-        width: usize,
-        name: &str,
-        args: &Value,
-        output: &Value,
-    ) -> AnyResult<String> {
-        let item = tools.build_render_item(name, args, output)?;
+    fn render(width: usize, input: &Value, output: &Value) -> AnyResult<String> {
+        let tool = ShTool::new(Arc::new(cwd()));
+        let item = tool.render_to_ui(input, output)?;
         let (mut lines, _) = item.render(&THEME_DARK, width, Default::default());
         Ok(render_canvas(&mut lines[..]))
     }
@@ -303,21 +271,20 @@ mod tests {
 
     #[test]
     fn test_sh_renderer() {
-        let tools = load_tool_renderers();
         let theme = &THEME_DARK;
         let style = Style::new(theme.text_base, theme.bg_prompt);
         let ok_output = || json!({"stdout": "", "stderr": "", "return_code": 0});
 
         let output = json!({"stdout": "hello\n", "stderr": "", "return_code": 0});
         assert_eq!(
-            render(&tools, 14, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
+            render(14, &json!({"command": "echo hi"}), &output).unwrap(),
             format!(
                 "{style}              \n{style}  $ echo hi   \n{style}  hello       \n{style}              "
             )
         );
         let output = json!({"stdout": "hi\n", "stderr": "", "return_code": 0});
         assert_eq!(
-            render(&tools, 14, "sh", &json!({"command": "echo hello world"}), &output).unwrap(),
+            render(14, &json!({"command": "echo hello world"}), &output).unwrap(),
             format!(
                 "{style}              \n{style}  $ echo hel  \n{style}  lo world    \n{style}  hi          \n{style}              "
             )
@@ -328,7 +295,7 @@ mod tests {
         let output = json!({"stdout": "x".repeat(120), "stderr": "", "return_code": 0});
         let line = || format!("{style}  xxxxxxxxxx  ");
         assert_eq!(
-            render(&tools, 14, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
+            render(14, &json!({"command": "echo hi"}), &output).unwrap(),
             [
                 format!("{style}              "),
                 format!("{style}  $ echo hi   "),
@@ -340,16 +307,16 @@ mod tests {
         );
 
         assert_eq!(
-            render(&tools, 14, "sh", &json!({"command": "echo hi"}), &ok_output()).unwrap(),
+            render(14, &json!({"command": "echo hi"}), &ok_output()).unwrap(),
             ""
         );
         assert_eq!(
-            render(&tools, 7, "sh", &json!({"command": "echo hi"}), &output).unwrap(),
+            render(7, &json!({"command": "echo hi"}), &output).unwrap(),
             ""
         );
 
-        assert!(render(&tools, 14, "sh", &json!({}), &ok_output()).is_err());
-        assert!(render(&tools, 14, "sh", &json!({"command": "echo hi"}), &json!({})).is_err());
+        assert!(render(14, &json!({}), &ok_output()).is_err());
+        assert!(render(14, &json!({"command": "echo hi"}), &json!({})).is_err());
     }
 
     #[tokio::test]

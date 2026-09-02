@@ -7,7 +7,7 @@ use crate::ui::markdown::{MarkdownResult, ResumePoint};
 use crate::ui::style::{Style, Theme};
 use crate::ui::styled_string::StyledString;
 use crate::ui::text::{SPACES, wrap_line, wrap_line_naive};
-use crate::ui::tool_render_item::ToolRenderer;
+use crate::tools::ToolRegistry;
 
 /// Dynamic renderable content.
 ///
@@ -153,7 +153,7 @@ impl RenderItem for CommandOutputRenderItem {
 }
 
 pub fn get_item_content(
-    tools: &ToolRenderer,
+    tools: &ToolRegistry,
     item: &Item,
 ) -> AnyResult<Option<Box<dyn RenderItem>>> {
     Ok(Some(match item.ty()? {
@@ -171,13 +171,7 @@ pub fn get_item_content(
                 else { return Ok(None) };
             Box::new(ThoughtRenderItem::new(text))
         }
-        ItemType::ToolCall => {
-            let Some(output) = item.tool_output()? else { return Ok(None) };
-            let name = item.text.as_ref()
-                .ok_or_else(|| anyhow::anyhow!("item {} missing tool name", item.id))?;
-            let args = item.tool_args_json()?.unwrap_or_default();
-            tools.build_render_item(name, &args, &output)?
-        }
+        ItemType::ToolCall => return Ok(tools.render_to_ui(item)),
     }))
 }
 
@@ -464,8 +458,11 @@ mod tests {
     #[test]
     fn test_render_item_query() {
         use super::*;
+        use std::sync::Arc;
+
         use crate::query::QueryError;
-        use crate::ui::tool_render_item::load_tool_renderers;
+        use crate::tools::Tool;
+        use crate::tools::sh::ShTool;
 
         let user = UserRenderItem::new("hello");
         assert_eq!(user.query("/").unwrap(), json!({"type": "user", "value": "hello"}));
@@ -478,9 +475,8 @@ mod tests {
         assert_eq!(command.query("/").unwrap(), json!({"type": "command_prompt", "value": "!foo"}));
         assert!(!command.trailing_padding());
 
-        let tools = load_tool_renderers();
-        let item = tools.build_render_item(
-            "sh",
+        let tool = ShTool::new(Arc::new(crate::cwd::cwd()));
+        let item = tool.render_to_ui(
             &json!({"command": "echo hi"}),
             &json!({"stdout": "hi\n", "stderr": "", "return_code": 0}),
         ).unwrap();
