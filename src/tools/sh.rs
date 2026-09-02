@@ -1,10 +1,11 @@
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::anyhow;
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
 
+use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
@@ -19,13 +20,13 @@ use crate::ui::tool_render_item::ToolRenderItemBuilder;
 /// Runs shell commands on the host system.
 #[derive(Debug)]
 pub struct ShTool {
-    cwd: PathBuf,
+    cwd: Arc<Cwd>,
     input_schema: Value,
 }
 
 impl ShTool {
     /// Creates a tool that runs shell commands within `cwd`.
-    pub fn new(cwd: PathBuf) -> Self {
+    pub fn new(cwd: Arc<Cwd>) -> Self {
         Self {
             cwd,
             input_schema: json!({
@@ -76,7 +77,7 @@ impl Tool for ShTool {
             let output = tokio::process::Command::new("sh")
                 .arg("-c")
                 .arg(cmd)
-                .current_dir(&self.cwd)
+                .current_dir(&**self.cwd)
                 .output()
                 .await
                 .map_err(|e| anyhow!("failed to run 'sh': {e}"))?;
@@ -353,8 +354,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sh_tool() {
-        let dir = cwd();
-        let tool = ShTool::new(dir.to_path_buf());
+        let dir = Arc::new(cwd());
+        let tool = ShTool::new(dir.clone());
 
         assert_eq!(tool.name(), "sh");
         assert_eq!(

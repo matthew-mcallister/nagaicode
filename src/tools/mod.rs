@@ -1,10 +1,11 @@
-use std::path::Path;
+use std::sync::Arc;
 
 use fnv::FnvHashMap;
 use log::warn;
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
 
+use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::DataQuery;
@@ -67,7 +68,7 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
-    pub fn new(cwd: &Path) -> Self {
+    pub fn new(cwd: &Arc<Cwd>) -> Self {
         // Builtin tools
         // - sh
         // - read
@@ -78,7 +79,7 @@ impl ToolRegistry {
         // - failed
         // - unknown
         let mut tools: FnvHashMap<String, Box<dyn Tool>> = FnvHashMap::default();
-        let sh = sh::ShTool::new(cwd.to_path_buf());
+        let sh = sh::ShTool::new(Arc::clone(cwd));
         tools.insert(sh.name().to_owned(), Box::new(sh));
         let failed = failed::FailedTool::new();
         tools.insert(failed.name().to_owned(), Box::new(failed));
@@ -217,8 +218,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_call_tool() {
-        let dir = cwd();
-        let registry = ToolRegistry::new(dir.path());
+        let dir = Arc::new(cwd());
+        let registry = ToolRegistry::new(&dir);
         let mut conn = crate::db::open_new().expect("open db");
 
         let mut item = make_tool_call(&mut conn, "sh", json!({ "command": "printf 'hi'" }), None);
@@ -240,16 +241,16 @@ mod tests {
 
     #[test]
     fn test_list_tools() {
-        let dir = cwd();
-        let registry = ToolRegistry::new(dir.path());
+        let dir = Arc::new(cwd());
+        let registry = ToolRegistry::new(&dir);
         let names: Vec<&str> = registry.list_tools().map(|t| t.name()).collect();
         assert_eq!(names, ["sh"]);
     }
 
     #[test]
     fn test_render_unknown() {
-        let dir = cwd();
-        let registry = ToolRegistry::new(dir.path());
+        let dir = Arc::new(cwd());
+        let registry = ToolRegistry::new(&dir);
         let mut conn = crate::db::open_new().expect("open db");
 
         let item = make_tool_call(&mut conn, "no_such_tool", json!({}), Some(json!({})));
@@ -262,8 +263,8 @@ mod tests {
 
     #[test]
     fn test_render_failed() {
-        let dir = cwd();
-        let registry = ToolRegistry::new(dir.path());
+        let dir = Arc::new(cwd());
+        let registry = ToolRegistry::new(&dir);
         let mut conn = crate::db::open_new().expect("open db");
 
         let output = json!({ "tool_name": "sh", "error": "boom" });
@@ -277,8 +278,8 @@ mod tests {
 
     #[test]
     fn test_render_sh() {
-        let dir = cwd();
-        let registry = ToolRegistry::new(dir.path());
+        let dir = Arc::new(cwd());
+        let registry = ToolRegistry::new(&dir);
         let mut conn = crate::db::open_new().expect("open db");
 
         let output = json!({ "stdout": "hello", "stderr": "", "return_code": 0 });

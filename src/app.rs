@@ -19,6 +19,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::agent::Agent;
 use crate::command::Command;
+use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::model::Model;
 use crate::model::RevalidateModelsTask;
@@ -104,6 +105,7 @@ pub struct App {
     // Bookkeeping to ensure one foreground task at a time and to allow
     // manual interrupt.
     current_task: Option<TaskHandle<()>>,
+    cwd: Arc<Cwd>,
 }
 
 impl App {
@@ -139,6 +141,7 @@ impl App {
             tid_counter: Arc::new(AtomicU64::new(0)),
             tasks: FnvHashSet::default(),
             current_task: None,
+            cwd: Arc::new(crate::cwd::cwd()),
         })
     }
 
@@ -155,6 +158,11 @@ impl App {
     /// Returns the database URL.
     pub fn db_url(&self) -> &str {
         &self.db_url
+    }
+
+    /// Returns the current working directory.
+    pub fn cwd(&self) -> &Arc<Cwd> {
+        &self.cwd
     }
 
     /// Switches the selected model and persists the choice across runs.
@@ -381,6 +389,7 @@ impl App {
             self.send.clone(),
             self.db_url.clone(),
             self.tools.clone(),
+            Arc::clone(&self.cwd),
         )
     }
 

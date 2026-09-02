@@ -10,6 +10,7 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::app::AppEvent;
+use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::tool::DefaultToolServer;
 
@@ -33,6 +34,7 @@ pub struct TaskContext {
     db_url: String,
     connection: Option<SqliteConnection>,
     tools: DefaultToolServer,
+    cwd: Arc<Cwd>,
 }
 
 impl TaskContext {
@@ -42,6 +44,7 @@ impl TaskContext {
         sender: UnboundedSender<AppEvent>,
         db_url: String,
         tools: DefaultToolServer,
+        cwd: Arc<Cwd>,
     ) -> Self {
         Self {
             tid_counter,
@@ -50,6 +53,7 @@ impl TaskContext {
             db_url,
             connection: None,
             tools,
+            cwd,
         }
     }
 
@@ -81,6 +85,11 @@ impl TaskContext {
         &mut self.tools
     }
 
+    /// Returns the current working directory.
+    pub fn cwd(&self) -> &Arc<Cwd> {
+        &self.cwd
+    }
+
     /// Creates a child context sharing this context's state, using `cancel`.
     pub fn fork(&self, cancel: CancellationToken) -> Self {
         Self {
@@ -90,6 +99,7 @@ impl TaskContext {
             db_url: self.db_url.clone(),
             connection: None,
             tools: self.tools.clone(),
+            cwd: Arc::clone(&self.cwd),
         }
     }
 
@@ -178,7 +188,7 @@ mod tests {
         let (sender, mut recv) = unbounded_channel();
         let url = crate::db::db_url().unwrap();
         let tools = crate::tool::DefaultToolServer::new();
-        let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender, url, tools);
+        let context = TaskContext::root(Arc::new(AtomicU64::new(0)), sender, url, tools, Arc::new(crate::cwd::cwd()));
         let handle = context.spawn(DummyTask::new());
         handle.cancel();
         let result = handle.join().await.unwrap();
