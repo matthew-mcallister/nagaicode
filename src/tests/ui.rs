@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use serde_json::json;
 
@@ -6,7 +8,6 @@ use crate::interface::InterfaceId;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::query::DataQuery;
-use crate::tool::mock::ToolCall;
 use crate::ui::canvas::render_canvas;
 use crate::ui::chat::Chat;
 use crate::ui::style::THEME_DARK;
@@ -193,33 +194,31 @@ async fn test_app_provider_rm_resets_selected_model() {
     assert_eq!(app.selected_model().map(|(_, m)| m.id.as_str()), Some("gpt-5"));
 }
 
+/// Runs `!command` and waits for its output to reach the UI.
+async fn run_bang(app: &mut App, command: &str) {
+    app.process_command(command).await.unwrap();
+    app.await_task().await.unwrap();
+    app.process_pending_events().await;
+}
+
+/// Returns the last item added to the history.
+fn last_history_item(app: &App) -> serde_json::Value {
+    app.query("/chat/stacked/inner/history/history/items")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone()
+}
+
 #[tokio::test]
 async fn test_app_process_command() {
     let mut app = App::new().unwrap();
+    let cwd = Arc::clone(app.cwd());
 
-    app.tools_mut().add_result(
-        "sh",
-        json!({
-            "stdout": "output line\n",
-            "stderr": "",
-            "return_code": 0,
-        }),
-    );
-
-    app.process_command("!echo test").await.unwrap();
-    app.await_task().await.unwrap();
-    app.process_pending_events().await;
-
-    let calls = app.tools().get_calls();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(
-        calls[0],
-        ToolCall {
-            name: "sh".to_owned(),
-            args: json!({ "command": "echo test" }),
-        }
-    );
-
+    // A successful command prints its output.
+    run_bang(&mut app, "!echo test").await;
     let history = app
         .query("/chat/stacked/inner/history/history/items")
         .unwrap()
@@ -230,72 +229,42 @@ async fn test_app_process_command() {
     assert_eq!(last_two[0]["content"]["type"], json!("command_prompt"));
     assert_eq!(last_two[0]["content"]["value"], json!("$ echo test"));
     assert_eq!(last_two[1]["content"]["type"], json!("command_output"));
-    assert_eq!(last_two[1]["content"]["value"], json!("output line\n"));
+    assert_eq!(last_two[1]["content"]["value"], json!("test\n"));
 
-    app.tools_mut().add_result(
-        "sh",
-        json!({
-            "stdout": "string output\n",
-            "stderr": "",
-            "return_code": 0,
-        }),
+    // Commands run in the app's working directory.
+    run_bang(&mut app, "!pwd").await;
+    let item = last_history_item(&app);
+    assert_eq!(item["content"]["type"], json!("command_output"));
+    let expected = std::fs::canonicalize(cwd.path()).unwrap();
+    assert_eq!(
+        item["content"]["value"].as_str().unwrap().trim(),
+        expected.to_string_lossy().as_ref(),
     );
-    app.process_command("!pwd").await.unwrap();
-    app.await_task().await.unwrap();
-    app.process_pending_events().await;
-    let calls = app.tools().get_calls();
-    assert_eq!(calls.len(), 2);
-    assert_eq!(calls[1].args, json!({ "command": "pwd" }));
 
-    app.tools_mut().add_result(
-        "sh",
-        json!({
-            "stdout": "",
-            "stderr": "error message\n",
-            "return_code": 1,
-        }),
+    // A command with no output produces an empty output item.
+    run_bang(&mut app, "!true").await;
+    let item = last_history_item(&app);
+    assert_eq!(item["content"]["type"], json!("command_output"));
+    assert_eq!(item["content"]["value"], json!(""));
+
+    // A nonzero exit code reports stdout and stderr as an error.
+    run_bang(&mut app, "!printf 'error message\n' >&2; exit 1").await;
+    let item = last_history_item(&app);
+    assert_eq!(item["content"]["type"], json!("error"));
+    assert_eq!(
+        item["content"]["value"],
+        json!("command exited with code 1: error message\n")
     );
-    app.process_command("!false").await.unwrap();
-    app.await_task().await.unwrap();
-    app.process_pending_events().await;
-    let calls = app.tools().get_calls();
-    assert_eq!(calls.len(), 3);
 
-    let history = app
-        .query("/chat/stacked/inner/history/history/items")
-        .unwrap();
-    let last = history.as_array().unwrap().last().unwrap();
-    assert_eq!(last["content"]["type"], json!("error"));
-    assert_eq!(last["content"]["value"], json!("command exited with code 1: error message\n"));
-
-    app.tools_mut().add_result(
-        "sh",
-        json!({
-            "stdout": "",
-            "stderr": "",
-            "return_code": 0,
-        }),
+    // A command the shell cannot run reports the shell's error.
+    run_bang(&mut app, "!no_such_command_xyz").await;
+    let item = last_history_item(&app);
+    assert_eq!(item["content"]["type"], json!("error"));
+    let msg = item["content"]["value"].as_str().unwrap();
+    assert!(
+        msg.starts_with("command exited with code 127: "),
+        "unexpected error: {msg}"
     );
-    app.process_command("!true").await.unwrap();
-    app.await_task().await.unwrap();
-    app.process_pending_events().await;
-    let calls = app.tools().get_calls();
-    assert_eq!(calls.len(), 4);
-
-    app.tools_mut().add_result("sh", json!({"error": "tool error"}));
-    app.process_event(AppEvent::SubmitPrompt("!failing_tool".to_string()))
-        .await;
-    app.await_task().await.unwrap();
-    app.process_pending_events().await;
-    let calls = app.tools().get_calls();
-    assert_eq!(calls.len(), 5);
-
-    let history = app
-        .query("/chat/stacked/inner/history/history/items")
-        .unwrap();
-    let last = history.as_array().unwrap().last().unwrap();
-    assert_eq!(last["content"]["type"], json!("error"));
-    assert_eq!(last["content"]["value"], json!("tool error"));
 
     assert!(app.process_command("").await.is_ok());
     assert!(app.process_command("   ").await.is_ok());

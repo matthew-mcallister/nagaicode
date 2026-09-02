@@ -1,5 +1,7 @@
 // TODO: Should execute the correct command as long as you type any prefix that
 // uniquely determines that command
+use std::sync::Arc;
+
 use anyhow::anyhow;
 
 use dedent::dedent;
@@ -16,9 +18,7 @@ use crate::provider::Provider;
 use crate::schema::provider::dsl;
 use crate::session::Session;
 use crate::task::{Task, TaskContext};
-use crate::tool::ToolServer;
 use crate::ui::text::truncate_line;
-use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
@@ -471,7 +471,8 @@ pub async fn run_session_command(
     }
 }
 
-/// Executes a host command via the `sh` tool, reporting the result to the UI.
+/// Executes a host command in the working directory, reporting the result to
+/// the UI.
 pub struct BangCommand {
     command: String,
 }
@@ -484,22 +485,17 @@ impl BangCommand {
 
     async fn process(self, context: &mut TaskContext) -> AnyResult<()> {
         context.send(AppEvent::CommandPrompt(format!("$ {}", self.command)));
-        let result = context
-            .tools_mut()
-            .call("sh", json!({ "command": self.command }))
-            .await;
-        if let Some(msg) = result.get("error").and_then(Value::as_str) {
-            return Err(anyhow!(msg.to_owned()));
-        }
-        let obj = result
-            .as_object()
-            .ok_or_else(|| anyhow!("invalid result for 'sh': expected an object"))?;
-        let stdout = obj.get("stdout").and_then(Value::as_str).unwrap_or("");
-        let stderr = obj.get("stderr").and_then(Value::as_str).unwrap_or("");
-        let return_code = obj
-            .get("return_code")
-            .and_then(Value::as_i64)
-            .unwrap_or(-1);
+        let cwd = Arc::clone(context.cwd());
+        let output = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(&self.command)
+            .current_dir(&**cwd)
+            .output()
+            .await
+            .map_err(|e| anyhow!("failed to run 'sh': {e}"))?;
+        let return_code = output.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
         if return_code == 0 {
             context.send(AppEvent::CommandOutput(format!("{stdout}{stderr}")));
             Ok(())
