@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::DataQuery;
+use crate::session::Item;
 use crate::ui::render_item::RenderItem;
 
 pub mod failed;
@@ -38,7 +39,21 @@ pub trait Tool: std::fmt::Debug + DataQuery {
     fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>>;
 
     /// Builds inference call inputs from the tool's output.
-    fn render_to_interface<'a>(&self, input: &'a Value, output: &'a Value) -> AnyResult<Vec<ToolOutputContent<'a>>>;
+    fn render_to_interface(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput>;
+}
+
+/// Output of a tool call. Returns fields to serialize to DB.
+#[derive(Debug)]
+pub struct ToolResult {
+    pub name: String,
+    pub output: Value,
+}
+
+/// Tool call representation submitted to inference API.
+#[derive(Debug)]
+pub struct InterfaceToolOutput {
+    pub name: String,
+    pub content: Vec<ToolOutputContent<'static>>,
 }
 
 /// Maps tool names to tools.
@@ -61,6 +76,31 @@ impl ToolRegistry {
         let mut tools: FnvHashMap<String, Box<dyn Tool>> = FnvHashMap::default();
         let sh = sh::ShTool::new(cwd.to_path_buf());
         tools.insert(sh.name().to_owned(), Box::new(sh));
+        let failed = failed::FailedTool::new();
+        tools.insert(failed.name().to_owned(), Box::new(failed));
         Self { _tools: tools }
+    }
+
+    /// Lists tools available to the model.
+    // Commented since it doesn't compile
+    //pub fn list_tools(&self) -> impl Iterator<Item = &dyn Tool> {
+    //    todo!()
+    //}
+
+    /// Invokes a tool from raw name and input text. Handles all possible
+    /// errors. Modifies the item but doesn't make any DB queries.
+    pub fn call_tool(&self, item: &mut Item) -> ToolResult {
+        todo!()
+    }
+
+    /// Builds a render item to display a tool call. Handles all possible
+    /// errors.
+    pub fn render_to_ui(&self, item: &Item) -> Box<dyn RenderItem> {
+        todo!()
+    }
+
+    /// Builds input to the inference API. Handles all possible errors.
+    pub fn render_to_interface(&self, item: &Item) -> InterfaceToolOutput {
+        todo!()
     }
 }

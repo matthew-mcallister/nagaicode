@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::Tool;
+use crate::tools::{InterfaceToolOutput, Tool};
 use crate::ui::render_item::{HelpRenderItem, RenderItem};
 
 /// Placeholder for tool calls whose output could not be parsed, e.g. when a
@@ -81,14 +81,17 @@ impl Tool for UnknownTool {
         ))))
     }
 
-    fn render_to_interface<'a>(
+    fn render_to_interface(
         &self,
-        _input: &'a Value,
-        _output: &'a Value,
-    ) -> AnyResult<Vec<ToolOutputContent<'a>>> {
-        Ok(vec![ToolOutputContent::Text {
-            text: Cow::Owned("error: could not parse output".into()),
-        }])
+        _input: &Value,
+        _output: &Value,
+    ) -> AnyResult<InterfaceToolOutput> {
+        Ok(InterfaceToolOutput {
+            name: self.tool_name.clone(),
+            content: vec![ToolOutputContent::Text {
+                text: Cow::Owned("error: could not parse output".into()),
+            }],
+        })
     }
 }
 
@@ -124,9 +127,10 @@ mod tests {
         assert!(matches!(tool.query("/missing"), Err(QueryError::InvalidField(_))));
 
         let input = json!({});
-        let content = tool.render_to_interface(&input, &input).unwrap();
+        let result = tool.render_to_interface(&input, &input).unwrap();
+        assert_eq!(result.name, "sh");
         assert_eq!(
-            content,
+            result.content,
             vec![
                 ToolOutputContent::Text { text: Cow::Owned("error: could not parse output".into()) }
             ]

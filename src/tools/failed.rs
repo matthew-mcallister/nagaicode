@@ -6,34 +6,41 @@ use serde_json::{Value, json};
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::Tool;
+use crate::session::Item;
+use crate::tools::{InterfaceToolOutput, Tool};
 use crate::ui::render_item::{ErrorRenderItem, RenderItem};
 
 /// Placeholder for tool calls that could not be executed, e.g. due to an
 /// invalid tool name or arguments.
 #[derive(Debug)]
 pub struct FailedTool {
-    tool_name: String,
-    message: String,
     input_schema: Value,
 }
 
 impl FailedTool {
     /// Creates a fallback for a failed tool call.
-    pub fn new(tool_name: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn new() -> Self {
         Self {
-            tool_name: tool_name.into(),
-            message: message.into(),
             input_schema: json!({ "type": "object" }),
         }
     }
 
-    /// Builds JSON for persistence to the DB
-    pub fn output(&self) -> Value {
-        json!({
-            "tool_name": self.tool_name,
-            "error": self.message,
-        })
+    /// Returns the error message parsed from `output`, falling back to a generic
+    /// message.
+    pub fn get_message(output: &Value) -> &str {
+        output.get("error").and_then(Value::as_str).unwrap_or("unknown error")
+    }
+
+    /// Writes failure output for a failed tool call, falling back to a generic
+    /// message when `message` is empty.
+    pub fn write_failure(item: &mut Item, tool_name: &str, message: &str) {
+        let message = if message.is_empty() { "unknown error" } else { message };
+        item.text = Some(tool_name.to_owned());
+        let output = json!({
+            "tool_name": tool_name,
+            "error": message,
+        });
+        item.tool_output = Some(output.to_string());
     }
 }
 
@@ -42,14 +49,8 @@ impl DataQuery for FailedTool {
         match field {
             "" => Ok(QueryField::Value(json!({
                 "type": "failed",
-                "name": self.name(),
-                "tool_name": self.tool_name,
-                "error": self.message,
             }))),
             "type" => Ok(QueryField::Value(json!("failed"))),
-            "name" => Ok(QueryField::Value(self.name().into())),
-            "tool_name" => Ok(QueryField::Value(self.tool_name.clone().into())),
-            "error" => Ok(QueryField::Value(self.message.clone().into())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -57,7 +58,7 @@ impl DataQuery for FailedTool {
 
 impl Tool for FailedTool {
     fn name(&self) -> &str {
-        &self.tool_name
+        "failed"
     }
 
     fn description(&self) -> &str {
@@ -76,21 +77,28 @@ impl Tool for FailedTool {
         Box::pin(async { unreachable!("FailedTool is never invoked") })
     }
 
-    fn render_to_ui(&self, _input: &Value, _output: &Value) -> AnyResult<Box<dyn RenderItem>> {
+    fn render_to_ui(&self, _input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
+        let tool_name = output.get("tool_name").and_then(Value::as_str).unwrap_or("failed");
+        let message = Self::get_message(output);
         Ok(Box::new(ErrorRenderItem::new(format!(
             "Called '{}': {}",
-            self.tool_name, self.message
+            tool_name, message
         ))))
     }
 
-    fn render_to_interface<'a>(
+    fn render_to_interface(
         &self,
-        _input: &'a Value,
-        _output: &'a Value,
-    ) -> AnyResult<Vec<ToolOutputContent<'a>>> {
-        Ok(vec![ToolOutputContent::Text {
-            text: Cow::Owned(format!("error: {}", self.message)),
-        }])
+        _input: &Value,
+        output: &Value,
+    ) -> AnyResult<InterfaceToolOutput> {
+        let tool_name = output.get("tool_name").and_then(Value::as_str).unwrap_or("failed");
+        let message = Self::get_message(output);
+        Ok(InterfaceToolOutput {
+            name: tool_name.to_owned(),
+            content: vec![ToolOutputContent::Text {
+                text: Cow::Owned(format!("error: {message}")),
+            }],
+        })
     }
 }
 
@@ -104,37 +112,53 @@ mod tests {
 
     #[test]
     fn test_failed_tool() {
-        let tool = FailedTool::new("sh", "invalid arguments");
-        assert_eq!(tool.name(), "sh");
+        let tool = FailedTool::new();
+        assert_eq!(tool.name(), "failed");
         assert!(!tool.is_visible());
 
-        let expected = json!({ "tool_name": "sh", "error": "invalid arguments" });
-        assert_eq!(tool.output(), expected);
-        assert_eq!(
-            tool.query("/").unwrap(),
-            json!({
-                "type": "failed",
-                "name": "sh",
-                "tool_name": "sh",
-                "error": "invalid arguments",
-            })
-        );
+        let output = json!({ "tool_name": "sh", "error": "invalid arguments" });
+        let mut conn = crate::db::open_new().expect("open db");
+        let session = crate::session::Session::create(&mut conn, "Session").expect("create session");
+        let turn = crate::session::Turn::create(
+            &mut conn,
+            session.id,
+            crate::session::TurnType::Assistant,
+            None,
+            None,
+            None,
+        )
+        .expect("create turn");
+        let mut item = crate::session::Item::create(
+            &mut conn,
+            crate::session::NewItem {
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
+                ty: Some(crate::session::ItemType::ToolCall),
+                text: Some("sh"),
+                ..Default::default()
+            },
+        )
+        .expect("create item");
+        FailedTool::write_failure(&mut item, "sh", "invalid arguments");
+        assert_eq!(item.text.as_deref(), Some("sh"));
+        assert_eq!(item.tool_output, Some(output.to_string()));
+        assert_eq!(tool.query("/").unwrap(), json!({ "type": "failed" }));
         assert_eq!(tool.query("/type").unwrap(), json!("failed"));
-        assert_eq!(tool.query("/name").unwrap(), json!("sh"));
-        assert_eq!(tool.query("/tool_name").unwrap(), json!("sh"));
-        assert_eq!(tool.query("/error").unwrap(), json!("invalid arguments"));
+        assert!(matches!(tool.query("/tool_name"), Err(QueryError::InvalidField(_))));
+        assert!(matches!(tool.query("/name"), Err(QueryError::InvalidField(_))));
         assert!(matches!(tool.query("/missing"), Err(QueryError::InvalidField(_))));
 
         let input = json!({});
-        let content = tool.render_to_interface(&input, &input).unwrap();
+        let result = tool.render_to_interface(&input, &output).unwrap();
+        assert_eq!(result.name, "sh");
         assert_eq!(
-            content,
+            result.content,
             vec![
                 ToolOutputContent::Text { text: Cow::Owned("error: invalid arguments".into()) }
             ]
         );
 
-        let item = tool.render_to_ui(&input, &input).unwrap();
+        let item = tool.render_to_ui(&input, &output).unwrap();
         assert_eq!(item.query("/type").unwrap(), json!("error"));
         let (mut lines, _) = item.render(&THEME_DARK, 20, Default::default());
         let mut expected = render_error(&THEME_DARK, 20, "Called 'sh': invalid arguments");

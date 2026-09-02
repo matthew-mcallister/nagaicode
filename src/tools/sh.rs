@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::Tool;
+use crate::tools::{InterfaceToolOutput, Tool};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::RenderItem;
 use crate::ui::style::{Style, Theme};
@@ -95,11 +95,11 @@ impl Tool for ShTool {
         Ok(Box::new(ShRenderItem::from_output(input, output)?))
     }
 
-    fn render_to_interface<'a>(
+    fn render_to_interface(
         &self,
-        _input: &'a Value,
-        output: &'a Value,
-    ) -> AnyResult<Vec<ToolOutputContent<'a>>> {
+        _input: &Value,
+        output: &Value,
+    ) -> AnyResult<InterfaceToolOutput> {
         let stdout = output.get("stdout").and_then(Value::as_str).unwrap_or("");
         let stderr = output.get("stderr").and_then(Value::as_str).unwrap_or("");
         let return_code = output.get("return_code").and_then(Value::as_i64).unwrap_or(-1);
@@ -117,7 +117,10 @@ impl Tool for ShTool {
         contents.push(ToolOutputContent::Text {
             text: Cow::Owned(format!("return code: {return_code}")),
         });
-        Ok(contents)
+        Ok(InterfaceToolOutput {
+            name: self.name().to_owned(),
+            content: contents,
+        })
     }
 }
 
@@ -386,9 +389,10 @@ mod tests {
         // Interface content is built from stdout, stderr, and return code.
         let input = json!({});
         let output = json!({"stdout": "hi", "stderr": "", "return_code": 0});
-        let content = tool.render_to_interface(&input, &output).unwrap();
+        let result = tool.render_to_interface(&input, &output).unwrap();
+        assert_eq!(result.name, "sh");
         assert_eq!(
-            content,
+            result.content,
             vec![
                 ToolOutputContent::Text { text: Cow::Owned("stdout:\nhi".into()) },
                 ToolOutputContent::Text { text: Cow::Owned("return code: 0".into()) },
