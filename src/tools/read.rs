@@ -9,7 +9,7 @@ use futures::future::BoxFuture;
 use serde_json::{Value, json};
 
 use crate::cwd::Cwd;
-use crate::error::AnyResult;
+use crate::error::{AnyError, AnyResult};
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::{InterfaceToolOutput, Tool};
@@ -17,6 +17,7 @@ use crate::ui::render_item::{ErrorRenderItem, HelpRenderItem, RenderItem};
 
 const MAX_LINE_BYTES: usize = 2000;
 const TRUNCATION_SUFFIX: &str = "... (truncated at 2000 bytes)";
+const TEXT_MIME: &str = "text/plain";
 
 /// Reads lines from a UTF-8 text file.
 #[derive(Debug)]
@@ -90,11 +91,13 @@ impl Tool for ReadTool {
                 .and_then(Value::as_i64)
                 .ok_or_else(invalid)?;
             if max_lines < 1 {
-                return Err(anyhow!("max_lines mut be at least 1"));
+                return Err(invalid());
             }
 
-            let bytes = std::fs::read(filepath)?;
-            let text = String::from_utf8(bytes)?;
+            let text = std::fs::read(filepath)
+                .map_err(AnyError::from)
+                .and_then(|bytes| Ok(String::from_utf8(bytes)?))
+                .map_err(|e| anyhow!("{filepath}: {e}"))?;
 
             let lines: Vec<&str> = text.split_inclusive('\n').collect();
             let start = start_line.max(1) as usize - 1;
@@ -183,6 +186,7 @@ impl Tool for ReadTool {
                 ToolOutputContent::File {
                     filepath: Cow::Owned(filepath.to_owned()),
                     data: Cow::Owned(content.to_owned()),
+                    mime: Cow::Borrowed(TEXT_MIME),
                 },
             ],
         })
@@ -245,8 +249,8 @@ mod tests {
                 "type": "object",
                 "properties": {
                     "filepath": { "type": "string" },
-                    "start_line": { "type": "integer" },
-                    "max_lines": { "type": "integer" },
+                    "start_line": { "type": "integer", "minimum": 1 },
+                    "max_lines": { "type": "integer", "minimum": 1 },
                 },
                 "required": ["filepath", "start_line", "max_lines"],
                 "additionalProperties": false,
@@ -322,7 +326,7 @@ mod tests {
         let error = tool.call(&json!({ "filepath": binary, "start_line": 1, "max_lines": 1 }))
             .await
             .expect_err("invalid utf-8");
-        assert!(error.to_string().contains("not valid UTF-8"), "{error}");
+        assert!(error.is::<std::string::FromUtf8Error>(), "{error}");
     }
 
     #[tokio::test]
@@ -428,6 +432,7 @@ mod tests {
                 ToolOutputContent::File {
                     filepath: Cow::Owned(path.clone()),
                     data: Cow::Owned(BASE64_STANDARD.encode("one\ntwo\n")),
+                    mime: Cow::Borrowed("text/plain"),
                 },
             ]
         );
@@ -439,7 +444,11 @@ mod tests {
             result.content,
             vec![
                 ToolOutputContent::Text { text: Cow::Owned("read 2 lines\nreached end of file".into()) },
-                ToolOutputContent::File { filepath: Cow::Owned(path.clone()), data: Cow::Owned("".into()) },
+                ToolOutputContent::File {
+                    filepath: Cow::Owned(path.clone()),
+                    data: Cow::Owned("".into()),
+                    mime: Cow::Borrowed("text/plain"),
+                },
             ]
         );
 

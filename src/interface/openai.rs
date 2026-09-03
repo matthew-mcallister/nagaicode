@@ -135,8 +135,34 @@ enum InputItem<'a> {
         #[serde(rename = "type")]
         r#type: &'static str,
         call_id: &'a str,
-        output: Vec<ToolOutputContent<'a>>,
+        output: Vec<RequestOutputContent<'a>>,
     },
+}
+
+/// Content part of a tool output, as accepted by the inference API.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+enum RequestOutputContent<'a> {
+    #[serde(rename = "input_text")]
+    Text { text: &'a str },
+    #[serde(rename = "input_file")]
+    File {
+        filename: &'a str,
+        // File in data URI format
+        file_data: String,
+    },
+}
+
+impl<'a> From<&'a ToolOutputContent<'a>> for RequestOutputContent<'a> {
+    fn from(content: &'a ToolOutputContent<'a>) -> Self {
+        match content {
+            ToolOutputContent::Text { text } => Self::Text { text },
+            ToolOutputContent::File { filepath, data, mime } => Self::File {
+                filename: filepath,
+                file_data: format!("data:{mime};base64,{data}"),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -225,10 +251,13 @@ impl<'a> CreateResponseRequest<'a> {
                     name,
                     arguments,
                 },
-                ChatMessage::ToolOutput { call_id, output } => InputItem::FunctionCallOutput {
+                ChatMessage::ToolOutput {
+                    call_id,
+                    output,
+                } => InputItem::FunctionCallOutput {
                     r#type: "function_call_output",
                     call_id,
-                    output: output.clone(),
+                    output: output.iter().map(RequestOutputContent::from).collect(),
                 },
             })
             .collect();
@@ -1127,9 +1156,16 @@ mod tests {
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_1",
-                    output: vec![ToolOutputContent::Text {
-                        text: Cow::Borrowed(r#"{"result":3}"#),
-                    }],
+                    output: vec![
+                        ToolOutputContent::Text {
+                            text: Cow::Borrowed(r#"{"result":3}"#),
+                        },
+                        ToolOutputContent::File {
+                            filepath: Cow::Borrowed("a.txt"),
+                            data: Cow::Borrowed("b25lCnR3bwo="),
+                            mime: Cow::Borrowed("text/plain"),
+                        },
+                    ],
                 },
             ],
         };
@@ -1153,10 +1189,18 @@ mod tests {
                 {
                     "type": "function_call_output",
                     "call_id": "call_1",
-                    "output": [{
-                        "type": "input_text",
-                        "text": r#"{"result":3}"#,
-                    }],
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": r#"{"result":3}"#,
+                        },
+                        {
+                            // file_data must be a data URI, not bare base64
+                            "type": "input_file",
+                            "filename": "a.txt",
+                            "file_data": "data:text/plain;base64,b25lCnR3bwo=",
+                        },
+                    ],
                 },
             ])
         );

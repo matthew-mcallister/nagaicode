@@ -256,15 +256,15 @@ mod tests {
                     name: "read".to_owned(),
                     description: "Reads lines from a text file. Start line is \
                         1-indexed. Output includes next line offset for \
-                        pagination. Lines truncated at 2000 bytes. UTF-8 only \
-                        currently."
+                        pagination. Lines truncated at 2000 bytes max. UTF-8 \
+                        only currently."
                         .to_owned(),
                     input_schema: json!({
                         "type": "object",
                         "properties": {
                             "filepath": { "type": "string" },
-                            "start_line": { "type": "integer" },
-                            "max_lines": { "type": "integer" },
+                            "start_line": { "type": "integer", "minimum": 1 },
+                            "max_lines": { "type": "integer", "minimum": 1 },
                         },
                         "required": ["filepath", "start_line", "max_lines"],
                         "additionalProperties": false,
@@ -272,7 +272,9 @@ mod tests {
                 },
                 ToolInfo {
                     name: "sh".to_owned(),
-                    description: "Run a shell command on the host system".to_owned(),
+                    description: "Run a shell command on the host system. \
+                        Equivalent to `sh -C 'command'`."
+                        .to_owned(),
                     input_schema: json!({
                         "type": "object",
                         "properties": { "command": { "type": "string" } },

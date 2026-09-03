@@ -85,6 +85,10 @@ pub enum ToolOutputContent<'a> {
         // Base64-encoded binary
         #[serde(rename = "file_data")]
         data: Cow<'a, str>,
+        // MIME type of the decoded data. Only used to build the data URI
+        // accepted by the inference API.
+        #[serde(skip)]
+        mime: Cow<'a, str>,
     },
 }
 
