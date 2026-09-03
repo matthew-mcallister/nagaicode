@@ -13,6 +13,7 @@ use crate::session::Item;
 use crate::try_nested;
 use crate::ui::render_item::RenderItem;
 
+pub mod edit;
 pub mod failed;
 pub mod read;
 pub mod sh;
@@ -94,6 +95,8 @@ impl ToolRegistry {
         tools.insert(sh.name().to_owned(), Box::new(sh));
         let read = read::ReadTool::new(Arc::clone(cwd));
         tools.insert(read.name().to_owned(), Box::new(read));
+        let edit = edit::EditTool::new(Arc::clone(cwd));
+        tools.insert(edit.name().to_owned(), Box::new(edit));
         let failed = failed::FailedTool::new();
         tools.insert(failed.name().to_owned(), Box::new(failed));
         Self { tools }
@@ -244,7 +247,7 @@ mod tests {
         let registry = ToolRegistry::new(&dir);
         let mut names: Vec<&str> = registry.list_tools().map(|t| t.name()).collect();
         names.sort();
-        assert_eq!(names, ["read", "sh"]);
+        assert_eq!(names, ["edit", "read", "sh"]);
 
         // Only visible tools are advertised to the model.
         let mut infos = registry.list_tool_infos();
@@ -252,6 +255,23 @@ mod tests {
         assert_eq!(
             infos,
             [
+                ToolInfo {
+                    name: "edit".to_owned(),
+                    description: "Finds and replaces text in a file. The old \
+                        string must be unique unless `replace_all` is true."
+                        .to_owned(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "filepath": { "type": "string" },
+                            "old_string": { "type": "string" },
+                            "new_string": { "type": "string" },
+                            "replace_all": { "type": "boolean" },
+                        },
+                        "required": ["filepath", "old_string", "new_string", "replace_all"],
+                        "additionalProperties": false,
+                    }),
+                },
                 ToolInfo {
                     name: "read".to_owned(),
                     description: "Reads lines from a text file. Start line is \

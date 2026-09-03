@@ -103,7 +103,7 @@ impl Tool for ReadTool {
             let start = start_line.max(1) as usize - 1;
             if start > 0 && start >= lines.len() {
                 return Err(anyhow!(
-                    "'{filepath}': start line {start_line} is past end of file ({} lines)",
+                    "{filepath}: start line {start_line} is past end of file ({} lines)",
                     lines.len()
                 ));
             }
