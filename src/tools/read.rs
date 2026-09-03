@@ -326,7 +326,7 @@ mod tests {
         let error = tool.call(&json!({ "filepath": binary, "start_line": 1, "max_lines": 1 }))
             .await
             .expect_err("invalid utf-8");
-        assert!(error.is::<std::string::FromUtf8Error>(), "{error}");
+        assert!(error.to_string().contains("invalid utf-8 sequence of 1 bytes from index 1"));
     }
 
     #[tokio::test]

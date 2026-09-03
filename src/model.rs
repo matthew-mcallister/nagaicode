@@ -1,6 +1,6 @@
 // TODO: Track recently used models (requires upsert but can do client-side)
 use anyhow::anyhow;
-use chrono::{Duration, NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 use futures::future::join_all;
