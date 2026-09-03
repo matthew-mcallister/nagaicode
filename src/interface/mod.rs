@@ -369,7 +369,7 @@ mod tests {
                 ..Default::default()
             },
         )
-        .expect("create item")
+        .unwrap()
     }
 
     fn create_tool_call(
@@ -381,7 +381,7 @@ mod tests {
         args: Option<&str>,
         output: Option<&Value>,
     ) -> DbItem {
-        let call = create_item(
+        let mut call = create_item(
             conn,
             session_id,
             turn_id,
@@ -390,17 +390,15 @@ mod tests {
             call_id,
         );
         if let Some(args) = args {
-            DbItem::update_tool_args(conn, call.id, args).expect("update tool args");
+            call.update_tool_args(conn,args).unwrap();
         }
-        let mut call = DbItem::get_by_id(conn, call.id)
-            .expect("get item")
-            .expect("item not found");
+        let mut call = DbItem::get_by_id(conn, call.id).unwrap().unwrap();
         if let Some(output) = output {
             let result = ToolResult {
                 name: name.to_owned(),
                 output: output.clone(),
             };
-            call.set_tool_output(conn, &result).expect("set tool output");
+            call.set_tool_output(conn, &result).unwrap();
         }
         call
     }
@@ -408,16 +406,16 @@ mod tests {
     #[test]
     fn test_build_history() {
         let registry = crate::testing::tool_registry();
-        let mut conn = db::open_new().expect("failed to open in-memory db");
-        let session = Session::create(&mut conn, "Session").expect("create session");
+        let mut conn = db::open_new().unwrap();
+        let session = Session::create(&mut conn, "Session").unwrap();
         let turn = Turn::create(&mut conn, session.id, TurnType::Assistant, None, None, None)
-            .expect("create turn");
+            .unwrap();
 
         let user_text =
             create_item(&mut conn, session.id, turn.id, ItemType::UserText, Some("hello"), None);
-        let reasoning =
+        let mut reasoning =
             create_item(&mut conn, session.id, turn.id, ItemType::Reasoning, Some("thinking"), None);
-        DbItem::update_summary(&mut conn, reasoning.id, "summarizing").expect("update summary");
+        reasoning.update_summary(&mut conn, "summarizing").unwrap();
         let response_text = create_item(
             &mut conn,
             session.id,
@@ -476,8 +474,8 @@ mod tests {
             .iter()
             .map(|&id| {
                 DbItem::get_by_id(&mut conn, id)
-                    .expect("get item")
-                    .expect("item not found")
+                    .unwrap()
+                    .unwrap()
             })
             .collect();
 
@@ -580,7 +578,7 @@ mod tests {
 
         // A failed call is renamed to the failure tool in the DB, but the
         // model still sees the name it called.
-        let failed_call = create_tool_call(
+        let mut failed_call = create_tool_call(
             &mut conn,
             session.id,
             turn.id,
@@ -589,10 +587,10 @@ mod tests {
             Some(r#"{"command":123}"#),
             Some(&json!({ "tool_name": "sh", "error": "boom" })),
         );
-        DbItem::update_text(&mut conn, failed_call.id, "failed").expect("rename to failed");
+        failed_call.update_text(&mut conn, "failed").unwrap();
         let failed_call = DbItem::get_by_id(&mut conn, failed_call.id)
-            .expect("get item")
-            .expect("item not found");
+            .unwrap()
+            .unwrap();
         assert_eq!(
             build_history(&registry, &[failed_call], false).unwrap(),
             vec![

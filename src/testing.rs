@@ -48,9 +48,8 @@ pub fn tool_call(
             text: Some(name),
             ..Default::default()
         },
-    )
-    .expect("create tool call");
-    DbItem::update_tool_args(conn, item.id, &args.to_string()).expect("set tool args");
+    ).expect("create tool call");
+    item.update_tool_args(conn, args.to_string()).expect("set tool args");
     if let Some(output) = output {
         let result = crate::tools::ToolResult {
             name: name.to_owned(),

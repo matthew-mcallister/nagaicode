@@ -583,26 +583,29 @@ impl DbItem {
         Ok(count > 0)
     }
 
-    pub fn update_text(conn: &mut SqliteConnection, id: i32, text: &str) -> AnyResult<()> {
+    pub fn update_text(&mut self, conn: &mut SqliteConnection, text: impl Into<String>) -> AnyResult<()> {
         use crate::schema::item::dsl;
-        diesel::update(dsl::item.filter(dsl::id.eq(id)))
-            .set(dsl::text.eq(text))
+        self.text = Some(text.into());
+        diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
+            .set(dsl::text.eq(&self.text))
             .execute(conn)?;
         Ok(())
     }
 
-    pub fn update_summary(conn: &mut SqliteConnection, id: i32, summary: &str) -> AnyResult<()> {
+    pub fn update_summary(&mut self, conn: &mut SqliteConnection, summary: impl Into<String>) -> AnyResult<()> {
         use crate::schema::item::dsl;
-        diesel::update(dsl::item.filter(dsl::id.eq(id)))
-            .set(dsl::summary.eq(summary))
+        self.summary = Some(summary.into());
+        diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
+            .set(dsl::summary.eq(&self.summary))
             .execute(conn)?;
         Ok(())
     }
 
-    pub fn update_tool_args(conn: &mut SqliteConnection, id: i32, tool_args: &str) -> AnyResult<()> {
+    pub fn update_tool_args(&mut self, conn: &mut SqliteConnection, tool_args: impl Into<String>) -> AnyResult<()> {
         use crate::schema::item::dsl;
-        diesel::update(dsl::item.filter(dsl::id.eq(id)))
-            .set(dsl::tool_args.eq(tool_args))
+        self.tool_args = Some(tool_args.into());
+        diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
+            .set(dsl::tool_args.eq(&self.tool_args))
             .execute(conn)?;
         Ok(())
     }
@@ -861,7 +864,7 @@ mod tests {
             .expect("read item type");
         assert_eq!(item_ty, ItemType::UserText);
 
-        let reasoning = DbItem::create(
+        let mut reasoning = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(session.id),
@@ -879,8 +882,8 @@ mod tests {
         assert_eq!(reasoning.upstream_id.as_deref(), Some("rs_1"));
         assert_eq!(reasoning.upstream_type.as_deref(), Some("reasoning"));
 
-        DbItem::update_text(&mut conn, reasoning.id, "thinking").expect("update text");
-        DbItem::update_summary(&mut conn, reasoning.id, "summarizing").expect("update summary");
+        reasoning.update_text(&mut conn, "thinking").expect("update text");
+        reasoning.update_summary(&mut conn, "summarizing").expect("update summary");
         let raw_data = json!({"id": "rs_1", "type": "reasoning"});
         DbItem::set_raw_data(&mut conn, reasoning.id, &raw_data).expect("set raw data");
         let fetched = DbItem::get_by_id(&mut conn, reasoning.id)
@@ -907,7 +910,7 @@ mod tests {
         )
         .expect("create answer item");
 
-        let tool_call = DbItem::create(
+        let mut tool_call = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(session.id),
@@ -928,7 +931,7 @@ mod tests {
         assert_eq!(tool_call.upstream_call_id.as_deref(), Some("call_1"));
         assert_eq!(tool_call.tool_output, None);
 
-        DbItem::update_tool_args(&mut conn, tool_call.id, r#"{"path": "a.txt"}"#)
+        tool_call.update_tool_args(&mut conn, r#"{"path": "a.txt"}"#)
             .expect("update tool args");
         let output = json!({"error": "file not found"});
         let mut fetched_call = DbItem::get_by_id(&mut conn, tool_call.id)
