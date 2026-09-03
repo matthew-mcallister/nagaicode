@@ -9,7 +9,8 @@
   - `src/app.rs`: main entrypoint
   - `src/task.rs`: task spawning and lifecycle
   - `src/query.rs`: debug query trait
-  - `src/session.rs`: core database tables
+  - `src/session.rs`: session, turn, and response tables
+  - `src/item.rs`: item table
   - `src/tools/`:
     - `src/tools/mod.rs`: tool registry and task definition
   - `src/interface/`

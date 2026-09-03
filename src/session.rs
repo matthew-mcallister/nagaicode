@@ -532,6 +532,7 @@ impl DbItem {
     }
 
     /// Returns the highest seqno for the session, if any.
+    // XXX: Why not just next_seqno() -> max + 1 with default, done in query...
     pub fn max_seqno(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Option<i64>> {
         let result = item::table
             .filter(item::session_id.eq(session_id))

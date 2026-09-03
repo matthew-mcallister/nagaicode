@@ -7,6 +7,7 @@ pub mod cwd;
 pub mod db;
 pub mod error;
 pub mod interface;
+pub mod item;
 pub mod ui;
 pub mod logging;
 pub mod model;
