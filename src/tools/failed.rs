@@ -32,10 +32,11 @@ impl FailedTool {
     }
 
     /// Writes failure output for a failed tool call, falling back to a generic
-    /// message when `message` is empty.
+    /// message when `message` is empty. The item is renamed to the failed tool
+    /// so its output renders as an error instead of as `tool_name`'s output.
     pub fn write_failure(item: &mut Item, tool_name: &str, message: &str) {
         let message = if message.is_empty() { "unknown error" } else { message };
-        item.text = Some(tool_name.to_owned());
+        item.text = Some("failed".to_string());
         let output = json!({
             "tool_name": tool_name,
             "error": message,
@@ -142,7 +143,7 @@ mod tests {
         )
         .expect("create item");
         FailedTool::write_failure(&mut item, "sh", "invalid arguments");
-        assert_eq!(item.text.as_deref(), Some("sh"));
+        assert_eq!(item.text.as_deref(), Some("failed"));
         assert_eq!(item.tool_output, Some(output.to_string()));
 
         let input = json!({});

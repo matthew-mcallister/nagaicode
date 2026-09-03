@@ -103,7 +103,9 @@ pub enum ChatMessage<'a> {
     /// A tool invocation requested by the assistant.
     ToolCall {
         call_id: &'a str,
-        name: &'a str,
+        /// Name of the called tool. Owned when it comes from a rendered
+        /// output, e.g. for calls which failed and were renamed.
+        name: Cow<'a, str>,
         arguments: &'a str,
     },
     /// The output of a tool invocation.
@@ -119,7 +121,8 @@ pub enum ChatMessage<'a> {
 /// `include_reasoning` is true, preferring the summary over the raw text.
 ///
 /// Tool calls are rendered as a call/response pair, with a fallback for
-/// incomplete output.
+/// incomplete output. The call name comes from the rendered output, since
+/// failed calls are renamed to the failure tool.
 pub fn build_history<'a>(
     tools: &ToolRegistry,
     items: &'a [Item],
@@ -148,8 +151,19 @@ pub fn build_history<'a>(
                 }
             }
             ItemType::ToolCall => {
-                let (Some(call_id), Some(name)) =
-                    (item.upstream_call_id.as_deref(), item.text.as_deref())
+                let Some(call_id) = item.upstream_call_id.as_deref() else {
+                    // Fallback in case database is corrupted
+                    continue;
+                };
+                let output = if item.tool_output()?.is_some() {
+                    Some(tools.render_to_interface(item))
+                } else {
+                    None
+                };
+                let Some(name) = output
+                    .as_ref()
+                    .map(|out| Cow::Owned(out.name.clone()))
+                    .or_else(|| item.text.as_deref().map(Cow::Borrowed))
                 else {
                     // Fallback in case database is corrupted
                     continue;
@@ -159,13 +173,12 @@ pub fn build_history<'a>(
                     name,
                     arguments: item.tool_args.as_deref().unwrap_or(""),
                 });
-                let output = if item.tool_output()?.is_some() {
-                    tools.render_to_interface(item).content
-                } else {
+                let output = match output {
+                    Some(out) => out.content,
                     // Fallback for calls which never produced output
-                    vec![ToolOutputContent::Text {
+                    None => vec![ToolOutputContent::Text {
                         text: Cow::Borrowed("error: tool call interrupted"),
-                    }]
+                    }],
                 };
                 messages.push(ChatMessage::ToolOutput { call_id, output });
             }
@@ -334,6 +347,7 @@ mod tests {
     use super::*;
     use crate::db;
     use crate::session::{Item, NewItem, Session, Turn, TurnType};
+    use crate::tools::ToolResult;
     use diesel::sqlite::SqliteConnection;
 
     fn create_item(
@@ -382,7 +396,11 @@ mod tests {
             .expect("get item")
             .expect("item not found");
         if let Some(output) = output {
-            call.set_tool_output(conn, output).expect("set tool output");
+            let result = ToolResult {
+                name: name.to_owned(),
+                output: output.clone(),
+            };
+            call.set_tool_output(conn, &result).expect("set tool output");
         }
         call
     }
@@ -473,7 +491,7 @@ mod tests {
                 ChatMessage::Response { content: "hi there" },
                 ChatMessage::ToolCall {
                     call_id: "call_1",
-                    name: "sh",
+                    name: Cow::Borrowed("sh"),
                     arguments: r#"{"command":"echo hi"}"#,
                 },
                 ChatMessage::ToolOutput {
@@ -490,7 +508,7 @@ mod tests {
                 // Calls to unknown tools render a placeholder
                 ChatMessage::ToolCall {
                     call_id: "call_2",
-                    name: "cat",
+                    name: Cow::Borrowed("cat"),
                     arguments: r#"{"path":"a.txt"}"#,
                 },
                 ChatMessage::ToolOutput {
@@ -501,7 +519,7 @@ mod tests {
                 },
                 ChatMessage::ToolCall {
                     call_id: "call_3",
-                    name: "rm",
+                    name: Cow::Borrowed("rm"),
                     arguments: "",
                 },
                 ChatMessage::ToolOutput {
@@ -520,7 +538,7 @@ mod tests {
                 ChatMessage::Response { content: "hi there" },
                 ChatMessage::ToolCall {
                     call_id: "call_1",
-                    name: "sh",
+                    name: Cow::Borrowed("sh"),
                     arguments: r#"{"command":"echo hi"}"#,
                 },
                 ChatMessage::ToolOutput {
@@ -537,7 +555,7 @@ mod tests {
                 // Calls to unknown tools render a placeholder
                 ChatMessage::ToolCall {
                     call_id: "call_2",
-                    name: "cat",
+                    name: Cow::Borrowed("cat"),
                     arguments: r#"{"path":"a.txt"}"#,
                 },
                 ChatMessage::ToolOutput {
@@ -548,13 +566,45 @@ mod tests {
                 },
                 ChatMessage::ToolCall {
                     call_id: "call_3",
-                    name: "rm",
+                    name: Cow::Borrowed("rm"),
                     arguments: "",
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_3",
                     output: vec![ToolOutputContent::Text {
                         text: Cow::Borrowed("error: tool call interrupted"),
+                    }],
+                },
+            ]
+        );
+
+        // A failed call is renamed to the failure tool in the DB, but the
+        // model still sees the name it called.
+        let failed_call = create_tool_call(
+            &mut conn,
+            session.id,
+            turn.id,
+            "sh",
+            Some("call_4"),
+            Some(r#"{"command":123}"#),
+            Some(&json!({ "tool_name": "sh", "error": "boom" })),
+        );
+        Item::update_text(&mut conn, failed_call.id, "failed").expect("rename to failed");
+        let failed_call = Item::get_by_id(&mut conn, failed_call.id)
+            .expect("get item")
+            .expect("item not found");
+        assert_eq!(
+            build_history(&registry, &[failed_call], false).unwrap(),
+            vec![
+                ChatMessage::ToolCall {
+                    call_id: "call_4",
+                    name: Cow::Borrowed("sh"),
+                    arguments: r#"{"command":123}"#,
+                },
+                ChatMessage::ToolOutput {
+                    call_id: "call_4",
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Owned("error: boom".to_owned()),
                     }],
                 },
             ]

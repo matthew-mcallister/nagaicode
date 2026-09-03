@@ -177,7 +177,9 @@ impl ToolRegistry {
         Some((tool.as_ref(), input, output))
     }
 
-    /// Writes a failure for a tool call and builds its `ToolResult`.
+    /// Writes a failure for a tool call and builds its `ToolResult`. The
+    /// result is named after the failure tool so that the item renders as an
+    /// error once persisted.
     fn fail(item: &mut Item, tool_name: &str, message: &str) -> ToolResult {
         FailedTool::write_failure(item, tool_name, message);
         let output = item
@@ -185,11 +187,7 @@ impl ToolRegistry {
             .ok()
             .flatten()
             .unwrap_or_else(|| json!({ "error": "unknown error" }));
-        let name = output
-            .get("tool_name")
-            .and_then(Value::as_str)
-            .unwrap_or("failed")
-            .to_owned();
+        let name = item.text.clone().unwrap_or_else(|| "failed".to_owned());
         ToolResult { name, output }
     }
 
@@ -212,6 +210,8 @@ impl ToolRegistry {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use super::*;
     use crate::cwd::cwd;
     use crate::session::{ItemType, NewItem};
@@ -229,16 +229,85 @@ mod tests {
         assert_eq!(result.name, "sh");
         assert_eq!(result.output["stdout"], json!("hi"));
 
+        // Failed calls are renamed to the failure tool.
         let mut item = tool_call(&mut conn, &turn, "sh", json!({ "command": 123 }), None);
         let result = registry.call(&mut item).await;
-        assert_eq!(result.name, "sh");
+        assert_eq!(result.name, "failed");
         assert_eq!(result.output["error"], json!("invalid arguments for 'sh': expected {\"command\": \"...\"}"));
         assert_eq!(item.tool_output, Some(result.output.to_string()));
 
         let mut item = tool_call(&mut conn, &turn, "no_such_tool", json!({}), None);
         let result = registry.call(&mut item).await;
-        assert_eq!(result.name, "no_such_tool");
+        assert_eq!(result.name, "failed");
         assert_eq!(result.output["error"], json!("unknown tool"));
+    }
+
+    #[tokio::test]
+    async fn test_call_failure_round_trip() {
+        let dir = Arc::new(cwd());
+        let registry = ToolRegistry::new(&dir);
+        let mut conn = crate::db::open_new().expect("open db");
+        let (_, turn) = session_turn(&mut conn);
+        let error = "invalid arguments for 'sh': expected {\"command\": \"...\"}";
+
+        // Invalid arguments cause a real tool failure.
+        let mut item = tool_call(&mut conn, &turn, "sh", json!({ "command": 123 }), None);
+        let result = registry.call(&mut item).await;
+        assert_eq!(result.name, "failed");
+        assert_eq!(result.output, json!({ "tool_name": "sh", "error": error }));
+        item.set_tool_output(&mut conn, &result).expect("set tool output");
+
+        // The failure survives a DB round trip.
+        let item = Item::get_by_id(&mut conn, item.id)
+            .expect("get item")
+            .expect("item exists");
+        assert_eq!(item.text.as_deref(), Some("failed"));
+        assert_eq!(
+            item.tool_output().expect("parse output"),
+            Some(json!({ "tool_name": "sh", "error": error }))
+        );
+
+        // The reloaded item renders as an error, not as 'sh' output.
+        let ui = registry.render_to_ui(&item).expect("render ui");
+        assert_eq!(ui.query("/type").unwrap(), json!("error"));
+        assert_eq!(ui.query("/value").unwrap(), json!(format!("Called 'sh': {error}")));
+
+        let out = registry.render_to_interface(&item);
+        assert_eq!(out.name, "sh");
+        assert_eq!(
+            out.content,
+            vec![ToolOutputContent::Text {
+                text: Cow::Owned(format!("error: {error}")),
+            }]
+        );
+
+        // Unknown tools round trip the same way.
+        let mut item = tool_call(&mut conn, &turn, "no_such_tool", json!({}), None);
+        let result = registry.call(&mut item).await;
+        assert_eq!(result.name, "failed");
+        assert_eq!(
+            result.output,
+            json!({ "tool_name": "no_such_tool", "error": "unknown tool" })
+        );
+        item.set_tool_output(&mut conn, &result).expect("set tool output");
+        let item = Item::get_by_id(&mut conn, item.id)
+            .expect("get item")
+            .expect("item exists");
+        assert_eq!(item.text.as_deref(), Some("failed"));
+        let ui = registry.render_to_ui(&item).expect("render ui");
+        assert_eq!(ui.query("/type").unwrap(), json!("error"));
+        assert_eq!(
+            ui.query("/value").unwrap(),
+            json!("Called 'no_such_tool': unknown tool")
+        );
+        let out = registry.render_to_interface(&item);
+        assert_eq!(out.name, "no_such_tool");
+        assert_eq!(
+            out.content,
+            vec![ToolOutputContent::Text {
+                text: Cow::Owned("error: unknown tool".into()),
+            }]
+        );
     }
 
     #[test]

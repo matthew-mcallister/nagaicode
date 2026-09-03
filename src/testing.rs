@@ -52,7 +52,11 @@ pub fn tool_call(
     .expect("create tool call");
     Item::update_tool_args(conn, item.id, &args.to_string()).expect("set tool args");
     if let Some(output) = output {
-        item.set_tool_output(conn, &output).expect("set tool output");
+        let result = crate::tools::ToolResult {
+            name: name.to_owned(),
+            output,
+        };
+        item.set_tool_output(conn, &result).expect("set tool output");
     }
     Item::get_by_id(conn, item.id).expect("get item").expect("item exists")
 }

@@ -16,7 +16,7 @@ impl ExecuteToolCall {
 
     async fn process(mut self, context: &mut TaskContext) -> AnyResult<()> {
         let result = context.tool_registry().call(&mut self.tool_call).await;
-        self.tool_call.set_tool_output(context.connection()?, &result.output)?;
+        self.tool_call.set_tool_output(context.connection()?, &result)?;
         context.send(AppEvent::ItemUpdated { item: self.tool_call });
         Ok(())
     }

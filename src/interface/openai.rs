@@ -1153,7 +1153,7 @@ mod tests {
             input: &[
                 ChatMessage::ToolCall {
                     call_id: "call_1",
-                    name: "add",
+                    name: Cow::Borrowed("add"),
                     arguments: r#"{"a":1}"#,
                 },
                 ChatMessage::ToolOutput {
