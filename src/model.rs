@@ -136,18 +136,8 @@ impl DataQuery for Model {
 pub async fn revalidate_models(conn: &mut SqliteConnection) -> AnyResult<()> {
     // XXX: This function is racey (e.g. provider is deleted while models are
     // fetching) but risk is pretty low
-    let cutoff = Utc::now().naive_utc() - Duration::hours(24);
-
-    let stale_exists = dsl::model
-        .filter(dsl::updated_at.lt(cutoff))
-        .first::<Model>(conn)
-        .optional()?
-        .is_some();
-    let is_empty: bool = dsl::model.count().get_result::<i64>(conn)? == 0;
-
-    if !is_empty && !stale_exists {
-        return Ok(());
-    }
+    // FIXME: No cache key so we revalidate every time at startup. Need to add
+    // last fetch time to Settings and invalidate any time provider changes.
 
     let providers = Provider::all(conn)?;
     let client = DefaultClient::default();
