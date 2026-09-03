@@ -60,7 +60,7 @@ impl Tool for ShTool {
     }
 
     fn description(&self) -> &str {
-        "Run a shell command on the host system"
+        "Run a shell command on the host system. Equivalent to `sh -C 'command'`."
     }
 
     fn input_schema(&self) -> &Value {

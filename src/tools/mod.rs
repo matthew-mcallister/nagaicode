@@ -14,6 +14,7 @@ use crate::try_nested;
 use crate::ui::render_item::RenderItem;
 
 pub mod failed;
+pub mod read;
 pub mod sh;
 pub mod unknown;
 
@@ -91,6 +92,8 @@ impl ToolRegistry {
         let mut tools: FnvHashMap<String, Box<dyn Tool>> = FnvHashMap::default();
         let sh = sh::ShTool::new(Arc::clone(cwd));
         tools.insert(sh.name().to_owned(), Box::new(sh));
+        let read = read::ReadTool::new(Arc::clone(cwd));
+        tools.insert(read.name().to_owned(), Box::new(read));
         let failed = failed::FailedTool::new();
         tools.insert(failed.name().to_owned(), Box::new(failed));
         Self { tools }
@@ -239,22 +242,45 @@ mod tests {
     fn test_list_tools() {
         let dir = Arc::new(cwd());
         let registry = ToolRegistry::new(&dir);
-        let names: Vec<&str> = registry.list_tools().map(|t| t.name()).collect();
-        assert_eq!(names, ["sh"]);
+        let mut names: Vec<&str> = registry.list_tools().map(|t| t.name()).collect();
+        names.sort();
+        assert_eq!(names, ["read", "sh"]);
 
         // Only visible tools are advertised to the model.
+        let mut infos = registry.list_tool_infos();
+        infos.sort_by(|a, b| a.name.cmp(&b.name));
         assert_eq!(
-            registry.list_tool_infos(),
-            [ToolInfo {
-                name: "sh".to_owned(),
-                description: "Run a shell command on the host system".to_owned(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": { "command": { "type": "string" } },
-                    "required": ["command"],
-                    "additionalProperties": false,
-                }),
-            }]
+            infos,
+            [
+                ToolInfo {
+                    name: "read".to_owned(),
+                    description: "Reads lines from a text file. Start line is \
+                        1-indexed. Output includes next line offset for \
+                        pagination. Lines truncated at 2000 bytes. UTF-8 only \
+                        currently."
+                        .to_owned(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "filepath": { "type": "string" },
+                            "start_line": { "type": "integer" },
+                            "max_lines": { "type": "integer" },
+                        },
+                        "required": ["filepath", "start_line", "max_lines"],
+                        "additionalProperties": false,
+                    }),
+                },
+                ToolInfo {
+                    name: "sh".to_owned(),
+                    description: "Run a shell command on the host system".to_owned(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": { "command": { "type": "string" } },
+                        "required": ["command"],
+                        "additionalProperties": false,
+                    }),
+                },
+            ]
         );
     }
 

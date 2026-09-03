@@ -81,10 +81,10 @@ pub enum ToolOutputContent<'a> {
     #[serde(rename = "input_file")]
     File {
         #[serde(rename = "filename")]
-        filepath: &'a str,
+        filepath: Cow<'a, str>,
         // Base64-encoded binary
         #[serde(rename = "file_data")]
-        data: &'a str,
+        data: Cow<'a, str>,
     },
 }
 
