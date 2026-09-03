@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::session::Item;
+use crate::session::DbItem;
 use crate::tools::{InterfaceToolOutput, Tool};
 use crate::ui::render_item::{ErrorRenderItem, RenderItem};
 
@@ -34,7 +34,7 @@ impl FailedTool {
     /// Writes failure output for a failed tool call, falling back to a generic
     /// message when `message` is empty. The item is renamed to the failed tool
     /// so its output renders as an error instead of as `tool_name`'s output.
-    pub fn write_failure(item: &mut Item, tool_name: &str, message: &str) {
+    pub fn write_failure(item: &mut DbItem, tool_name: &str, message: &str) {
         let message = if message.is_empty() { "unknown error" } else { message };
         item.text = Some("failed".to_string());
         let output = json!({
@@ -131,7 +131,7 @@ mod tests {
             None,
         )
         .expect("create turn");
-        let mut item = crate::session::Item::create(
+        let mut item = crate::session::DbItem::create(
             &mut conn,
             crate::session::NewItem {
                 session_id: Some(session.id),

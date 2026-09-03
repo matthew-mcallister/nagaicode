@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use crate::arena::{Arena, Id};
 use crate::error::AnyResult;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
-use crate::session::{Item, ItemType};
+use crate::session::{DbItem, ItemType};
 use crate::tools::ToolRegistry;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
@@ -498,7 +498,7 @@ impl History {
     }
 
     /// Creates (or updates) an item
-    fn on_item_created(&mut self, item: &Item) -> AnyResult<()> {
+    fn on_item_created(&mut self, item: &DbItem) -> AnyResult<()> {
         if item.ty()? == ItemType::ToolCall {
             if item.tool_output.is_none() {
                 return Ok(());
@@ -517,7 +517,7 @@ impl History {
 
     /// Does an incremental rerender for an updated item. Updates nothing on
     /// error.
-    fn on_item_updated(&mut self, item: &Item) -> AnyResult<()> {
+    fn on_item_updated(&mut self, item: &DbItem) -> AnyResult<()> {
         if let Some(&item_id) = self.by_item_id.get(&item.id) {
             let Some(content) = get_item_content(&self.tools, item)?
                 else { return Ok(()) };
@@ -572,8 +572,8 @@ impl History {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
-    ItemCreated { item: &'a Item },
-    ItemUpdated { item: &'a Item },
+    ItemCreated { item: &'a DbItem },
+    ItemUpdated { item: &'a DbItem },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -991,8 +991,8 @@ mod tests {
         name: &str,
         args: Value,
         output: Option<Value>,
-    ) -> Item {
-        Item {
+    ) -> DbItem {
+        DbItem {
             id,
             session_id: 1,
             turn_id: 1,
@@ -1105,8 +1105,8 @@ mod tests {
             .collect()
     }
 
-    fn item_with_seqno(id: i32, seqno: i64) -> Item {
-        Item {
+    fn item_with_seqno(id: i32, seqno: i64) -> DbItem {
+        DbItem {
             id,
             session_id: 1,
             turn_id: 1,

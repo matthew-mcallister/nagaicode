@@ -9,7 +9,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::app::AppEvent;
 use crate::error::AnyResult;
 use crate::interface::{InferenceEvent, ItemDelta, OutputItemEvent};
-use crate::session::{Item, ItemType, NewItem, Response, Session, Turn, TurnType};
+use crate::session::{DbItem, ItemType, NewItem, Response, Session, Turn, TurnType};
 
 /// Consumes an inference event stream and persists it into a session.
 pub struct StreamProcessor<'a, S> {
@@ -22,7 +22,7 @@ pub struct StreamProcessor<'a, S> {
     turn_id: Option<i32>,
     base_seqno: i64,
     response: Option<Response>,
-    items: FnvHashMap<i64, Item>,
+    items: FnvHashMap<i64, DbItem>,
 }
 
 impl<'a, S> StreamProcessor<'a, S> {
@@ -127,9 +127,9 @@ impl<'a, S> StreamProcessor<'a, S> {
     fn handle_item_done(&mut self, done: OutputItemEvent) -> AnyResult<Option<AppEvent>> {
         if let Some(item) = self.items.get_mut(&done.output_index) {
             if let Some(tool_args) = item.tool_args.as_deref() {
-                Item::update_tool_args(self.conn, item.id, tool_args)?;
+                DbItem::update_tool_args(self.conn, item.id, tool_args)?;
             }
-            Item::set_raw_data(self.conn, item.id, &done.raw)?;
+            DbItem::set_raw_data(self.conn, item.id, &done.raw)?;
             item.raw_data = Some(done.raw.to_string());
             Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))
         } else {
@@ -159,11 +159,11 @@ impl<'a, S> StreamProcessor<'a, S> {
             .expect("item exists");
         if summary {
             let summary = format!("{}{}", item.summary.as_deref().unwrap_or(""), &delta.delta);
-            Item::update_summary(self.conn, item.id, &summary)?;
+            DbItem::update_summary(self.conn, item.id, &summary)?;
             item.summary = Some(summary);
         } else {
             let text = format!("{}{}", item.text.as_deref().unwrap_or(""), &delta.delta);
-            Item::update_text(self.conn, item.id, &text)?;
+            DbItem::update_text(self.conn, item.id, &text)?;
             item.text = Some(text);
         }
         Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))
@@ -189,10 +189,10 @@ impl<'a, S> StreamProcessor<'a, S> {
         upstream_type: Option<&str>,
         upstream_call_id: Option<&str>,
         text: Option<&str>,
-    ) -> AnyResult<Item> {
+    ) -> AnyResult<DbItem> {
         let turn_id = self.ensure_turn()?;
         let response_id = self.response.as_ref().map(|r| r.id);
-        let item = Item::create(
+        let item = DbItem::create(
             self.conn,
             NewItem {
                 session_id: Some(self.session.id),

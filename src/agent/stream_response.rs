@@ -4,7 +4,7 @@ use crate::interface::stream::StreamProcessor;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
-use crate::session::{Item, Session};
+use crate::session::{DbItem, Session};
 use crate::task::{Task, TaskContext};
 
 pub struct StreamResponse {
@@ -36,7 +36,7 @@ impl StreamResponse {
     async fn process(self, context: &mut TaskContext) -> AnyResult<(i32, i32)> {
         let interface = self.provider.create_interface(&self.client)?;
 
-        let history = Item::list_by_session(context.connection()?, self.session.id)?;
+        let history = DbItem::list_by_session(context.connection()?, self.session.id)?;
         let messages = build_history(
             context.tool_registry(),
             &history,
@@ -53,7 +53,7 @@ impl StreamResponse {
         let stream = interface.generate(params);
 
         let sender = context.sender().clone();
-        let base_seqno = Item::max_seqno(context.connection()?, self.session.id)?.unwrap_or(0) + 1;
+        let base_seqno = DbItem::max_seqno(context.connection()?, self.session.id)?.unwrap_or(0) + 1;
         let mut processor = StreamProcessor::new(
             self.session,
             context.connection()?,

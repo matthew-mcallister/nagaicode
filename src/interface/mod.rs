@@ -13,7 +13,7 @@ use crate::error::{AnyError, AnyResult};
 use crate::interface::openai::OpenaiInterface;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
-use crate::session::{Item, ItemType};
+use crate::session::{DbItem, ItemType};
 use crate::tools::ToolRegistry;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -125,7 +125,7 @@ pub enum ChatMessage<'a> {
 /// failed calls are renamed to the failure tool.
 pub fn build_history<'a>(
     tools: &ToolRegistry,
-    items: &'a [Item],
+    items: &'a [DbItem],
     include_reasoning: bool,
 ) -> AnyResult<Vec<ChatMessage<'a>>> {
     let mut messages = Vec::with_capacity(items.len());
@@ -346,7 +346,7 @@ mod tests {
 
     use super::*;
     use crate::db;
-    use crate::session::{Item, NewItem, Session, Turn, TurnType};
+    use crate::session::{DbItem, NewItem, Session, Turn, TurnType};
     use crate::tools::ToolResult;
     use diesel::sqlite::SqliteConnection;
 
@@ -357,8 +357,8 @@ mod tests {
         ty: ItemType,
         text: Option<&str>,
         upstream_call_id: Option<&str>,
-    ) -> Item {
-        Item::create(
+    ) -> DbItem {
+        DbItem::create(
             conn,
             NewItem {
                 session_id: Some(session_id),
@@ -380,7 +380,7 @@ mod tests {
         call_id: Option<&str>,
         args: Option<&str>,
         output: Option<&Value>,
-    ) -> Item {
+    ) -> DbItem {
         let call = create_item(
             conn,
             session_id,
@@ -390,9 +390,9 @@ mod tests {
             call_id,
         );
         if let Some(args) = args {
-            Item::update_tool_args(conn, call.id, args).expect("update tool args");
+            DbItem::update_tool_args(conn, call.id, args).expect("update tool args");
         }
-        let mut call = Item::get_by_id(conn, call.id)
+        let mut call = DbItem::get_by_id(conn, call.id)
             .expect("get item")
             .expect("item not found");
         if let Some(output) = output {
@@ -417,7 +417,7 @@ mod tests {
             create_item(&mut conn, session.id, turn.id, ItemType::UserText, Some("hello"), None);
         let reasoning =
             create_item(&mut conn, session.id, turn.id, ItemType::Reasoning, Some("thinking"), None);
-        Item::update_summary(&mut conn, reasoning.id, "summarizing").expect("update summary");
+        DbItem::update_summary(&mut conn, reasoning.id, "summarizing").expect("update summary");
         let response_text = create_item(
             &mut conn,
             session.id,
@@ -472,10 +472,10 @@ mod tests {
             orphan_call.id,
             interrupted_call.id,
         ];
-        let items: Vec<Item> = ids
+        let items: Vec<DbItem> = ids
             .iter()
             .map(|&id| {
-                Item::get_by_id(&mut conn, id)
+                DbItem::get_by_id(&mut conn, id)
                     .expect("get item")
                     .expect("item not found")
             })
@@ -589,8 +589,8 @@ mod tests {
             Some(r#"{"command":123}"#),
             Some(&json!({ "tool_name": "sh", "error": "boom" })),
         );
-        Item::update_text(&mut conn, failed_call.id, "failed").expect("rename to failed");
-        let failed_call = Item::get_by_id(&mut conn, failed_call.id)
+        DbItem::update_text(&mut conn, failed_call.id, "failed").expect("rename to failed");
+        let failed_call = DbItem::get_by_id(&mut conn, failed_call.id)
             .expect("get item")
             .expect("item not found");
         assert_eq!(

@@ -2,7 +2,7 @@ use diesel::prelude::*;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
-use crate::session::{Item, ItemType, NewItem, Turn, TurnType};
+use crate::session::{DbItem, ItemType, NewItem, Turn, TurnType};
 use crate::task::{Task, TaskContext};
 
 /// Creates a Turn and Item for a prompt.
@@ -23,7 +23,7 @@ impl CreatePrompt {
         let events: AnyResult<_> = context.connection()?.transaction(|conn| {
             let session_id = self.session_id;
             let turn = Turn::create(conn, session_id, TurnType::User, None, None, None)?;
-            let item = Item::create(
+            let item = DbItem::create(
                 conn,
                 NewItem {
                     session_id: Some(session_id),
@@ -69,7 +69,7 @@ mod tests {
         let session = Session::create(app.conn(), "Session").unwrap();
         let turn = Turn::create(app.conn(), session.id, TurnType::Assistant, None, None, None)
             .unwrap();
-        let tool_call = Item::create(
+        let tool_call = DbItem::create(
             app.conn(),
             NewItem {
                 session_id: Some(session.id),
@@ -93,7 +93,7 @@ mod tests {
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[1].ty().unwrap(), TurnType::User);
 
-        let items = Item::list_by_session(app.conn(), session.id).unwrap();
+        let items = DbItem::list_by_session(app.conn(), session.id).unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, tool_call.id);
         assert_eq!(items[1].ty().unwrap(), ItemType::UserText);

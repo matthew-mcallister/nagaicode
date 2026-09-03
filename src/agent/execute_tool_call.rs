@@ -1,16 +1,16 @@
 use crate::app::AppEvent;
 use crate::error::AnyResult;
-use crate::session::Item;
+use crate::session::DbItem;
 use crate::task::{Task, TaskContext};
 
 /// Executes a tool call item and stores its output on the item.
 pub struct ExecuteToolCall {
-    tool_call: Item,
+    tool_call: DbItem,
 }
 
 impl ExecuteToolCall {
     /// Creates a task that executes `tool_call` and stores its output.
-    pub fn new(tool_call: Item) -> Self {
+    pub fn new(tool_call: DbItem) -> Self {
         Self { tool_call }
     }
 
@@ -58,7 +58,7 @@ mod tests {
             ExecuteToolCall::new(item).run(&mut context).await.unwrap();
         }
 
-        let items = Item::list_by_session(&mut conn, session.id).unwrap();
+        let items = DbItem::list_by_session(&mut conn, session.id).unwrap();
         assert_eq!(items.len(), 4);
         assert_eq!(
             items[0].tool_output().unwrap(),

@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 use crate::app::AppEvent;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
-use crate::session::Item;
+use crate::session::DbItem;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::command_editor::CommandEditor;
@@ -113,8 +113,8 @@ impl StackedView {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
-    ItemCreated { item: &'a Item },
-    ItemUpdated { item: &'a Item },
+    ItemCreated { item: &'a DbItem },
+    ItemUpdated { item: &'a DbItem },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),

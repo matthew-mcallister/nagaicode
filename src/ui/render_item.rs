@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::error::AnyResult;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::session::{Item, ItemType};
+use crate::session::{DbItem, ItemType};
 use crate::ui::markdown::{MarkdownResult, ResumePoint};
 use crate::ui::style::{Style, Theme};
 use crate::ui::styled_string::StyledString;
@@ -154,7 +154,7 @@ impl RenderItem for CommandOutputRenderItem {
 
 pub fn get_item_content(
     tools: &ToolRegistry,
-    item: &Item,
+    item: &DbItem,
 ) -> AnyResult<Option<Box<dyn RenderItem>>> {
     Ok(Some(match item.ty()? {
         ItemType::UserText => {

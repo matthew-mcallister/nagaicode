@@ -458,7 +458,7 @@ impl DataQuery for ToolCallArgs {
 #[derive(Debug, Clone, Eq, PartialEq, Queryable, Selectable)]
 #[diesel(table_name = item)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
-pub struct Item {
+pub struct DbItem {
     pub id: i32,
     pub session_id: i32,
     pub turn_id: i32,
@@ -480,6 +480,7 @@ pub struct Item {
     pub encrypted_text: Option<String>,
     /// Tool call args
     pub tool_args: Option<String>,
+    // TODO: config setting to disable
     pub raw_data: Option<String>,
     /// Position in the session's item ordering; unique per session.
     pub seqno: i64,
@@ -505,8 +506,8 @@ pub struct NewItem<'a> {
     pub seqno: Option<i64>,
 }
 
-impl Item {
-    pub fn create(conn: &mut SqliteConnection, new: NewItem<'_>) -> AnyResult<Item> {
+impl DbItem {
+    pub fn create(conn: &mut SqliteConnection, new: NewItem<'_>) -> AnyResult<DbItem> {
         if new.seqno.is_some() {
             return Self::insert(conn, new);
         }
@@ -522,7 +523,7 @@ impl Item {
         })
     }
 
-    fn insert(conn: &mut SqliteConnection, new: NewItem<'_>) -> AnyResult<Item> {
+    fn insert(conn: &mut SqliteConnection, new: NewItem<'_>) -> AnyResult<DbItem> {
         let item = diesel::insert_into(item::table)
             .values(new)
             .returning(item::all_columns)
@@ -539,40 +540,40 @@ impl Item {
         Ok(result)
     }
 
-    pub fn get_by_id(conn: &mut SqliteConnection, id: i32) -> AnyResult<Option<Item>> {
+    pub fn get_by_id(conn: &mut SqliteConnection, id: i32) -> AnyResult<Option<DbItem>> {
         let result = item::table
             .filter(item::id.eq(id))
-            .first::<Item>(conn)
+            .first::<DbItem>(conn)
             .optional()?;
         Ok(result)
     }
 
-    pub fn list_by_session(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Vec<Item>> {
+    pub fn list_by_session(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Vec<DbItem>> {
         let items = item::table
             .filter(item::session_id.eq(session_id))
             .order(item::seqno.asc())
-            .load::<Item>(conn)?;
+            .load::<DbItem>(conn)?;
         Ok(items)
     }
 
-    pub fn list_by_turn(conn: &mut SqliteConnection, turn_id: i32) -> AnyResult<Vec<Item>> {
+    pub fn list_by_turn(conn: &mut SqliteConnection, turn_id: i32) -> AnyResult<Vec<DbItem>> {
         let items = item::table
             .filter(item::turn_id.eq(turn_id))
             .order(item::seqno.asc())
-            .load::<Item>(conn)?;
+            .load::<DbItem>(conn)?;
         Ok(items)
     }
 
     pub fn tool_calls_by_response(
         conn: &mut SqliteConnection,
         response_id: i32,
-    ) -> AnyResult<Vec<Item>> {
+    ) -> AnyResult<Vec<DbItem>> {
         use crate::schema::item::dsl;
         let items = dsl::item
             .filter(dsl::response_id.eq(response_id))
             .filter(dsl::ty.eq(ItemType::ToolCall.to_string()))
             .order(dsl::seqno.asc())
-            .load::<Item>(conn)?;
+            .load::<DbItem>(conn)?;
         Ok(items)
     }
 
@@ -665,7 +666,7 @@ impl Item {
     }
 }
 
-impl DataQuery for Item {
+impl DataQuery for DbItem {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
@@ -835,7 +836,7 @@ mod tests {
         assert_eq!(fetched.total_tokens, Some(30));
         assert_eq!(fetched.raw_response, Some(raw_response.to_string()));
 
-        let prompt = Item::create(
+        let prompt = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(session.id),
@@ -859,7 +860,7 @@ mod tests {
             .expect("read item type");
         assert_eq!(item_ty, ItemType::UserText);
 
-        let reasoning = Item::create(
+        let reasoning = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(session.id),
@@ -877,11 +878,11 @@ mod tests {
         assert_eq!(reasoning.upstream_id.as_deref(), Some("rs_1"));
         assert_eq!(reasoning.upstream_type.as_deref(), Some("reasoning"));
 
-        Item::update_text(&mut conn, reasoning.id, "thinking").expect("update text");
-        Item::update_summary(&mut conn, reasoning.id, "summarizing").expect("update summary");
+        DbItem::update_text(&mut conn, reasoning.id, "thinking").expect("update text");
+        DbItem::update_summary(&mut conn, reasoning.id, "summarizing").expect("update summary");
         let raw_data = json!({"id": "rs_1", "type": "reasoning"});
-        Item::set_raw_data(&mut conn, reasoning.id, &raw_data).expect("set raw data");
-        let fetched = Item::get_by_id(&mut conn, reasoning.id)
+        DbItem::set_raw_data(&mut conn, reasoning.id, &raw_data).expect("set raw data");
+        let fetched = DbItem::get_by_id(&mut conn, reasoning.id)
             .expect("get item")
             .expect("item not found");
         assert_eq!(fetched.text.as_deref(), Some("thinking"));
@@ -890,7 +891,7 @@ mod tests {
         assert_eq!(fetched.tool_args, None);
         assert_eq!(fetched.raw_data, Some(raw_data.to_string()));
 
-        let answer = Item::create(
+        let answer = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(session.id),
@@ -905,7 +906,7 @@ mod tests {
         )
         .expect("create answer item");
 
-        let tool_call = Item::create(
+        let tool_call = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(session.id),
@@ -926,10 +927,10 @@ mod tests {
         assert_eq!(tool_call.upstream_call_id.as_deref(), Some("call_1"));
         assert_eq!(tool_call.tool_output, None);
 
-        Item::update_tool_args(&mut conn, tool_call.id, r#"{"path": "a.txt"}"#)
+        DbItem::update_tool_args(&mut conn, tool_call.id, r#"{"path": "a.txt"}"#)
             .expect("update tool args");
         let output = json!({"error": "file not found"});
-        let mut fetched_call = Item::get_by_id(&mut conn, tool_call.id)
+        let mut fetched_call = DbItem::get_by_id(&mut conn, tool_call.id)
             .expect("get tool call")
             .expect("tool call not found");
         let result = ToolResult {
@@ -944,14 +945,14 @@ mod tests {
         assert_eq!(args.args, json!({"path": "a.txt"}));
 
         let session_items =
-            Item::list_by_session(&mut conn, session.id).expect("list session items");
+            DbItem::list_by_session(&mut conn, session.id).expect("list session items");
         assert_eq!(session_items.len(), 4);
         assert_eq!(session_items[0].id, prompt.id);
         assert_eq!(session_items[1].id, reasoning.id);
         assert_eq!(session_items[2].id, answer.id);
         assert_eq!(session_items[3].id, tool_call.id);
 
-        let turn_items = Item::list_by_turn(&mut conn, assistant_turn.id).expect("list turn items");
+        let turn_items = DbItem::list_by_turn(&mut conn, assistant_turn.id).expect("list turn items");
         assert_eq!(turn_items.len(), 3);
         assert_eq!(turn_items[0].id, reasoning.id);
         assert_eq!(turn_items[1].id, answer.id);
@@ -964,10 +965,10 @@ mod tests {
 
         // Deleting a response cascades to its items but keeps the turn
         assert!(Response::delete_by_id(&mut conn, response.id).expect("delete response"));
-        assert!(Item::get_by_id(&mut conn, reasoning.id).unwrap().is_none());
-        assert!(Item::get_by_id(&mut conn, answer.id).unwrap().is_none());
-        assert!(Item::get_by_id(&mut conn, tool_call.id).unwrap().is_none());
-        assert!(Item::get_by_id(&mut conn, prompt.id).unwrap().is_some());
+        assert!(DbItem::get_by_id(&mut conn, reasoning.id).unwrap().is_none());
+        assert!(DbItem::get_by_id(&mut conn, answer.id).unwrap().is_none());
+        assert!(DbItem::get_by_id(&mut conn, tool_call.id).unwrap().is_none());
+        assert!(DbItem::get_by_id(&mut conn, prompt.id).unwrap().is_some());
         assert!(
             Turn::get_by_id(&mut conn, assistant_turn.id)
                 .unwrap()
@@ -983,7 +984,7 @@ mod tests {
             Some("in_progress"),
         )
         .expect("create response2");
-        let orphan = Item::create(
+        let orphan = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(session.id),
@@ -1001,11 +1002,11 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert!(Item::get_by_id(&mut conn, orphan.id).unwrap().is_none());
+        assert!(DbItem::get_by_id(&mut conn, orphan.id).unwrap().is_none());
 
         // Deleting the session cascades to remaining turns and items
         assert!(Session::delete_by_id(&mut conn, session.id).expect("delete session"));
-        assert!(Item::get_by_id(&mut conn, prompt.id).unwrap().is_none());
+        assert!(DbItem::get_by_id(&mut conn, prompt.id).unwrap().is_none());
         assert!(Turn::get_by_id(&mut conn, user_turn.id).unwrap().is_none());
 
         assert_eq!(
@@ -1139,7 +1140,7 @@ mod tests {
         );
 
         let raw_data = json!({"id": "rs_1", "type": "reasoning"});
-        let item = Item::create(
+        let item = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(session.id),
@@ -1154,8 +1155,8 @@ mod tests {
             },
         )
         .expect("create item failed");
-        Item::set_raw_data(&mut conn, item.id, &raw_data).expect("set raw data");
-        let item = Item::get_by_id(&mut conn, item.id)
+        DbItem::set_raw_data(&mut conn, item.id, &raw_data).expect("set raw data");
+        let item = DbItem::get_by_id(&mut conn, item.id)
             .expect("get item")
             .expect("item not found");
         assert_eq!(
@@ -1200,8 +1201,8 @@ mod tests {
         session_id: i32,
         turn_id: i32,
         seqno: Option<i64>,
-    ) -> Item {
-        Item::create(
+    ) -> DbItem {
+        DbItem::create(
             conn,
             NewItem {
                 session_id: Some(session_id),
@@ -1227,22 +1228,22 @@ mod tests {
         let b = make_item(&mut conn, session.id, turn.id, None);
         let c = make_item(&mut conn, session.id, turn.id, None);
         assert_eq!([a.seqno, b.seqno, c.seqno], [1, 2, 3]);
-        assert_eq!(Item::max_seqno(&mut conn, session.id).unwrap(), Some(3));
+        assert_eq!(DbItem::max_seqno(&mut conn, session.id).unwrap(), Some(3));
 
         // Explicit seqnos win over insertion order.
         let late = make_item(&mut conn, session.id, turn.id, Some(10));
         let early = make_item(&mut conn, session.id, turn.id, Some(5));
-        let items = Item::list_by_session(&mut conn, session.id).unwrap();
+        let items = DbItem::list_by_session(&mut conn, session.id).unwrap();
         let ids: Vec<i32> = items.iter().map(|i| i.id).collect();
         assert_eq!(
             ids,
             [a.id, b.id, c.id, early.id, late.id],
             "expected seqno ordering, not insertion order"
         );
-        assert_eq!(Item::max_seqno(&mut conn, session.id).unwrap(), Some(10));
+        assert_eq!(DbItem::max_seqno(&mut conn, session.id).unwrap(), Some(10));
 
         // Duplicate (session_id, seqno) is rejected by the unique index.
-        let duplicate = Item::create(
+        let duplicate = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(session.id),
@@ -1256,7 +1257,7 @@ mod tests {
         assert!(duplicate.is_err());
 
         // list_by_turn orders by seqno too.
-        let turn_items = Item::list_by_turn(&mut conn, turn.id).unwrap();
+        let turn_items = DbItem::list_by_turn(&mut conn, turn.id).unwrap();
         assert_eq!(turn_items.len(), 5);
     }
 }

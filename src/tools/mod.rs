@@ -9,7 +9,7 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::{ToolInfo, ToolOutputContent};
 use crate::query::DataQuery;
-use crate::session::Item;
+use crate::session::DbItem;
 use crate::try_nested;
 use crate::ui::render_item::RenderItem;
 
@@ -114,7 +114,7 @@ impl ToolRegistry {
 
     /// Invokes a tool from raw name and input text. Handles all possible
     /// errors. Modifies the item but doesn't make any DB queries.
-    pub async fn call(&self, item: &mut Item) -> ToolResult {
+    pub async fn call(&self, item: &mut DbItem) -> ToolResult {
         let args = match item.tool_args() {
             Ok(Some(args)) => args,
             Ok(None) => {
@@ -137,8 +137,8 @@ impl ToolRegistry {
 
     /// Builds a render item to display a tool call. Handles all possible
     /// errors. Returns `None` if the item is not a tool call with output.
-    pub fn render_to_ui(&self, item: &Item) -> Option<Box<dyn RenderItem>> {
-        fn inner(reg: &ToolRegistry, item: &Item) -> AnyResult<Option<Box<dyn RenderItem>>> {
+    pub fn render_to_ui(&self, item: &DbItem) -> Option<Box<dyn RenderItem>> {
+        fn inner(reg: &ToolRegistry, item: &DbItem) -> AnyResult<Option<Box<dyn RenderItem>>> {
             // Output is parsed first so that calls which are still pending
             // are ignored instead of falling back to the placeholder.
             let output = try_nested!(item.tool_output());
@@ -158,7 +158,7 @@ impl ToolRegistry {
     }
 
     /// Builds input to the inference API. Handles all possible errors.
-    pub fn render_to_interface(&self, item: &Item) -> InterfaceToolOutput {
+    pub fn render_to_interface(&self, item: &DbItem) -> InterfaceToolOutput {
         let res: Option<_> = self.resolve(item).and_then(|(tool, input, output)| {
             match tool.render_to_interface(&input, &output) {
                 Ok(out) => Some(out),
@@ -169,7 +169,7 @@ impl ToolRegistry {
     }
 
     /// Resolves a tool call item to its tool and parsed input/output.
-    fn resolve<'a>(&'a self, item: &'a Item) -> Option<(&'a dyn Tool, Value, Value)> {
+    fn resolve<'a>(&'a self, item: &'a DbItem) -> Option<(&'a dyn Tool, Value, Value)> {
         let name = item.text.as_deref()?;
         let tool = self.tools.get(name)?;
         let input = item.tool_args_json().ok().flatten().unwrap_or(Value::Null);
@@ -180,7 +180,7 @@ impl ToolRegistry {
     /// Writes a failure for a tool call and builds its `ToolResult`. The
     /// result is named after the failure tool so that the item renders as an
     /// error once persisted.
-    fn fail(item: &mut Item, tool_name: &str, message: &str) -> ToolResult {
+    fn fail(item: &mut DbItem, tool_name: &str, message: &str) -> ToolResult {
         FailedTool::write_failure(item, tool_name, message);
         let output = item
             .tool_output()
@@ -192,7 +192,7 @@ impl ToolRegistry {
     }
 
     /// Renders an unparseable tool call for the UI.
-    fn unknown_ui(item: &Item) -> Box<dyn RenderItem> {
+    fn unknown_ui(item: &DbItem) -> Box<dyn RenderItem> {
         let name = item.text.as_deref()
             .filter(|name| !name.is_empty())
             .unwrap_or("<missing name>");
@@ -201,7 +201,7 @@ impl ToolRegistry {
     }
 
     /// Renders an unparseable tool call for the inference API.
-    fn unknown_interface(item: &Item) -> InterfaceToolOutput {
+    fn unknown_interface(item: &DbItem) -> InterfaceToolOutput {
         let name = item.text.clone().unwrap_or_default();
         let tool = UnknownTool::new(name);
         tool.render_to_interface(&Value::Null, &Value::Null).expect("infallible")
@@ -258,7 +258,7 @@ mod tests {
         item.set_tool_output(&mut conn, &result).expect("set tool output");
 
         // The failure survives a DB round trip.
-        let item = Item::get_by_id(&mut conn, item.id)
+        let item = DbItem::get_by_id(&mut conn, item.id)
             .expect("get item")
             .expect("item exists");
         assert_eq!(item.text.as_deref(), Some("failed"));
@@ -290,7 +290,7 @@ mod tests {
             json!({ "tool_name": "no_such_tool", "error": "unknown tool" })
         );
         item.set_tool_output(&mut conn, &result).expect("set tool output");
-        let item = Item::get_by_id(&mut conn, item.id)
+        let item = DbItem::get_by_id(&mut conn, item.id)
             .expect("get item")
             .expect("item exists");
         assert_eq!(item.text.as_deref(), Some("failed"));
@@ -446,7 +446,7 @@ mod tests {
         assert!(registry.render_to_ui(&pending).is_none());
 
         // Items which aren't tool calls aren't rendered.
-        let text_item = Item::create(
+        let text_item = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(turn.session_id),

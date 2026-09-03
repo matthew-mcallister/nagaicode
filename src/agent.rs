@@ -5,7 +5,7 @@ use crate::error::AnyResult;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
-use crate::session::{Item, Session};
+use crate::session::{DbItem, Session};
 use crate::task::{Task, TaskContext};
 use self::create_prompt::CreatePrompt;
 use self::execute_tool_call::ExecuteToolCall;
@@ -59,7 +59,7 @@ impl Agent {
             turn_id = Some(next_turn_id);
 
             let tool_calls =
-                Item::tool_calls_by_response(context.connection()?, response_id)?;
+                DbItem::tool_calls_by_response(context.connection()?, response_id)?;
             if tool_calls.is_empty() {
                 return Ok(());
             }

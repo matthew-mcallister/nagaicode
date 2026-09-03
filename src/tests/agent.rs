@@ -137,7 +137,7 @@ async fn test_app_prompt_agent() {
     assert_eq!(assistant_turn.provider_name.as_deref(), Some("test"));
     assert_eq!(assistant_turn.model_id.as_deref(), Some("gpt-4"));
 
-    let items = crate::session::Item::list_by_session(app.conn(), session_id).unwrap();
+    let items = crate::session::DbItem::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(
         items.len(),
         2,
@@ -182,7 +182,7 @@ async fn test_app_prompt_agent() {
 
 #[tokio::test]
 async fn test_agent_stream_error() {
-    use crate::session::{Item, ItemType, Response, Turn, TurnType};
+    use crate::session::{DbItem, ItemType, Response, Turn, TurnType};
 
     let mut app = App::new().unwrap();
 
@@ -246,7 +246,7 @@ async fn test_agent_stream_error() {
     assert_eq!(responses.len(), 1);
     assert_eq!(responses[0].upstream_status.as_deref(), Some("failed"));
 
-    let items = Item::list_by_session(app.conn(), session_id).unwrap();
+    let items = DbItem::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(items.len(), 2);
     assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
     assert_eq!(items[1].ty().unwrap(), ItemType::ResponseText);
@@ -255,7 +255,7 @@ async fn test_agent_stream_error() {
 
 #[tokio::test]
 async fn test_agent_stream_without_item_events() {
-    use crate::session::{Item, ItemType, Response, Turn};
+    use crate::session::{DbItem, ItemType, Response, Turn};
 
     let mut app = App::new().unwrap();
 
@@ -303,7 +303,7 @@ async fn test_agent_stream_without_item_events() {
     app.process_pending_events().await;
 
     let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
-    let items = Item::list_by_session(app.conn(), session_id).unwrap();
+    let items = DbItem::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(items.len(), 2);
     assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
 
@@ -329,7 +329,7 @@ async fn test_agent_stream_without_item_events() {
 
 #[tokio::test]
 async fn test_agent_out_of_order_items() {
-    use crate::session::{Item, ItemType};
+    use crate::session::{DbItem, ItemType};
 
     let mut app = App::new().unwrap();
 
@@ -387,7 +387,7 @@ async fn test_agent_out_of_order_items() {
     app.process_pending_events().await;
 
     let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
-    let items = Item::list_by_session(app.conn(), session_id).unwrap();
+    let items = DbItem::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(items.len(), 3);
     assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
 
@@ -415,7 +415,7 @@ async fn test_agent_out_of_order_items() {
 
 #[tokio::test]
 async fn test_agent_history() {
-    use crate::session::{Item, ItemType, Turn, TurnType};
+    use crate::session::{DbItem, ItemType, Turn, TurnType};
 
     let mut app = App::new().unwrap();
 
@@ -477,7 +477,7 @@ async fn test_agent_history() {
     // The first assistant turn should have recorded one reasoning item and
     // one response item, in that order, after the user prompt item.
     let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
-    let items = Item::list_by_session(app.conn(), session_id).unwrap();
+    let items = DbItem::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(items.len(), 3);
     assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
     assert_eq!(items[1].ty().unwrap(), ItemType::Reasoning);
@@ -541,7 +541,7 @@ async fn test_agent_history() {
 
 #[tokio::test]
 async fn test_agent_tool_call_loop() {
-    use crate::session::{Item, ItemType, Response, Turn, TurnType};
+    use crate::session::{DbItem, ItemType, Response, Turn, TurnType};
 
     let mut app = App::new().unwrap();
 
@@ -661,7 +661,7 @@ async fn test_agent_tool_call_loop() {
     assert_eq!(responses[1].upstream_id.as_deref(), Some("resp-2"));
     assert_eq!(responses[1].upstream_status.as_deref(), Some("completed"));
 
-    let items = Item::list_by_session(app.conn(), session_id).unwrap();
+    let items = DbItem::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(items.len(), 3);
     assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
     assert_eq!(items[1].ty().unwrap(), ItemType::ToolCall);

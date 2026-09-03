@@ -26,7 +26,7 @@ use crate::model::RevalidateModelsTask;
 use crate::provider::Provider;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::DefaultClient;
-use crate::session::{Item, Session};
+use crate::session::{DbItem, Session};
 use crate::settings::{ModelRef, Settings};
 use crate::task::{Task, TaskContext, TaskError, TaskHandle, Tid};
 use crate::terminal::{DefaultTerminal, Terminal};
@@ -56,10 +56,10 @@ pub enum AppEvent {
     /// Output of a host command, rendered after its prompt.
     CommandOutput(String),
     ItemCreated {
-        item: Item,
+        item: DbItem,
     },
     ItemUpdated {
-        item: Item,
+        item: DbItem,
     },
     /// Navigate to the previous entry in the command history.
     HistoryPrev,
@@ -365,7 +365,7 @@ impl App {
         let Some(session) = Session::get_by_id(&mut self.conn, session_id)? else {
             return Err(anyhow!("no session with id {session_id}"));
         };
-        let items = Item::list_by_session(&mut self.conn, session_id)?;
+        let items = DbItem::list_by_session(&mut self.conn, session_id)?;
         self.clear_session().await?;
         self.session = Some(session);
         for item in items {

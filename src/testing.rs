@@ -14,7 +14,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::app::AppEvent;
 use crate::task::{Task, TaskContext};
 use crate::tools::ToolRegistry;
-use crate::session::{Item, ItemType, NewItem, Session, Turn, TurnType};
+use crate::session::{DbItem, ItemType, NewItem, Session, Turn, TurnType};
 use crate::ui::UiContext;
 
 /// Creates a tool registry over a scratch working directory.
@@ -38,8 +38,8 @@ pub fn tool_call(
     name: &str,
     args: Value,
     output: Option<Value>,
-) -> Item {
-    let mut item = Item::create(
+) -> DbItem {
+    let mut item = DbItem::create(
         conn,
         NewItem {
             session_id: Some(turn.session_id),
@@ -50,7 +50,7 @@ pub fn tool_call(
         },
     )
     .expect("create tool call");
-    Item::update_tool_args(conn, item.id, &args.to_string()).expect("set tool args");
+    DbItem::update_tool_args(conn, item.id, &args.to_string()).expect("set tool args");
     if let Some(output) = output {
         let result = crate::tools::ToolResult {
             name: name.to_owned(),
@@ -58,7 +58,7 @@ pub fn tool_call(
         };
         item.set_tool_output(conn, &result).expect("set tool output");
     }
-    Item::get_by_id(conn, item.id).expect("get item").expect("item exists")
+    DbItem::get_by_id(conn, item.id).expect("get item").expect("item exists")
 }
 
 /// Creates a UI context for components constructed directly in tests.

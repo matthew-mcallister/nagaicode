@@ -3,7 +3,7 @@ use serde_json::json;
 
 use crate::app::AppEvent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::session::Item;
+use crate::session::DbItem;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::UiContext;
@@ -47,8 +47,8 @@ impl Chat {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
-    ItemCreated { item: &'a Item },
-    ItemUpdated { item: &'a Item },
+    ItemCreated { item: &'a DbItem },
+    ItemUpdated { item: &'a DbItem },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
