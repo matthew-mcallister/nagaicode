@@ -1,11 +1,11 @@
 use futures::{Stream, StreamExt};
-use log::debug;
-use reqwest_eventsource::Event;
+use log::{debug, error};
+use reqwest_eventsource::{Error as EventSourceError, Event};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::error::AnyResult;
+use crate::error::{AnyError, AnyResult};
 use crate::interface::{
     ChatMessage, InferenceEvent, InferenceParams, InterfaceModel, ItemDelta, OutputItemEvent,
     ReasoningEffort, ResponseCompleted, ResponseCreated, ResponseFailed, ToolInfo,
@@ -428,13 +428,30 @@ impl OpenaiInterface {
         let client = self.client.clone();
 
         async_stream::try_stream! {
-            let event_stream_result = client.post_sse("/responses", &req_body);
-
-            let event_source = event_stream_result?;
+            let event_source = client.post_sse("/responses", &req_body)?;
             futures::pin_mut!(event_source);
-
             while let Some(event_res) = event_source.next().await {
-                match event_res? {
+                // Work around lack of logging in reqwest_eventsource by
+                // extracting request body here (not AI slop code)
+                let res = match event_res {
+                    Ok(res) => res,
+                    Err(e) => {
+                        let e: AnyError = match e.downcast::<reqwest_eventsource::Error>() {
+                            Ok(EventSourceError::InvalidStatusCode(_, response)) => {
+                                let status = response.status();
+                                let text = response.text().await.unwrap_or(String::new());
+                                error!("stream error: status {}: {}", status, text);
+                                anyhow::anyhow!("stream error: status {}", status)
+                            },
+                            Ok(e) => e.into(),
+                            Err(e) => e,
+                        };
+                        Err(e)?;
+                        return;
+                    },
+                };
+
+                match res {
                     Event::Open => continue,
                     Event::Message(msg) => {
                         let trimmed = msg.data.trim();
