@@ -471,7 +471,7 @@ impl OpenaiInterface {
                                 let text = response.text().await.unwrap_or(String::new());
                                 error!("stream error: status {}: {}", status, text);
                                 anyhow::anyhow!("stream error: status {}", status)
-                            },
+                            }
                             Ok(e) => e.into(),
                             Err(e) => e,
                         };
@@ -558,6 +558,7 @@ impl OpenaiInterface {
                                     usage: response.usage.map(Usage::from),
                                     raw_response: raw_event["response"].clone(),
                                 });
+                                return;
                             }
                             ResponseStreamEvent::Incomplete { response } => {
                                 yield InferenceEvent::Completed(ResponseCompleted {
@@ -567,6 +568,7 @@ impl OpenaiInterface {
                                     usage: response.usage.map(Usage::from),
                                     raw_response: raw_event["response"].clone(),
                                 });
+                                return;
                             }
                             ResponseStreamEvent::Failed { response } => {
                                 yield InferenceEvent::Failed(ResponseFailed {
