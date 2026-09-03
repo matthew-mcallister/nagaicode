@@ -121,7 +121,7 @@ impl<'a, S> StreamProcessor<'a, S> {
             added.call_id.as_deref(),
             name,
         )?;
-        Ok(Some(AppEvent::ItemCreated { item }))
+        Ok(Some(AppEvent::DbItemCreated { item }))
     }
 
     fn handle_item_done(&mut self, done: OutputItemEvent) -> AnyResult<Option<AppEvent>> {
@@ -131,7 +131,7 @@ impl<'a, S> StreamProcessor<'a, S> {
             }
             DbItem::set_raw_data(self.conn, item.id, &done.raw)?;
             item.raw_data = Some(done.raw.to_string());
-            Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))
+            Ok(Some(AppEvent::DbItemUpdated { item: item.clone() }))
         } else {
             Ok(None)
         }
@@ -166,7 +166,7 @@ impl<'a, S> StreamProcessor<'a, S> {
             DbItem::update_text(self.conn, item.id, &text)?;
             item.text = Some(text);
         }
-        Ok(Some(AppEvent::ItemUpdated { item: item.clone() }))
+        Ok(Some(AppEvent::DbItemUpdated { item: item.clone() }))
     }
 
     // TODO: stop streaming call args; extract them in handle_item_done instead

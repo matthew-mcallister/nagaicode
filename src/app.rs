@@ -21,6 +21,7 @@ use crate::agent::Agent;
 use crate::command::Command;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
+use crate::item::Item;
 use crate::model::Model;
 use crate::model::RevalidateModelsTask;
 use crate::provider::Provider;
@@ -55,11 +56,17 @@ pub enum AppEvent {
     CommandPrompt(String),
     /// Output of a host command, rendered after its prompt.
     CommandOutput(String),
-    ItemCreated {
+    DbItemCreated {
         item: DbItem,
     },
-    ItemUpdated {
+    DbItemUpdated {
         item: DbItem,
+    },
+    ItemCreated {
+        item: Item,
+    },
+    ItemUpdated {
+        item: Item,
     },
     /// Navigate to the previous entry in the command history.
     HistoryPrev,
@@ -369,7 +376,7 @@ impl App {
         self.clear_session().await?;
         self.session = Some(session);
         for item in items {
-            self.send.send(AppEvent::ItemCreated { item })?;
+            self.send.send(AppEvent::DbItemCreated { item })?;
         }
         Box::pin(self.process_pending_events()).await;
         Ok(())
@@ -518,12 +525,12 @@ impl App {
                 self.chat.handle_update(Update::CommandOutput(&output));
                 Ok(())
             }
-            AppEvent::ItemCreated { item } => {
-                self.chat.handle_update(Update::ItemCreated { item: &item });
+            AppEvent::DbItemCreated { item } => {
+                self.chat.handle_update(Update::DbItemCreated { item: &item });
                 Ok(())
             }
-            AppEvent::ItemUpdated { item } => {
-                self.chat.handle_update(Update::ItemUpdated { item: &item });
+            AppEvent::DbItemUpdated { item } => {
+                self.chat.handle_update(Update::DbItemUpdated { item: &item });
                 Ok(())
             }
             AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
@@ -551,6 +558,8 @@ impl App {
                 }
                 Ok(())
             }
+            AppEvent::ItemCreated { .. } => Ok(()),
+            AppEvent::ItemUpdated { .. } => Ok(()),
         };
         if let Err(e) = res {
             self.chat

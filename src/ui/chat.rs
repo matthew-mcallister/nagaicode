@@ -47,8 +47,8 @@ impl Chat {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
-    ItemCreated { item: &'a DbItem },
-    ItemUpdated { item: &'a DbItem },
+    DbItemCreated { item: &'a DbItem },
+    DbItemUpdated { item: &'a DbItem },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -60,8 +60,8 @@ impl<'a> TryFrom<Update<'a>> for stacked_view::Update<'a> {
 
     fn try_from(update: Update<'a>) -> Result<Self, Self::Error> {
         match update {
-            Update::ItemCreated { item } => Ok(stacked_view::Update::ItemCreated { item }),
-            Update::ItemUpdated { item } => Ok(stacked_view::Update::ItemUpdated { item }),
+            Update::DbItemCreated { item } => Ok(stacked_view::Update::DbItemCreated { item }),
+            Update::DbItemUpdated { item } => Ok(stacked_view::Update::DbItemUpdated { item }),
             Update::HelpMessage(content) => Ok(stacked_view::Update::HelpMessage(content)),
             Update::ErrorMessage(content) => Ok(stacked_view::Update::ErrorMessage(content)),
             Update::CommandPrompt(content) => Ok(stacked_view::Update::CommandPrompt(content)),

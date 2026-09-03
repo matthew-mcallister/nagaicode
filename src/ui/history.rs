@@ -241,7 +241,7 @@ pub struct History {
     /// Absolute row index of `viewport_bottom`
     viewport_bottom_pos: usize,
     /// Maps an `Item` id to the history item rendering it, so that
-    /// `ItemUpdated` events can locate and rerender the right item.
+    /// `DbItemUpdated` events can locate and rerender the right item.
     by_item_id: FnvHashMap<i32, Id<HistoryItem>>,
     tools: Arc<ToolRegistry>,
 }
@@ -555,8 +555,8 @@ impl History {
 
     fn do_update<'a>(&mut self, update: Update<'a>) -> AnyResult<()> {
         match update {
-            Update::ItemCreated { item } => self.on_item_created(item)?,
-            Update::ItemUpdated { item } => self.on_item_updated(item)?,
+            Update::DbItemCreated { item } => self.on_item_created(item)?,
+            Update::DbItemUpdated { item } => self.on_item_updated(item)?,
             Update::HelpMessage(content) => self.add_content(Box::new(HelpRenderItem::new(content))),
             Update::ErrorMessage(content) => self.add_content(Box::new(ErrorRenderItem::new(content))),
             Update::CommandPrompt(content) => {
@@ -572,8 +572,8 @@ impl History {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
-    ItemCreated { item: &'a DbItem },
-    ItemUpdated { item: &'a DbItem },
+    DbItemCreated { item: &'a DbItem },
+    DbItemUpdated { item: &'a DbItem },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -1023,7 +1023,7 @@ mod tests {
 
         let mut h = history(14, 10);
         let call = make_tool_call(1, 1, "call_1", "sh", json!({ "command": "echo hi" }), None);
-        h.handle_update(Update::ItemCreated { item: &call });
+        h.handle_update(Update::DbItemCreated { item: &call });
 
         // Tool calls without output are ignored.
         assert_eq!(h.num_rows(), 0);
@@ -1032,7 +1032,7 @@ mod tests {
         // When the output arrives, the item is inserted and rendered.
         let mut call = call.clone();
         call.tool_output = Some(output.to_string());
-        h.handle_update(Update::ItemUpdated { item: &call });
+        h.handle_update(Update::DbItemUpdated { item: &call });
 
         // Rendered with the prompt background and padding, plus the item's
         // own trailing padding row.
@@ -1059,7 +1059,7 @@ mod tests {
             json!({ "command": "echo hi" }),
             Some(output),
         );
-        h.handle_update(Update::ItemCreated { item: &call });
+        h.handle_update(Update::DbItemCreated { item: &call });
         assert_eq!(h.num_rows(), 5);
     }
 
@@ -1075,7 +1075,7 @@ mod tests {
             Some(json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 })),
         );
         call.text = None;
-        h.handle_update(Update::ItemCreated { item: &call });
+        h.handle_update(Update::DbItemCreated { item: &call });
 
         // Unparseable calls fall back to an unknown tool placeholder.
         assert_eq!(h.by_item_id.len(), 1);
@@ -1087,7 +1087,7 @@ mod tests {
         // An empty name is treated the same way.
         let mut h = history(14, 10);
         call.text = Some(String::new());
-        h.handle_update(Update::ItemCreated { item: &call });
+        h.handle_update(Update::DbItemCreated { item: &call });
         assert_eq!(
             h.query("/items/0/content").unwrap(),
             json!({"type": "help", "value": "Called '<missing name>'"})
@@ -1140,7 +1140,7 @@ mod tests {
             .map(|(i, seqno)| item_with_seqno(i as i32 + 1, seqno))
             .collect();
         for item in &items {
-            h.do_update(Update::ItemCreated { item }).unwrap();
+            h.do_update(Update::DbItemCreated { item }).unwrap();
         }
 
         let seqnos: Vec<i64> = h
@@ -1163,7 +1163,7 @@ mod tests {
 
         // Append after items without seqno
         items.push(item_with_seqno(4, 4));
-        h.handle_update(Update::ItemCreated { item: &items[3] });
+        h.handle_update(Update::DbItemCreated { item: &items[3] });
         assert_eq!(
             item_contents(&h),
             ["help", "message 1", "message 2", "message 3", "help", "message 4"]
@@ -1172,7 +1172,7 @@ mod tests {
         // Updated items are rerendered in place.
         let mut item = item_with_seqno(3, 2);
         item.text = Some("updated".into());
-        h.handle_update(Update::ItemUpdated { item: &item });
+        h.handle_update(Update::DbItemUpdated { item: &item });
         assert_eq!(
             item_contents(&h),
             ["help", "message 1", "updated", "message 3", "help", "message 4"]

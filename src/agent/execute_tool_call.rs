@@ -17,7 +17,7 @@ impl ExecuteToolCall {
     async fn process(mut self, context: &mut TaskContext) -> AnyResult<()> {
         let result = context.tool_registry().call(&mut self.tool_call).await;
         self.tool_call.set_tool_output(context.connection()?, &result)?;
-        context.send(AppEvent::ItemUpdated { item: self.tool_call });
+        context.send(AppEvent::DbItemUpdated { item: self.tool_call });
         Ok(())
     }
 }
@@ -84,7 +84,7 @@ mod tests {
         assert_eq!(events.len(), 4);
         for (event, item) in events.into_iter().zip(&items) {
             match event {
-                AppEvent::ItemUpdated { item: updated } => {
+                AppEvent::DbItemUpdated { item: updated } => {
                     assert_eq!(updated.id, item.id);
                     assert_eq!(updated.ty, "tool_call");
                     assert_eq!(updated.tool_output, item.tool_output);

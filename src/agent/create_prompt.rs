@@ -38,7 +38,7 @@ impl CreatePrompt {
                     seqno: None,
                 },
             )?;
-            Ok(vec![AppEvent::ItemCreated { item }])
+            Ok(vec![AppEvent::DbItemCreated { item }])
         });
         for event in events? {
             context.send(event);
