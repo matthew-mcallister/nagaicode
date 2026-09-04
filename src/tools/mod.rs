@@ -8,9 +8,8 @@ use serde_json::Value;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::{ToolInfo, ToolOutputContent};
-use crate::item::{Item, ToolCallContent, ToolOutput};
+use crate::item::{ToolCallContent, ToolOutput};
 use crate::query::DataQuery;
-use crate::session::DbItem;
 use crate::tools::failed::{render_failure_to_interface, render_failure_to_ui};
 use crate::tools::unknown::{render_unknown_to_interface, render_unknown_to_ui};
 use crate::ui::render_item::RenderItem;
@@ -148,13 +147,6 @@ impl ToolRegistry {
         }
     }
 
-    // Temp shim
-    pub fn render_db_item_to_ui(&self, row: &DbItem) -> Option<Box<dyn RenderItem>> {
-        let item = Item::from_row(row).ok()?;
-        let content = item.content.as_tool_call()?;
-        self.render_to_ui(content)
-    }
-
     fn unknown_ui(tool_name: &str) -> Box<dyn RenderItem> {
         let tool_name = if tool_name.is_empty() { "<missing name>" } else { tool_name };
         render_unknown_to_ui(tool_name)
@@ -167,6 +159,7 @@ mod tests {
     use serde_json::json;
 
     use crate::cwd::cwd;
+    use crate::item::Item;
     use crate::testing::{session_turn, tool_call};
 
     #[tokio::test]

@@ -527,11 +527,15 @@ impl App {
                 Ok(())
             }
             AppEvent::DbItemCreated { item } => {
-                self.chat.handle_update(Update::DbItemCreated { item: &item });
+                if let Some(item) = Item::from_row(&item) {
+                    self.chat.handle_update(Update::ItemCreated { item: &item });
+                }
                 Ok(())
             }
             AppEvent::DbItemUpdated { item } => {
-                self.chat.handle_update(Update::DbItemUpdated { item: &item });
+                if let Some(item) = Item::from_row(&item) {
+                    self.chat.handle_update(Update::ItemUpdated { item: &item });
+                }
                 Ok(())
             }
             AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
@@ -559,8 +563,14 @@ impl App {
                 }
                 Ok(())
             }
-            AppEvent::ItemCreated { .. } => Ok(()),
-            AppEvent::ItemUpdated { .. } => Ok(()),
+            AppEvent::ItemCreated { item } => {
+                self.chat.handle_update(Update::ItemCreated { item: &item });
+                Ok(())
+            }
+            AppEvent::ItemUpdated { item } => {
+                self.chat.handle_update(Update::ItemUpdated { item: &item });
+                Ok(())
+            }
         };
         if let Err(e) = res {
             self.chat

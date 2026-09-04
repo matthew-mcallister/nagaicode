@@ -5,13 +5,11 @@ use std::sync::Arc;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use fnv::FnvHashMap;
-use log::error;
 use serde_json::{Value, json};
 
 use crate::arena::{Arena, Id};
-use crate::error::AnyResult;
+use crate::item::Item;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
-use crate::session::{DbItem, ItemType};
 use crate::tools::ToolRegistry;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
@@ -241,7 +239,7 @@ pub struct History {
     /// Absolute row index of `viewport_bottom`
     viewport_bottom_pos: usize,
     /// Maps an `Item` id to the history item rendering it, so that
-    /// `DbItemUpdated` events can locate and rerender the right item.
+    /// `ItemUpdated` events can locate and rerender the right item.
     by_item_id: FnvHashMap<i32, Id<HistoryItem>>,
     tools: Arc<ToolRegistry>,
 }
@@ -448,6 +446,7 @@ impl History {
         self.add_item(content, None, None)
     }
 
+    // TODO: insert tool calls in completion order, not seqno order
     fn find_insertion_point(&self, seqno: i64) -> Id<HistoryRow> {
         // Insert right before the last item with larger seqno, or at the end
         let mut cur = self.last_row();
@@ -498,29 +497,18 @@ impl History {
     }
 
     /// Creates (or updates) an item
-    fn on_item_created(&mut self, item: &DbItem) -> AnyResult<()> {
-        if item.ty()? == ItemType::ToolCall {
-            if item.tool_output.is_none() {
-                return Ok(());
-            }
-            // TODO: insert tool calls in completion order, not seqno order
-        }
-
+    fn on_item_created(&mut self, item: &Item) {
         if self.by_item_id.contains_key(&item.id) {
-            self.on_item_updated(item)?;
-        } else if let Some(content) = get_item_content(&self.tools, item)? {
+            self.on_item_updated(item);
+        } else if let Some(content) = get_item_content(&self.tools, item) {
             self.add_item(content, Some(item.id), Some(item.seqno));
         }
-
-        Ok(())
     }
 
-    /// Does an incremental rerender for an updated item. Updates nothing on
-    /// error.
-    fn on_item_updated(&mut self, item: &DbItem) -> AnyResult<()> {
+    /// Does an incremental rerender for an updated item.
+    fn on_item_updated(&mut self, item: &Item) {
         if let Some(&item_id) = self.by_item_id.get(&item.id) {
-            let Some(content) = get_item_content(&self.tools, item)?
-                else { return Ok(()) };
+            let Some(content) = get_item_content(&self.tools, item) else { return };
             self.item[item_id].update(
                 &self.theme,
                 &mut self.rows,
@@ -531,9 +519,8 @@ impl History {
             // FIXME: Should only track output if already at the bottom!
             self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
         } else {
-            self.on_item_created(item)?;
+            self.on_item_created(item);
         }
-        Ok(())
     }
 
     fn scroll_up(&mut self, rows: usize) {
@@ -553,10 +540,10 @@ impl History {
         }
     }
 
-    fn do_update<'a>(&mut self, update: Update<'a>) -> AnyResult<()> {
+    fn do_update<'a>(&mut self, update: Update<'a>) {
         match update {
-            Update::DbItemCreated { item } => self.on_item_created(item)?,
-            Update::DbItemUpdated { item } => self.on_item_updated(item)?,
+            Update::ItemCreated { item } => self.on_item_created(item),
+            Update::ItemUpdated { item } => self.on_item_updated(item),
             Update::HelpMessage(content) => self.add_content(Box::new(HelpRenderItem::new(content))),
             Update::ErrorMessage(content) => self.add_content(Box::new(ErrorRenderItem::new(content))),
             Update::CommandPrompt(content) => {
@@ -566,14 +553,13 @@ impl History {
                 self.add_content(Box::new(CommandOutputRenderItem::new(content)))
             }
         }
-        Ok(())
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
-    DbItemCreated { item: &'a DbItem },
-    DbItemUpdated { item: &'a DbItem },
+    ItemCreated { item: &'a Item },
+    ItemUpdated { item: &'a Item },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -637,9 +623,7 @@ impl Component for History {
     }
 
     fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
-        if let Err(e) = self.do_update(update) {
-            error!("{}", e);
-        }
+        self.do_update(update);
     }
 }
 
@@ -751,12 +735,11 @@ impl<'h> DataQuery for HistoryItemsData<'h> {
 mod tests {
     use super::*;
 
-    use crate::session::ItemType;
+    use crate::item::{ItemContent, ToolCallContent, ToolOutput};
     use crate::ui::canvas::render_canvas;
     use crate::ui::render_item::ResponseRenderItem;
     use crate::ui::style::{Style, THEME_DARK};
     use crate::ui::style::testing::SetItalic;
-    use chrono::{DateTime, Utc};
     use serde_json::json;
 
     fn history(width: usize, max_height: usize) -> History {
@@ -991,26 +974,21 @@ mod tests {
         name: &str,
         args: Value,
         output: Option<Value>,
-    ) -> DbItem {
-        DbItem {
+    ) -> Item {
+        Item {
             id,
             session_id: 1,
             turn_id: 1,
             response_id: None,
             provider_id: None,
-            ty: ItemType::ToolCall.to_string(),
-            upstream_id: None,
-            upstream_type: Some("function_call".into()),
-            upstream_call_id: Some(call_id.into()),
-            text: Some(name.into()),
-            summary: None,
-            encrypted_text: None,
-            tool_args: Some(args.to_string()),
-            raw_data: None,
             seqno,
-            created_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
-            updated_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
-            tool_output: output.map(|v| json!({ "completed": v }).to_string()),
+            upstream_id: None,
+            content: ItemContent::ToolCall(ToolCallContent {
+                tool_name: name.to_owned(),
+                call_id: call_id.to_owned(),
+                args,
+                output: output.map(|value| ToolOutput::Completed { value }),
+            }),
         }
     }
 
@@ -1023,16 +1001,22 @@ mod tests {
 
         let mut h = history(14, 10);
         let call = make_tool_call(1, 1, "call_1", "sh", json!({ "command": "echo hi" }), None);
-        h.handle_update(Update::DbItemCreated { item: &call });
+        h.handle_update(Update::ItemCreated { item: &call });
 
         // Tool calls without output are ignored.
         assert_eq!(h.num_rows(), 0);
         assert_eq!(h.by_item_id.len(), 0);
 
         // When the output arrives, the item is inserted and rendered.
-        let mut call = call.clone();
-        call.tool_output = Some(json!({ "completed": output }).to_string());
-        h.handle_update(Update::DbItemUpdated { item: &call });
+        let call = make_tool_call(
+            1,
+            1,
+            "call_1",
+            "sh",
+            json!({ "command": "echo hi" }),
+            Some(output.clone()),
+        );
+        h.handle_update(Update::ItemUpdated { item: &call });
 
         // Rendered with the prompt background and padding, plus the item's
         // own trailing padding row.
@@ -1059,32 +1043,24 @@ mod tests {
             json!({ "command": "echo hi" }),
             Some(output),
         );
-        h.handle_update(Update::DbItemCreated { item: &call });
+        h.handle_update(Update::ItemCreated { item: &call });
         assert_eq!(h.num_rows(), 5);
     }
 
     #[test]
     fn test_tool_call_missing_name() {
         let mut h = history(14, 10);
-        let mut call = make_tool_call(
+        let call = make_tool_call(
             1,
             1,
             "call_1",
-            "sh",
+            "",
             json!({ "command": "echo hi" }),
             Some(json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 })),
         );
-        call.text = None;
-        h.handle_update(Update::DbItemCreated { item: &call });
+        h.handle_update(Update::ItemCreated { item: &call });
 
-        // Calls without a tool name are undecodable and skipped.
-        assert_eq!(h.by_item_id.len(), 0);
-        assert_eq!(h.num_rows(), 0);
-
-        // An empty name is treated the same way.
-        let mut h = history(14, 10);
-        call.text = Some(String::new());
-        h.handle_update(Update::DbItemCreated { item: &call });
+        // An empty tool name falls back to a placeholder.
         assert_eq!(
             h.query("/items/0/content").unwrap(),
             json!({"type": "help", "value": "Called '<missing name>'"})
@@ -1102,26 +1078,16 @@ mod tests {
             .collect()
     }
 
-    fn item_with_seqno(id: i32, seqno: i64) -> DbItem {
-        DbItem {
+    fn item_with_seqno(id: i32, seqno: i64) -> Item {
+        Item {
             id,
             session_id: 1,
             turn_id: 1,
             response_id: None,
             provider_id: None,
-            ty: ItemType::ResponseText.to_string(),
-            upstream_id: None,
-            upstream_type: None,
-            upstream_call_id: None,
-            text: Some(format!("message {seqno}")),
-            summary: None,
-            encrypted_text: None,
-            tool_args: None,
-            raw_data: None,
             seqno,
-            created_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
-            updated_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
-            tool_output: None,
+            upstream_id: None,
+            content: ItemContent::ResponseText(format!("message {seqno}")),
         }
     }
 
@@ -1137,7 +1103,7 @@ mod tests {
             .map(|(i, seqno)| item_with_seqno(i as i32 + 1, seqno))
             .collect();
         for item in &items {
-            h.do_update(Update::DbItemCreated { item }).unwrap();
+            h.do_update(Update::ItemCreated { item });
         }
 
         let seqnos: Vec<i64> = h
@@ -1160,7 +1126,7 @@ mod tests {
 
         // Append after items without seqno
         items.push(item_with_seqno(4, 4));
-        h.handle_update(Update::DbItemCreated { item: &items[3] });
+        h.handle_update(Update::ItemCreated { item: &items[3] });
         assert_eq!(
             item_contents(&h),
             ["help", "message 1", "message 2", "message 3", "help", "message 4"]
@@ -1168,8 +1134,8 @@ mod tests {
 
         // Updated items are rerendered in place.
         let mut item = item_with_seqno(3, 2);
-        item.text = Some("updated".into());
-        h.handle_update(Update::DbItemUpdated { item: &item });
+        item.content = ItemContent::ResponseText("updated".to_owned());
+        h.handle_update(Update::ItemUpdated { item: &item });
         assert_eq!(
             item_contents(&h),
             ["help", "message 1", "updated", "message 3", "help", "message 4"]

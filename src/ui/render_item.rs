@@ -1,8 +1,7 @@
 use serde_json::json;
 
-use crate::error::AnyResult;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::session::{DbItem, ItemType};
+use crate::item::{Item, ItemContent, ReasoningContent};
 use crate::ui::markdown::{MarkdownResult, ResumePoint};
 use crate::ui::style::{Style, Theme};
 use crate::ui::styled_string::StyledString;
@@ -154,25 +153,19 @@ impl RenderItem for CommandOutputRenderItem {
 
 pub fn get_item_content(
     tools: &ToolRegistry,
-    item: &DbItem,
-) -> AnyResult<Option<Box<dyn RenderItem>>> {
-    Ok(Some(match item.ty()? {
-        ItemType::UserText => {
-            let Some(text) = item.text.clone() else { return Ok(None) };
-            Box::new(UserRenderItem::new(text))
+    item: &Item,
+) -> Option<Box<dyn RenderItem>> {
+    Some(match &item.content {
+        ItemContent::UserText(text) => Box::new(UserRenderItem::new(text.clone())),
+        ItemContent::ResponseText(text) => {
+            Box::new(ResponseRenderItem::new(text.clone()))
         }
-        ItemType::ResponseText => {
-            let Some(text) = item.text.clone() else { return Ok(None) };
-            Box::new(ResponseRenderItem::new(text))
-        }
-        ItemType::Reasoning => {
-            let Some(text) = item.text.clone()
-                .or_else(|| item.summary.clone())
-                else { return Ok(None) };
+        ItemContent::Reasoning(ReasoningContent { text, summary, .. }) => {
+            let text = text.clone().or_else(|| summary.clone())?;
             Box::new(ThoughtRenderItem::new(text))
         }
-        ItemType::ToolCall => return Ok(tools.render_db_item_to_ui(item)),
-    }))
+        ItemContent::ToolCall(content) => tools.render_to_ui(content)?,
+    })
 }
 
 pub fn render_help(

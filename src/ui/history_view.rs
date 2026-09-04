@@ -8,7 +8,7 @@ use crossterm::event::Event;
 use serde_json::json;
 
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::session::DbItem;
+use crate::item::Item;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::UiContext;
@@ -55,8 +55,8 @@ impl HistoryView {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update<'a> {
-    DbItemCreated { item: &'a DbItem },
-    DbItemUpdated { item: &'a DbItem },
+    ItemCreated { item: &'a Item },
+    ItemUpdated { item: &'a Item },
     HelpMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -68,8 +68,8 @@ impl<'a> TryFrom<Update<'a>> for history::Update<'a> {
 
     fn try_from(update: Update<'a>) -> Result<Self, Self::Error> {
         match update {
-            Update::DbItemCreated { item } => Ok(history::Update::DbItemCreated { item }),
-            Update::DbItemUpdated { item } => Ok(history::Update::DbItemUpdated { item }),
+            Update::ItemCreated { item } => Ok(history::Update::ItemCreated { item }),
+            Update::ItemUpdated { item } => Ok(history::Update::ItemUpdated { item }),
             Update::HelpMessage(content) => Ok(history::Update::HelpMessage(content)),
             Update::ErrorMessage(content) => Ok(history::Update::ErrorMessage(content)),
             Update::CommandPrompt(content) => Ok(history::Update::CommandPrompt(content)),

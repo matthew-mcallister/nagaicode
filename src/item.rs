@@ -97,8 +97,15 @@ struct NewRow<'a> {
 }
 
 impl Item {
-    /// Decodes a database row into an item.
-    pub fn from_row(row: &DbItem) -> AnyResult<Item> {
+    /// Decodes a database row into an item. Malformed rows are logged and
+    /// decode to `None`; they should be ignored.
+    pub fn from_row(row: &DbItem) -> Option<Item> {
+        Self::from_row_inner(row)
+            .inspect_err(|e| warn!("malformed item {}: {e}", row.id))
+            .ok()
+    }
+
+    fn from_row_inner(row: &DbItem) -> AnyResult<Item> {
         let content = match row.ty()? {
             ItemType::UserText => {
                 ItemContent::UserText(require(row.id, "text", row.text.clone())?)
@@ -143,10 +150,7 @@ impl Item {
                 .first::<DbItem>(conn)
                 .optional()
         );
-        Ok(Self::from_row(&row)
-            .inspect_err(|e| warn!("malformed item {}: {e}", row.id))
-            .ok()
-        )
+        Ok(Self::from_row(&row))
     }
 
     /// Lists a session's items in seqno order, skipping undecodable rows.
@@ -240,7 +244,7 @@ impl Item {
                 .values(row)
                 .returning(item::all_columns)
                 .get_result::<DbItem>(conn)?;
-            Self::from_row(&row)
+            Ok(Self::from_row(&row).unwrap())
         })
     }
 
@@ -265,10 +269,7 @@ impl Item {
     // Decodes rows. Ignores and warns about malformed item data.
     fn decode_rows(rows: Vec<DbItem>) -> Vec<Item> {
         rows.into_iter()
-            .filter_map(|row| Self::from_row(&row)
-                .inspect_err(|e| warn!("malformed item {}: {e}", row.id))
-                .ok()
-            )
+            .filter_map(|row| Self::from_row(&row))
             .collect()
     }
 }
