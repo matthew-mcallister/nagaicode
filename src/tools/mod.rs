@@ -3,14 +3,16 @@ use std::sync::Arc;
 use fnv::FnvHashMap;
 use log::warn;
 use futures::future::BoxFuture;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::{ToolInfo, ToolOutputContent};
+use crate::item::{Item, ToolCallContent, ToolOutput};
 use crate::query::DataQuery;
 use crate::session::DbItem;
-use crate::try_nested;
+use crate::tools::failed::{render_failure_to_interface, render_failure_to_ui};
+use crate::tools::unknown::{render_unknown_to_interface, render_unknown_to_ui};
 use crate::ui::render_item::RenderItem;
 
 pub mod edit;
@@ -18,9 +20,6 @@ pub mod failed;
 pub mod read;
 pub mod sh;
 pub mod unknown;
-
-use failed::FailedTool;
-use unknown::UnknownTool;
 
 /// Interfaces for interacting with tools and rendering their output.
 pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
@@ -59,13 +58,6 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
     }
 }
 
-/// Output of a tool call. Returns fields to serialize to DB.
-#[derive(Debug)]
-pub struct ToolResult {
-    pub name: String,
-    pub output: Value,
-}
-
 /// Tool call representation submitted to inference API.
 #[derive(Debug)]
 pub struct InterfaceToolOutput {
@@ -97,8 +89,6 @@ impl ToolRegistry {
         tools.insert(read.name().to_owned(), Box::new(read));
         let edit = edit::EditTool::new(Arc::clone(cwd));
         tools.insert(edit.name().to_owned(), Box::new(edit));
-        let failed = failed::FailedTool::new();
-        tools.insert(failed.name().to_owned(), Box::new(failed));
         Self { tools }
     }
 
@@ -112,201 +102,132 @@ impl ToolRegistry {
         self.list_tools().map(|tool| tool.tool_info()).collect()
     }
 
-    /// Invokes a tool from raw name and input text. Handles all possible
-    /// errors. Modifies the item but doesn't make any DB queries.
-    pub async fn call(&self, item: &mut DbItem) -> ToolResult {
-        let args = match item.tool_args() {
-            Ok(Some(args)) => args,
-            Ok(None) => {
-                let name = item.text.clone().unwrap_or_default();
-                return Self::fail(item, &name, "tool call item has no args");
-            }
-            Err(e) => {
-                let name = item.text.clone().unwrap_or_default();
-                return Self::fail(item, &name, &e.to_string());
-            }
+    /// Invokes the tool named by a tool call item. Handles all possible
+    /// errors. Makes no DB queries.
+    pub async fn call(&self, tool_name: &str, input: &Value) -> ToolOutput {
+        let Some(tool) = self.tools.get(tool_name) else {
+            return ToolOutput::Failed { error: format!("no such tool '{}'", tool_name) };
         };
-        match self.tools.get(&args.name) {
-            Some(tool) => match tool.call(&args.args).await {
-                Ok(output) => ToolResult { name: args.name, output },
-                Err(e) => Self::fail(item, &args.name, &e.to_string()),
-            },
-            None => Self::fail(item, &args.name, "unknown tool"),
+        match tool.call(input).await {
+            Ok(value) => ToolOutput::Completed { value },
+            Err(e) => ToolOutput::Failed { error: e.to_string() },
         }
     }
 
     /// Builds a render item to display a tool call. Handles all possible
-    /// errors. Returns `None` if the item is not a tool call with output.
-    pub fn render_to_ui(&self, item: &DbItem) -> Option<Box<dyn RenderItem>> {
-        fn inner(reg: &ToolRegistry, item: &DbItem) -> AnyResult<Option<Box<dyn RenderItem>>> {
-            // Output is parsed first so that calls which are still pending
-            // are ignored instead of falling back to the placeholder.
-            let output = try_nested!(item.tool_output());
-            let args = try_nested!(item.tool_args());
-            let tool = reg.tools.get(&args.name)
-                .ok_or_else(|| anyhow::anyhow!("unknown tool: '{}'", args.name))?;
-            Ok(Some(tool.render_to_ui(&args.args, &output)?))
-        }
+    /// errors. Returns `None` if the tool call has no output.
+    pub fn render_to_ui(&self, content: &ToolCallContent) -> Option<Box<dyn RenderItem>> {
+        let tool_name = &content.tool_name;
+        Some(match content.output.as_ref()? {
+            ToolOutput::Completed { value } => self.tools.get(tool_name)
+                .and_then(|tool| tool.render_to_ui(&content.args, value)
+                    .inspect_err(|e| warn!("tool output render error: {e}"))
+                    .ok()
+                )
+                .unwrap_or_else(|| Self::unknown_ui(tool_name)),
+            ToolOutput::Failed { error } => render_failure_to_ui(tool_name, error),
+        })
+    }
 
-        match inner(self, item).transpose()? {
-            Ok(item) => Some(item),
-            Err(e) => {
-                warn!("item {}: tool call parse error: {}", item.id, e);
-                Some(Self::unknown_ui(item))
+    /// Builds input to the inference API from a tool call's output. Handles
+    /// all possible errors.
+    pub fn render_to_interface(&self, content: &ToolCallContent) -> InterfaceToolOutput {
+        let tool_name = &content.tool_name;
+        match &content.output {
+            Some(ToolOutput::Completed { value }) => self.tools.get(tool_name)
+                .and_then(|tool| tool.render_to_interface(&content.args, value)
+                    .inspect_err(|e| warn!("tool call parse error: {e}"))
+                    .ok()
+                )
+                .unwrap_or_else(|| render_unknown_to_interface(tool_name)),
+            Some(ToolOutput::Failed { error }) => {
+                render_failure_to_interface(tool_name, error)
             }
+            None => InterfaceToolOutput {
+                name: tool_name.to_owned(),
+                content: vec![ToolOutputContent::Text { text: "tool call interrupted".into() }],
+            },
         }
     }
 
-    /// Builds input to the inference API. Handles all possible errors.
-    pub fn render_to_interface(&self, item: &DbItem) -> InterfaceToolOutput {
-        let res: Option<_> = self.resolve(item).and_then(|(tool, input, output)| {
-            match tool.render_to_interface(&input, &output) {
-                Ok(out) => Some(out),
-                Err(_) => None,
-            }
-        });
-        res.unwrap_or_else(|| Self::unknown_interface(item))
+    // Temp shim
+    pub fn render_db_item_to_ui(&self, row: &DbItem) -> Option<Box<dyn RenderItem>> {
+        let item = Item::from_row(row).ok()?;
+        let content = item.content.as_tool_call()?;
+        self.render_to_ui(content)
     }
 
-    /// Resolves a tool call item to its tool and parsed input/output.
-    fn resolve<'a>(&'a self, item: &'a DbItem) -> Option<(&'a dyn Tool, Value, Value)> {
-        let name = item.text.as_deref()?;
-        let tool = self.tools.get(name)?;
-        let input = item.tool_args_json().ok().flatten().unwrap_or(Value::Null);
-        let output = item.tool_output().ok().flatten().unwrap_or(Value::Null);
-        Some((tool.as_ref(), input, output))
+    // Temp shim
+    pub fn render_db_item_to_interface(&self, row: &DbItem) -> Option<InterfaceToolOutput> {
+        let item = Item::from_row(row).ok()?;
+        let content = item.content.as_tool_call()?;
+        Some(self.render_to_interface(content))
     }
 
-    /// Writes a failure for a tool call and builds its `ToolResult`. The
-    /// result is named after the failure tool so that the item renders as an
-    /// error once persisted.
-    fn fail(item: &mut DbItem, tool_name: &str, message: &str) -> ToolResult {
-        FailedTool::write_failure(item, tool_name, message);
-        let output = item
-            .tool_output()
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| json!({ "error": "unknown error" }));
-        let name = item.text.clone().unwrap_or_else(|| "failed".to_owned());
-        ToolResult { name, output }
-    }
-
-    /// Renders an unparseable tool call for the UI.
-    fn unknown_ui(item: &DbItem) -> Box<dyn RenderItem> {
-        let name = item.text.as_deref()
-            .filter(|name| !name.is_empty())
-            .unwrap_or("<missing name>");
-        let tool = UnknownTool::new(name);
-        tool.render_to_ui(&Value::Null, &Value::Null).expect("infallible")
-    }
-
-    /// Renders an unparseable tool call for the inference API.
-    fn unknown_interface(item: &DbItem) -> InterfaceToolOutput {
-        let name = item.text.clone().unwrap_or_default();
-        let tool = UnknownTool::new(name);
-        tool.render_to_interface(&Value::Null, &Value::Null).expect("infallible")
+    fn unknown_ui(tool_name: &str) -> Box<dyn RenderItem> {
+        let tool_name = if tool_name.is_empty() { "<missing name>" } else { tool_name };
+        render_unknown_to_ui(tool_name)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
-
     use super::*;
+    use serde_json::json;
+
     use crate::cwd::cwd;
-    use crate::session::{ItemType, NewItem};
     use crate::testing::{session_turn, tool_call};
 
     #[tokio::test]
     async fn test_call_tool() {
         let dir = Arc::new(cwd());
         let registry = ToolRegistry::new(&dir);
-        let mut conn = crate::db::open_new().expect("open db");
-        let (_, turn) = session_turn(&mut conn);
 
-        let mut item = tool_call(&mut conn, &turn, "sh", json!({ "command": "printf 'hi'" }), None);
-        let result = registry.call(&mut item).await;
-        assert_eq!(result.name, "sh");
-        assert_eq!(result.output["stdout"], json!("hi"));
+        let output = registry.call("sh", &json!({ "command": "printf 'hi'" })).await;
+        let ToolOutput::Completed { value } = &output else {
+            panic!("expected a completed call, got {output:?}");
+        };
+        assert_eq!(value["stdout"], json!("hi"));
 
-        // Failed calls are renamed to the failure tool.
-        let mut item = tool_call(&mut conn, &turn, "sh", json!({ "command": 123 }), None);
-        let result = registry.call(&mut item).await;
-        assert_eq!(result.name, "failed");
-        assert_eq!(result.output["error"], json!("invalid arguments for 'sh': expected {\"command\": \"...\"}"));
-        assert_eq!(item.tool_output, Some(result.output.to_string()));
+        // Failed calls record their error.
+        assert_eq!(
+            registry.call("sh", &json!({ "dnammoc": 123 })).await,
+            ToolOutput::Failed {
+                error: "invalid arguments for 'sh': expected {\"command\": \"...\"}".to_owned(),
+            }
+        );
 
-        let mut item = tool_call(&mut conn, &turn, "no_such_tool", json!({}), None);
-        let result = registry.call(&mut item).await;
-        assert_eq!(result.name, "failed");
-        assert_eq!(result.output["error"], json!("unknown tool"));
+        assert_eq!(
+            registry.call("missing", &json!({})).await,
+            ToolOutput::Failed { error: "no such tool 'missing'".to_owned() },
+        );
     }
 
     #[tokio::test]
     async fn test_call_failure_round_trip() {
         let dir = Arc::new(cwd());
         let registry = ToolRegistry::new(&dir);
-        let mut conn = crate::db::open_new().expect("open db");
+        let mut conn = crate::db::open_new().unwrap();
         let (_, turn) = session_turn(&mut conn);
+
+        // Tool call expects a string
+        let mut item = tool_call(&mut conn, &turn, "sh", "call123", json!({ "command": 123 }), None);
+        let tc = item.content.as_tool_call().unwrap();
+        let output = registry.call(&tc.tool_name, &tc.args).await;
         let error = "invalid arguments for 'sh': expected {\"command\": \"...\"}";
+        assert_eq!(output, ToolOutput::Failed { error: error.to_owned() });
+        item.set_output(&mut conn, output).unwrap();
 
-        // Invalid arguments cause a real tool failure.
-        let mut item = tool_call(&mut conn, &turn, "sh", json!({ "command": 123 }), None);
-        let result = registry.call(&mut item).await;
-        assert_eq!(result.name, "failed");
-        assert_eq!(result.output, json!({ "tool_name": "sh", "error": error }));
-        item.set_tool_output(&mut conn, &result).expect("set tool output");
-
-        // The failure survives a DB round trip.
-        let item = DbItem::get_by_id(&mut conn, item.id)
-            .expect("get item")
-            .expect("item exists");
-        assert_eq!(item.text.as_deref(), Some("failed"));
+        // Round trip gives expected results
+        let item = Item::get(&mut conn, item.id).unwrap();
         assert_eq!(
-            item.tool_output().expect("parse output"),
-            Some(json!({ "tool_name": "sh", "error": error }))
-        );
-
-        // The reloaded item renders as an error, not as 'sh' output.
-        let ui = registry.render_to_ui(&item).expect("render ui");
-        assert_eq!(ui.query("/type").unwrap(), json!("error"));
-        assert_eq!(ui.query("/value").unwrap(), json!(format!("Called 'sh': {error}")));
-
-        let out = registry.render_to_interface(&item);
-        assert_eq!(out.name, "sh");
-        assert_eq!(
-            out.content,
-            vec![ToolOutputContent::Text {
-                text: Cow::Owned(format!("error: {error}")),
-            }]
-        );
-
-        // Unknown tools round trip the same way.
-        let mut item = tool_call(&mut conn, &turn, "no_such_tool", json!({}), None);
-        let result = registry.call(&mut item).await;
-        assert_eq!(result.name, "failed");
-        assert_eq!(
-            result.output,
-            json!({ "tool_name": "no_such_tool", "error": "unknown tool" })
-        );
-        item.set_tool_output(&mut conn, &result).expect("set tool output");
-        let item = DbItem::get_by_id(&mut conn, item.id)
-            .expect("get item")
-            .expect("item exists");
-        assert_eq!(item.text.as_deref(), Some("failed"));
-        let ui = registry.render_to_ui(&item).expect("render ui");
-        assert_eq!(ui.query("/type").unwrap(), json!("error"));
-        assert_eq!(
-            ui.query("/value").unwrap(),
-            json!("Called 'no_such_tool': unknown tool")
-        );
-        let out = registry.render_to_interface(&item);
-        assert_eq!(out.name, "no_such_tool");
-        assert_eq!(
-            out.content,
-            vec![ToolOutputContent::Text {
-                text: Cow::Owned("error: unknown tool".into()),
-            }]
+            item.content.as_tool_call().unwrap(),
+            &ToolCallContent {
+                tool_name: "sh".into(),
+                call_id: "call123".into(),
+                args: json!({ "command": 123 }),
+                output: Some(ToolOutput::Failed { error: error.into() }),
+            },
         );
     }
 
@@ -379,14 +300,18 @@ mod tests {
     fn test_render_unknown() {
         let dir = Arc::new(cwd());
         let registry = ToolRegistry::new(&dir);
-        let mut conn = crate::db::open_new().expect("open db");
-        let (_, turn) = session_turn(&mut conn);
 
-        let item = tool_call(&mut conn, &turn, "no_such_tool", json!({}), Some(json!({})));
-        let ui = registry.render_to_ui(&item).unwrap();
+        let call = ToolCallContent {
+            tool_name: "missing".into(),
+            call_id: "call123".into(),
+            args: json!({}),
+            output: Some(ToolOutput::Completed { value: json!({}) }),
+        };
+        let ui = registry.render_to_ui(&call).unwrap();
         assert_eq!(ui.query("/type").unwrap(), json!("help"));
-        let out = registry.render_to_interface(&item);
-        assert_eq!(out.name, "no_such_tool");
+        let out = registry.render_to_interface(&call);
+        // The model sees the name it called.
+        assert_eq!(out.name, "missing");
         assert_eq!(out.content.len(), 1);
     }
 
@@ -394,69 +319,32 @@ mod tests {
     fn test_render_failed() {
         let dir = Arc::new(cwd());
         let registry = ToolRegistry::new(&dir);
-        let mut conn = crate::db::open_new().expect("open db");
-        let (_, turn) = session_turn(&mut conn);
 
-        let output = json!({ "tool_name": "sh", "error": "boom" });
-        let item = tool_call(&mut conn, &turn, "failed", json!({}), Some(output));
-        let ui = registry.render_to_ui(&item).unwrap();
+        let call = ToolCallContent {
+            tool_name: "boom".into(),
+            call_id: "call123".into(),
+            args: json!({}),
+            output: Some(ToolOutput::Failed { error: "boom".to_owned() }),
+        };
+        let ui = registry.render_to_ui(&call).unwrap();
         assert_eq!(ui.query("/type").unwrap(), json!("error"));
-        let out = registry.render_to_interface(&item);
-        assert_eq!(out.name, "sh");
+        let out = registry.render_to_interface(&call);
+        assert_eq!(out.name, "boom");
         assert_eq!(out.content.len(), 1);
     }
 
     #[test]
-    fn test_render_sh() {
+    fn test_render_incomplete() {
         let dir = Arc::new(cwd());
         let registry = ToolRegistry::new(&dir);
-        let mut conn = crate::db::open_new().expect("open db");
-        let (_, turn) = session_turn(&mut conn);
-
-        let output = json!({ "stdout": "hello", "stderr": "", "return_code": 0 });
-        let item = tool_call(
-            &mut conn,
-            &turn,
-            "sh",
-            json!({ "command": "echo hello" }),
-            Some(output),
-        );
-        let ui = registry.render_to_ui(&item).unwrap();
-        assert_eq!(ui.query("/type").unwrap(), json!("sh"));
-        let out = registry.render_to_interface(&item);
-        assert_eq!(out.name, "sh");
-        assert_eq!(out.content.len(), 2);
-    }
-
-    #[test]
-    fn test_render_incomplete_item() {
-        let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir);
-        let mut conn = crate::db::open_new().expect("open db");
-        let (_, turn) = session_turn(&mut conn);
-
-        // A tool call which hasn't produced output yet isn't rendered.
-        let pending = tool_call(
-            &mut conn,
-            &turn,
-            "sh",
-            json!({ "command": "echo hello" }),
-            None,
-        );
+        let pending = ToolCallContent {
+            tool_name: "sh".into(),
+            call_id: "call123".into(),
+            args: json!({ "command": "echo 123" }),
+            output: None,
+        };
         assert!(registry.render_to_ui(&pending).is_none());
-
-        // Items which aren't tool calls aren't rendered.
-        let text_item = DbItem::create(
-            &mut conn,
-            NewItem {
-                session_id: Some(turn.session_id),
-                turn_id: Some(turn.id),
-                ty: Some(ItemType::UserText),
-                text: Some("hello"),
-                ..Default::default()
-            },
-        )
-        .expect("create text item");
-        assert!(registry.render_to_ui(&text_item).is_none());
+        let ToolOutputContent::Text { text } = &registry.render_to_interface(&pending).content[0] else { panic!() };
+        assert_eq!(text, "tool call interrupted");
     }
 }

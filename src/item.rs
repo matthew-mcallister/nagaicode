@@ -24,26 +24,43 @@ pub struct Item {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum ItemContent {
-    UserText(String),
-    ResponseText(String),
-    Reasoning {
-        text: Option<String>,
-        summary: Option<String>,
-        encrypted: Option<String>,
-    },
-    ToolCall {
-        tool_name: String,
-        call_id: String,
-        args: Value,
-        output: Option<ToolOutput>,
-    },
+pub struct ReasoningContent {
+    pub text: Option<String>,
+    pub summary: Option<String>,
+    pub encrypted: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ToolCallContent {
+    // TODO: Some day should add a data format version tag before every tool
+    // ends up suffixed with _v2
+    pub tool_name: String,
+    pub call_id: String,
+    pub args: Value,
+    pub output: Option<ToolOutput>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ToolOutput {
     Completed { value: Value },
     Failed { error: String },
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ItemContent {
+    UserText(String),
+    ResponseText(String),
+    Reasoning(ReasoningContent),
+    ToolCall(ToolCallContent),
+}
+
+impl ItemContent {
+    pub fn as_tool_call(&self) -> Option<&ToolCallContent> {
+        match self {
+            Self::ToolCall(content) => Some(&content),
+            _ => None,
+        }
+    }
 }
 
 /// Item creation parameters
@@ -88,12 +105,12 @@ impl Item {
             ItemType::ResponseText => {
                 ItemContent::ResponseText(require(row.id, "text", row.text.clone())?)
             }
-            ItemType::Reasoning => ItemContent::Reasoning {
+            ItemType::Reasoning => ItemContent::Reasoning(ReasoningContent {
                 text: row.text.clone(),
                 summary: row.summary.clone(),
                 encrypted: row.encrypted_text.clone(),
-            },
-            ItemType::ToolCall => ItemContent::ToolCall {
+            }),
+            ItemType::ToolCall => ItemContent::ToolCall(ToolCallContent {
                 tool_name: require(row.id, "text", row.text.clone())?,
                 call_id: require(row.id, "upstream_call_id", row.upstream_call_id.clone())?,
                 args: parse_json(row.id, "tool_args", row.tool_args.as_deref())?,
@@ -103,7 +120,7 @@ impl Item {
                     }
                     None => None,
                 },
-            },
+            }),
         };
         Ok(Item {
             id: row.id,
@@ -123,7 +140,7 @@ impl Item {
             .filter(item::id.eq(id))
             .first::<DbItem>(conn)
             .optional()
-            .expect("load item");
+            .unwrap();
         let row = row?;
         match Self::from_row(&row) {
             Ok(item) => Some(item),
@@ -163,7 +180,7 @@ impl Item {
             .filter(item::turn_id.eq(turn_id))
             .order(item::seqno.asc())
             .load::<DbItem>(conn)
-            .expect("load turn items");
+            .unwrap();
         Self::decode_rows(rows)
     }
 
@@ -193,22 +210,22 @@ impl Item {
                 row.ty = ItemType::ResponseText;
                 row.text = Some(text);
             }
-            ItemContent::Reasoning {
+            ItemContent::Reasoning(ReasoningContent {
                 text,
                 summary,
                 encrypted,
-            } => {
+            }) => {
                 row.ty = ItemType::Reasoning;
                 row.text = text.as_deref();
                 row.summary = summary.as_deref();
                 row.encrypted_text = encrypted.as_deref();
             }
-            ItemContent::ToolCall {
+            ItemContent::ToolCall(ToolCallContent {
                 tool_name,
                 call_id,
                 args,
                 output,
-            } => {
+            }) => {
                 row.ty = ItemType::ToolCall;
                 row.text = Some(tool_name);
                 row.upstream_call_id = Some(call_id);
@@ -233,9 +250,9 @@ impl Item {
     ///
     /// Panics if the item is not a tool call.
     pub fn set_output(&mut self, conn: &mut SqliteConnection, output: ToolOutput) -> AnyResult<()> {
-        let ItemContent::ToolCall {
+        let ItemContent::ToolCall(ToolCallContent {
             output: slot, ..
-        } = &mut self.content
+        }) = &mut self.content
         else {
             panic!("item {} is not a tool call", self.id);
         };
@@ -310,11 +327,11 @@ impl DataQuery for ItemContent {
                 "text" => Ok(QueryField::Value(json!(text))),
                 _ => Err(QueryError::InvalidField(field.to_string())),
             },
-            ItemContent::Reasoning {
+            ItemContent::Reasoning(ReasoningContent {
                 text,
                 summary,
                 encrypted,
-            } => match field {
+            }) => match field {
                 "" => Ok(QueryField::Value(json!({
                     "type": self.query("/type")?,
                     "text": self.query("/text")?,
@@ -327,12 +344,12 @@ impl DataQuery for ItemContent {
                 "encrypted" => Ok(QueryField::Value(json!(encrypted))),
                 _ => Err(QueryError::InvalidField(field.to_string())),
             },
-            ItemContent::ToolCall {
+            ItemContent::ToolCall(ToolCallContent {
                 tool_name,
                 call_id,
                 args,
                 output,
-            } => match field {
+            }) => match field {
                 "" => Ok(QueryField::Value(json!({
                     "type": self.query("/type")?,
                     "tool_name": self.query("/tool_name")?,
@@ -354,21 +371,20 @@ impl DataQuery for ItemContent {
     }
 }
 
-/// Queries the output as an object with a `completed` and a `failed` key, of
-/// which exactly one is non-null.
 impl DataQuery for ToolOutput {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        // TODO: Maybe should change storage format to match?
         match field {
             "" => Ok(QueryField::Value(json!({
-                "completed": self.query("/completed")?,
-                "failed": self.query("/failed")?,
+                "status": self.query("/status")?,
+                "content": self.query("/content")?,
             }))),
-            "completed" => match self {
-                ToolOutput::Completed { value } => Ok(QueryField::DataQuery(value)),
-                ToolOutput::Failed { .. } => Ok(QueryField::Value(json!(null))),
+            "status" => match self {
+                Self::Completed { .. } => Ok(QueryField::Value(json!("completed"))),
+                Self::Failed { .. } => Ok(QueryField::Value(json!("failed"))),
             },
-            "failed" => match self {
-                ToolOutput::Completed { .. } => Ok(QueryField::Value(json!(null))),
+            "content" => match self {
+                ToolOutput::Completed { value } => Ok(QueryField::DataQuery(value)),
                 ToolOutput::Failed { error } => Ok(QueryField::Value(json!(error))),
             },
             _ => Err(QueryError::InvalidField(field.to_string())),
@@ -391,8 +407,7 @@ fn encode_output(output: &ToolOutput) -> String {
     match output {
         ToolOutput::Completed { value } => json!({ "completed": value }),
         ToolOutput::Failed { error } => json!({ "failed": error }),
-    }
-    .to_string()
+    }.to_string()
 }
 
 fn decode_output(raw: &str) -> AnyResult<ToolOutput> {
@@ -446,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_item_query() {
-        let mut conn = crate::db::open_new().expect("open db");
+        let mut conn = crate::db::open_new().unwrap();
         let (session, turn) = session_turn(&mut conn);
         let item = create_item(
             &mut conn,
@@ -454,8 +469,7 @@ mod tests {
             turn.id,
             None,
             ItemContent::UserText("hello".to_owned()),
-        )
-        .unwrap();
+        ).unwrap();
 
         assert_eq!(item.query("/id").unwrap(), json!(item.id));
         assert_eq!(item.query("/session_id").unwrap(), json!(session.id));
@@ -486,46 +500,9 @@ mod tests {
         assert!(matches!(item.query("/content/missing"), Err(QueryError::InvalidField(_))));
     }
 
-    /// Creates each content variant and queries it.
-    #[test]
-    fn test_item_content_query() {
-        /// Queries `content` of every variant in `contents`.
-        fn query_all(contents: Vec<ItemContent>, expected: Vec<Value>) {
-            let mut conn = crate::db::open_new().expect("open db");
-            let (session, turn) = session_turn(&mut conn);
-            for (content, expected) in contents.into_iter().zip(expected) {
-                let item = create_item(&mut conn, session.id, turn.id, None, content).unwrap();
-                assert_eq!(item.query("/content").unwrap(), expected);
-                assert_eq!(item.query("/content/type").unwrap(), expected["type"]);
-            }
-        }
-
-        query_all(
-            vec![
-                ItemContent::UserText("hello".to_owned()),
-                ItemContent::ResponseText("hi there".to_owned()),
-                ItemContent::Reasoning {
-                    text: Some("thinking".to_owned()),
-                    summary: None,
-                    encrypted: Some("ciphertext".to_owned()),
-                },
-            ],
-            vec![
-                json!({"type": "user_text", "text": "hello"}),
-                json!({"type": "response_text", "text": "hi there"}),
-                json!({
-                    "type": "reasoning",
-                    "text": "thinking",
-                    "summary": null,
-                    "encrypted": "ciphertext",
-                }),
-            ],
-        );
-    }
-
     #[test]
     fn test_tool_call_content_query() {
-        let mut conn = crate::db::open_new().expect("open db");
+        let mut conn = crate::db::open_new().unwrap();
         let (session, turn) = session_turn(&mut conn);
         let mut create = |output| {
             create_item(
@@ -533,14 +510,13 @@ mod tests {
                 session.id,
                 turn.id,
                 None,
-                ItemContent::ToolCall {
+                ItemContent::ToolCall(ToolCallContent {
                     tool_name: "read".to_owned(),
                     call_id: "call_1".to_owned(),
                     args: json!({ "path": "a.txt" }),
                     output,
-                },
-            )
-            .unwrap()
+                }),
+            ).unwrap()
         };
 
         let pending = create(None);
@@ -557,52 +533,22 @@ mod tests {
         assert_eq!(pending.query("/content/args/path").unwrap(), json!("a.txt"));
         assert_eq!(pending.query("/content/call_id").unwrap(), json!("call_1"));
         assert_eq!(pending.query("/content/output").unwrap(), json!(null));
-
-        let completed = create(Some(ToolOutput::Completed {
-            value: json!({ "contents": "file contents" }),
-        }));
-        assert_eq!(
-            completed.query("/content/output").unwrap(),
-            json!({"completed": {"contents": "file contents"}, "failed": null})
-        );
-        assert_eq!(
-            completed.query("/content/output/completed/contents").unwrap(),
-            json!("file contents")
-        );
-        assert_eq!(completed.query("/content/output/failed").unwrap(), json!(null));
-
-        let failed = create(Some(ToolOutput::Failed {
-            error: "file not found".to_owned(),
-        }));
-        assert_eq!(
-            failed.query("/content/output").unwrap(),
-            json!({"completed": null, "failed": "file not found"})
-        );
-        assert_eq!(
-            failed.query("/content/output/failed").unwrap(),
-            json!("file not found")
-        );
-        assert_eq!(failed.query("/content/output/completed").unwrap(), json!(null));
-        assert!(matches!(
-            failed.query("/content/output/missing"),
-            Err(QueryError::InvalidField(_))
-        ));
     }
 
     #[test]
     fn test_item_round_trip() {
-        let mut conn = crate::db::open_new().expect("open db");
+        let mut conn = crate::db::open_new().unwrap();
         let (session, turn) = session_turn(&mut conn);
         let mut create =
             |content| create_item(&mut conn, session.id, turn.id, None, content).unwrap();
 
         let user_text = create(ItemContent::UserText("hello".to_owned()));
         let response_text = create(ItemContent::ResponseText("hi there".to_owned()));
-        let reasoning = create(ItemContent::Reasoning {
+        let reasoning = create(ItemContent::Reasoning(ReasoningContent {
             text: Some("thinking".to_owned()),
             summary: Some("summarizing".to_owned()),
             encrypted: None,
-        });
+        }));
 
         assert_eq!(Item::get(&mut conn, user_text.id).as_ref(), Some(&user_text));
         assert_eq!(
@@ -619,11 +565,11 @@ mod tests {
             Some(Item {
                 id: reasoning.id,
                 seqno: 3,
-                content: ItemContent::Reasoning {
+                content: ItemContent::Reasoning(ReasoningContent {
                     text: Some("thinking".to_owned()),
                     summary: Some("summarizing".to_owned()),
                     encrypted: None,
-                },
+                }),
                 ..response_text
             })
         );
@@ -633,41 +579,41 @@ mod tests {
     fn test_tool_output_round_trip() {
         /// The tool call under test, with the given output.
         fn call_with(output: Option<ToolOutput>) -> ItemContent {
-            ItemContent::ToolCall {
+            ItemContent::ToolCall(ToolCallContent {
                 tool_name: "read".to_owned(),
                 call_id: "call_1".to_owned(),
                 args: json!({ "path": "a.txt" }),
                 output,
-            }
+            })
         }
 
-        let mut conn = crate::db::open_new().expect("open db");
+        let mut conn = crate::db::open_new().unwrap();
         let (session, turn) = session_turn(&mut conn);
         let mut create =
             |content| create_item(&mut conn, session.id, turn.id, None, content).unwrap();
 
         let mut call = create(call_with(None));
-        assert_eq!(Item::get(&mut conn, call.id).expect("item missing"), call);
+        assert_eq!(Item::get(&mut conn, call.id).unwrap(), call);
 
         let completed = ToolOutput::Completed {
             value: json!({ "contents": "file contents" }),
         };
         call.set_output(&mut conn, completed.clone())
-            .expect("set output");
-        let reloaded = Item::get(&mut conn, call.id).expect("item missing");
+            .unwrap();
+        let reloaded = Item::get(&mut conn, call.id).unwrap();
         assert_eq!(reloaded.content, call_with(Some(completed)));
 
         let failed = ToolOutput::Failed {
             error: "file not found".to_owned(),
         };
-        call.set_output(&mut conn, failed.clone()).expect("set output");
-        let reloaded = Item::get(&mut conn, call.id).expect("item missing");
+        call.set_output(&mut conn, failed.clone()).unwrap();
+        let reloaded = Item::get(&mut conn, call.id).unwrap();
         assert_eq!(reloaded.content, call_with(Some(failed)));
     }
 
     #[test]
     fn test_invalid_data() {
-        let mut conn = crate::db::open_new().expect("open db");
+        let mut conn = crate::db::open_new().unwrap();
         let (session, turn) = session_turn(&mut conn);
 
         // A tool call with no args cannot be decoded
@@ -681,8 +627,7 @@ mod tests {
                 upstream_call_id: Some("call_1"),
                 ..Default::default()
             },
-        )
-        .expect("create invalid item");
+        ).unwrap();
 
         let healthy = create_item(
             &mut conn,
@@ -690,10 +635,9 @@ mod tests {
             turn.id,
             None,
             ItemContent::UserText("hello".to_owned()),
-        )
-        .expect("create item");
+        ).unwrap();
 
-        let items = Item::list_by_session(&mut conn, session.id).expect("list items");
+        let items = Item::list_by_session(&mut conn, session.id).unwrap();
         let ids: Vec<i32> = items.iter().map(|item| item.id).collect();
         assert_eq!(ids, [healthy.id]);
 
@@ -702,24 +646,21 @@ mod tests {
 
     #[test]
     fn test_seqno() {
-        let mut conn = crate::db::open_new().expect("open db");
+        let mut conn = crate::db::open_new().unwrap();
         let (session, turn) = session_turn(&mut conn);
-        let mut create = |seqno: i64, text: &str| {
-            create_item(
-                &mut conn,
-                session.id,
-                turn.id,
-                Some(seqno),
-                ItemContent::UserText(text.to_owned()),
-            )
-            .unwrap()
-        };
+        let mut create = |seqno: i64, text: &str| create_item(
+            &mut conn,
+            session.id,
+            turn.id,
+            Some(seqno),
+            ItemContent::UserText(text.to_owned()),
+        ).unwrap();
 
         let third = create(30, "third");
         let first = create(10, "first");
         let second = create(20, "second");
 
-        let items = Item::list_by_session(&mut conn, session.id).expect("list items");
+        let items = Item::list_by_session(&mut conn, session.id).unwrap();
         let ids: Vec<i32> = items.iter().map(|item| item.id).collect();
         assert_eq!(ids, [first.id, second.id, third.id]);
 

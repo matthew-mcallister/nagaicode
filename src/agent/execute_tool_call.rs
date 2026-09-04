@@ -1,23 +1,35 @@
+use anyhow::anyhow;
+
 use crate::app::AppEvent;
 use crate::error::AnyResult;
+use crate::item::Item;
 use crate::session::DbItem;
 use crate::task::{Task, TaskContext};
 
-/// Executes a tool call item and stores its output on the item.
 pub struct ExecuteToolCall {
-    tool_call: DbItem,
+    item: Item,
 }
 
 impl ExecuteToolCall {
-    /// Creates a task that executes `tool_call` and stores its output.
-    pub fn new(tool_call: DbItem) -> Self {
-        Self { tool_call }
+    pub fn new(item: Item) -> Self {
+        Self { item }
     }
 
     async fn process(mut self, context: &mut TaskContext) -> AnyResult<()> {
-        let result = context.tool_registry().call(&mut self.tool_call).await;
-        self.tool_call.set_tool_output(context.connection()?, &result)?;
-        context.send(AppEvent::DbItemUpdated { item: self.tool_call });
+        let tc = self.item.content.as_tool_call().expect("tried to execute non-tool-call");
+        let output = context.tool_registry().call(&tc.tool_name, &tc.args).await;
+        self.item.set_output(context.connection()?, output)?;
+
+        // FIXME: Stop sending DbItemUpdated
+        let id = self.item.id;
+        let row = DbItem::get_by_id(context.connection()?, id)?
+            .ok_or_else(|| anyhow!("item {id} is missing"))?;
+        context.send(AppEvent::DbItemUpdated { item: row });
+
+        context.send(AppEvent::ItemUpdated {
+            item: self.item,
+        });
+
         Ok(())
     }
 }
@@ -37,6 +49,8 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::db;
+    use crate::item::{ItemContent, ToolCallContent, ToolOutput};
+    use crate::query::DataQuery;
     use crate::testing::{session_turn, tool_call};
 
     #[tokio::test]
@@ -47,50 +61,89 @@ mod tests {
 
         // Tools run on a live shell.
         let sh = |command| json!({ "command": command });
-        let stdout_call = tool_call(&mut conn, &turn, "sh", sh("printf 'hi'"), None);
-        let stderr_call = tool_call(&mut conn, &turn, "sh", sh("printf 'bye' >&2"), None);
+        let stdout_call = tool_call(&mut conn, &turn, "sh", "call1", sh("printf 'hi'"), None);
+        let stderr_call = tool_call(&mut conn, &turn, "sh", "call2", sh("printf 'bye' >&2"), None);
         // Failed calls record their error as output.
-        let bad_args_call = tool_call(&mut conn, &turn, "sh", json!({ "command": 123 }), None);
-        let unknown_call = tool_call(&mut conn, &turn, "no_such_tool", json!({}), None);
+        let bad_args_call = tool_call(&mut conn, &turn, "sh", "call3", json!({ "command": 123 }), None);
+        let unknown_call = tool_call(&mut conn, &turn, "no_such_tool", "call4", json!({}), None);
 
         let mut context = app.context();
         for item in [stdout_call, stderr_call, bad_args_call, unknown_call] {
             ExecuteToolCall::new(item).run(&mut context).await.unwrap();
         }
 
-        let items = DbItem::list_by_session(&mut conn, session.id).unwrap();
-        assert_eq!(items.len(), 4);
+        let items = Item::list_by_session(&mut conn, session.id).unwrap();
+        let outputs: Vec<_> = items
+            .iter()
+            .map(|item| item.query("/content/output").unwrap())
+            .collect();
         assert_eq!(
-            items[0].tool_output().unwrap(),
-            Some(json!({ "stdout": "hi", "stderr": "", "return_code": 0 }))
-        );
-        assert_eq!(
-            items[1].tool_output().unwrap(),
-            Some(json!({ "stdout": "", "stderr": "bye", "return_code": 0 }))
-        );
-        assert_eq!(
-            items[2].tool_output().unwrap(),
-            Some(json!({
-                "tool_name": "sh",
-                "error": "invalid arguments for 'sh': expected {\"command\": \"...\"}",
-            }))
-        );
-        assert_eq!(
-            items[3].tool_output().unwrap(),
-            Some(json!({ "tool_name": "no_such_tool", "error": "unknown tool" }))
+            outputs,
+            [
+                json!({
+                    "status": "completed",
+                    "content": { "stdout": "hi", "stderr": "", "return_code": 0 },
+                }),
+                json!({
+                    "status": "completed",
+                    "content": { "stdout": "", "stderr": "bye", "return_code": 0 },
+                }),
+                json!({
+                    "status": "failed",
+                    "content": "invalid arguments for 'sh': expected {\"command\": \"...\"}",
+                }),
+                json!({
+                    "status": "failed",
+                    "content": "no such tool 'no_such_tool'",
+                }),
+            ]
         );
 
-        let events = app.drain_events();
-        assert_eq!(events.len(), 4);
-        for (event, item) in events.into_iter().zip(&items) {
+        let events: Vec<_> = app
+            .drain_events()
+            .into_iter()
+            .filter(|event| !matches!(event, AppEvent::DbItemUpdated { .. }))
+            .collect();
+        assert_eq!(events.len(), items.len());
+        for (event, item) in events.iter().zip(&items) {
             match event {
-                AppEvent::DbItemUpdated { item: updated } => {
+                AppEvent::ItemUpdated { item: updated } => {
                     assert_eq!(updated.id, item.id);
-                    assert_eq!(updated.ty, "tool_call");
-                    assert_eq!(updated.tool_output, item.tool_output);
+                    assert_eq!(updated.content, item.content);
                 }
                 other => panic!("unexpected event: {other:?}"),
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_execute_failed_tool_call() {
+        let mut app = App::new().unwrap();
+        let mut conn = db::open(app.db_url()).unwrap();
+        let (_, turn) = session_turn(&mut conn);
+        let call = tool_call(&mut conn, &turn, "no_such_tool", "call5", json!({}), None);
+
+        let mut context = app.context();
+        ExecuteToolCall::new(call).run(&mut context).await.unwrap();
+
+        let events: Vec<_> = app
+            .drain_events()
+            .into_iter()
+            .filter(|event| !matches!(event, AppEvent::DbItemUpdated { .. }))
+            .collect();
+        let AppEvent::ItemUpdated { item } = &events[0] else {
+            panic!("unexpected event: {:?}", events[0]);
+        };
+        assert_eq!(
+            item.content,
+            ItemContent::ToolCall(ToolCallContent {
+                tool_name: "no_such_tool".to_owned(),
+                call_id: "call5".to_owned(),
+                args: json!({}),
+                output: Some(ToolOutput::Failed {
+                    error: "no such tool 'no_such_tool'".to_owned(),
+                }),
+            }),
+        );
     }
 }

@@ -59,6 +59,7 @@ pub fn split_path(path: &str) -> (&str, Option<&str>) {
 ///
 /// N.B. Don't confuse this trait with diesel's Queryable trait. This trait is
 /// not directly related to database queries.
+// TODO: Feel like `query:` is not a very descriptive URI scheme?
 pub trait DataQuery {
     /// Helper method that makes it easier to work with paths. This is the
     /// minimum required to implement DataQuery. When the query is an empty

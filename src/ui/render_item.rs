@@ -171,7 +171,7 @@ pub fn get_item_content(
                 else { return Ok(None) };
             Box::new(ThoughtRenderItem::new(text))
         }
-        ItemType::ToolCall => return Ok(tools.render_to_ui(item)),
+        ItemType::ToolCall => return Ok(tools.render_db_item_to_ui(item)),
     }))
 }
 

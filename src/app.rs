@@ -56,6 +56,7 @@ pub enum AppEvent {
     CommandPrompt(String),
     /// Output of a host command, rendered after its prompt.
     CommandOutput(String),
+    // FIXME: DbItem* should only send ID
     DbItemCreated {
         item: DbItem,
     },

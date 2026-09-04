@@ -1010,7 +1010,7 @@ mod tests {
             seqno,
             created_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
             updated_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
-            tool_output: output.map(|v| v.to_string()),
+            tool_output: output.map(|v| json!({ "completed": v }).to_string()),
         }
     }
 
@@ -1031,7 +1031,7 @@ mod tests {
 
         // When the output arrives, the item is inserted and rendered.
         let mut call = call.clone();
-        call.tool_output = Some(output.to_string());
+        call.tool_output = Some(json!({ "completed": output }).to_string());
         h.handle_update(Update::DbItemUpdated { item: &call });
 
         // Rendered with the prompt background and padding, plus the item's
@@ -1077,12 +1077,9 @@ mod tests {
         call.text = None;
         h.handle_update(Update::DbItemCreated { item: &call });
 
-        // Unparseable calls fall back to an unknown tool placeholder.
-        assert_eq!(h.by_item_id.len(), 1);
-        assert_eq!(
-            h.query("/items/0/content").unwrap(),
-            json!({"type": "help", "value": "Called '<missing name>'"})
-        );
+        // Calls without a tool name are undecodable and skipped.
+        assert_eq!(h.by_item_id.len(), 0);
+        assert_eq!(h.num_rows(), 0);
 
         // An empty name is treated the same way.
         let mut h = history(14, 10);

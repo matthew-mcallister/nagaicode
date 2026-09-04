@@ -15,7 +15,6 @@ use crate::error::{AnyError, AnyResult};
 use crate::interface::Usage;
 use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::schema::{item, response, session, turn};
-use crate::tools::ToolResult;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, diesel::AsExpression, diesel::FromSqlRow)]
 #[diesel(sql_type = Text)]
@@ -601,23 +600,6 @@ impl DbItem {
         diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
             .set(dsl::summary.eq(&self.summary))
             .execute(conn)?;
-        Ok(())
-    }
-
-    /// Writes a tool call's result. The result's name replaces the item's
-    /// name, which is how failed calls are re-routed to the failure tool.
-    pub fn set_tool_output(
-        &mut self,
-        conn: &mut SqliteConnection,
-        result: &ToolResult,
-    ) -> AnyResult<()> {
-        use crate::schema::item::dsl;
-        let tool_output = result.output.to_string();
-        diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
-            .set((dsl::text.eq(&result.name), dsl::tool_output.eq(&tool_output)))
-            .execute(conn)?;
-        self.text = Some(result.name.clone());
-        self.tool_output = Some(tool_output);
         Ok(())
     }
 

@@ -120,9 +120,8 @@ pub enum ChatMessage<'a> {
 /// Text items are always included; reasoning items are only included when
 /// `include_reasoning` is true, preferring the summary over the raw text.
 ///
-/// Tool calls are rendered as a call/response pair, with a fallback for
-/// incomplete output. The call name comes from the rendered output, since
-/// failed calls are renamed to the failure tool.
+/// Tool calls are rendered as a call/output pair. ToolRegistry handles
+/// fallback for incomplete/failed calls.
 pub fn build_history<'a>(
     tools: &ToolRegistry,
     items: &'a [DbItem],
@@ -151,36 +150,14 @@ pub fn build_history<'a>(
                 }
             }
             ItemType::ToolCall => {
-                let Some(call_id) = item.upstream_call_id.as_deref() else {
-                    // Fallback in case database is corrupted
-                    continue;
-                };
-                let output = if item.tool_output()?.is_some() {
-                    Some(tools.render_to_interface(item))
-                } else {
-                    None
-                };
-                let Some(name) = output
-                    .as_ref()
-                    .map(|out| Cow::Owned(out.name.clone()))
-                    .or_else(|| item.text.as_deref().map(Cow::Borrowed))
-                else {
-                    // Fallback in case database is corrupted
-                    continue;
-                };
+                let Some(call_id) = item.upstream_call_id.as_deref() else { continue };
+                let Some(output) = tools.render_db_item_to_interface(item) else { continue };
                 messages.push(ChatMessage::ToolCall {
                     call_id,
-                    name,
+                    name: output.name.into(),
                     arguments: item.tool_args.as_deref().unwrap_or(""),
                 });
-                let output = match output {
-                    Some(out) => out.content,
-                    // Fallback for calls which never produced output
-                    None => vec![ToolOutputContent::Text {
-                        text: Cow::Borrowed("error: tool call interrupted"),
-                    }],
-                };
-                messages.push(ChatMessage::ToolOutput { call_id, output });
+                messages.push(ChatMessage::ToolOutput { call_id, output: output.content });
             }
         }
     }
@@ -383,7 +360,7 @@ mod tests {
         args: Option<&str>,
         output: Option<&Value>,
     ) -> DbItem {
-        let output = output.map(|x| x.to_string());
+        let output = output.map(|x| json!({ "completed": x }).to_string());
         DbItem::create(
             conn,
             NewItem {
@@ -447,7 +424,7 @@ mod tests {
             None,
             Some(&json!({"result": 3})),
         );
-        let interrupted_call = create_tool_call(
+        let undecodable_call = create_tool_call(
             &mut conn,
             session.id,
             turn.id,
@@ -464,7 +441,7 @@ mod tests {
             tool_call.id,
             error_tool_call.id,
             orphan_call.id,
-            interrupted_call.id,
+            undecodable_call.id,
         ];
         let items: Vec<DbItem> = ids
             .iter()
@@ -511,17 +488,6 @@ mod tests {
                         text: Cow::Borrowed("error: could not parse output"),
                     }],
                 },
-                ChatMessage::ToolCall {
-                    call_id: "call_3",
-                    name: Cow::Borrowed("rm"),
-                    arguments: "",
-                },
-                ChatMessage::ToolOutput {
-                    call_id: "call_3",
-                    output: vec![ToolOutputContent::Text {
-                        text: Cow::Borrowed("error: tool call interrupted"),
-                    }],
-                },
             ]
         );
 
@@ -558,35 +524,25 @@ mod tests {
                         text: Cow::Borrowed("error: could not parse output"),
                     }],
                 },
-                ChatMessage::ToolCall {
-                    call_id: "call_3",
-                    name: Cow::Borrowed("rm"),
-                    arguments: "",
-                },
-                ChatMessage::ToolOutput {
-                    call_id: "call_3",
-                    output: vec![ToolOutputContent::Text {
-                        text: Cow::Borrowed("error: tool call interrupted"),
-                    }],
-                },
             ]
         );
 
-        // A failed call is renamed to the failure tool in the DB, but the
-        // model still sees the name it called.
-        let mut failed_call = create_tool_call(
+        // A failed call records its error as output; the model still sees the
+        // name it called.
+        let failed_call = DbItem::create(
             &mut conn,
-            session.id,
-            turn.id,
-            "sh",
-            Some("call_4"),
-            Some(r#"{"command":123}"#),
-            Some(&json!({ "tool_name": "sh", "error": "boom" })),
-        );
-        failed_call.update_text(&mut conn, "failed").unwrap();
-        let failed_call = DbItem::get_by_id(&mut conn, failed_call.id)
-            .unwrap()
-            .unwrap();
+            NewItem {
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
+                ty: Some(ItemType::ToolCall),
+                text: Some("sh"),
+                upstream_call_id: Some("call_4"),
+                tool_args: Some(r#"{"command":123}"#),
+                tool_output: Some(&json!({ "failed": "boom" }).to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(
             build_history(&registry, &[failed_call], false).unwrap(),
             vec![

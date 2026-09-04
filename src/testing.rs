@@ -14,15 +14,14 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::app::AppEvent;
 use crate::task::{Task, TaskContext};
 use crate::tools::ToolRegistry;
-use crate::session::{DbItem, ItemType, NewItem, Session, Turn, TurnType};
+use crate::item::{Item, ItemContent, NewItem, ToolCallContent, ToolOutput};
+use crate::session::{Session, Turn, TurnType};
 use crate::ui::UiContext;
 
-/// Creates a tool registry over a scratch working directory.
 pub fn tool_registry() -> Arc<ToolRegistry> {
     Arc::new(ToolRegistry::new(&Arc::new(crate::cwd::cwd())))
 }
 
-/// Creates a session containing a single empty assistant turn.
 pub fn session_turn(conn: &mut SqliteConnection) -> (Session, Turn) {
     let session = Session::create(conn, "Session").unwrap();
     let turn = Turn::create(conn, session.id, TurnType::Assistant, None, None, None)
@@ -30,43 +29,37 @@ pub fn session_turn(conn: &mut SqliteConnection) -> (Session, Turn) {
     (session, turn)
 }
 
-/// Creates a tool call item in `turn`, named `name`, with JSON `args` and
-/// `output`.
 pub fn tool_call(
     conn: &mut SqliteConnection,
     turn: &Turn,
     name: &str,
+    call_id: &str,
     args: Value,
-    output: Option<Value>,
-) -> DbItem {
-    let args = args.to_string();
-    let mut item = DbItem::create(
+    output: Option<ToolOutput>,
+) -> Item {
+    Item::create(
         conn,
         NewItem {
-            session_id: Some(turn.session_id),
-            turn_id: Some(turn.id),
-            ty: Some(ItemType::ToolCall),
-            text: Some(name),
-            tool_args: Some(&args),
-            ..Default::default()
+            session_id: turn.session_id,
+            turn_id: turn.id,
+            response_id: None,
+            provider_id: None,
+            upstream_id: None,
+            seqno: None,
+            content: ItemContent::ToolCall(ToolCallContent {
+                tool_name: name.to_owned(),
+                call_id: call_id.to_owned(),
+                args,
+                output,
+            }),
         },
-    ).unwrap();
-    if let Some(output) = output {
-        let result = crate::tools::ToolResult {
-            name: name.to_owned(),
-            output,
-        };
-        item.set_tool_output(conn, &result).unwrap();
-    }
-    DbItem::get_by_id(conn, item.id).unwrap().unwrap()
+    ).unwrap()
 }
 
-/// Creates a UI context for components constructed directly in tests.
 pub fn ui_context() -> UiContext {
     UiContext::new(tool_registry())
 }
 
-/// Creates a root task context which sends events to `sender`.
 pub fn task_context(sender: UnboundedSender<AppEvent>) -> TaskContext {
     TaskContext::root(
         Arc::new(AtomicU64::new(0)),

@@ -511,7 +511,7 @@ async fn test_agent_tool_call_loop() {
     assert_eq!(items[1].tool_args.as_deref(), Some(r#"{"command": "printf 3"}"#));
     assert_eq!(
         items[1].tool_output().unwrap(),
-        Some(json!({ "stdout": "3", "stderr": "", "return_code": 0 }))
+        Some(json!({ "completed": { "stdout": "3", "stderr": "", "return_code": 0 } }))
     );
     assert_eq!(items[2].ty().unwrap(), ItemType::ResponseText);
     assert_eq!(items[2].upstream_id.as_deref(), Some("msg_2"));
