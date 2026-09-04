@@ -16,6 +16,7 @@ use crate::ui::render_item::{ErrorRenderItem, HelpRenderItem, RenderItem};
 pub mod edit;
 pub mod read;
 pub mod sh;
+pub mod write;
 
 /// Interfaces for interacting with tools and rendering their output.
 pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
@@ -75,8 +76,6 @@ impl ToolRegistry {
         // - edit
         // - grep
         // - glob
-        // - failed
-        // - unknown
         let mut tools: FnvHashMap<String, Box<dyn Tool>> = FnvHashMap::default();
         let sh = sh::ShTool::new(Arc::clone(cwd));
         tools.insert(sh.name().to_owned(), Box::new(sh));
@@ -84,6 +83,8 @@ impl ToolRegistry {
         tools.insert(read.name().to_owned(), Box::new(read));
         let edit = edit::EditTool::new(Arc::clone(cwd));
         tools.insert(edit.name().to_owned(), Box::new(edit));
+        let write = write::WriteTool::new(Arc::clone(cwd));
+        tools.insert(write.name().to_owned(), Box::new(write));
         Self { tools }
     }
 
@@ -236,7 +237,7 @@ mod tests {
         let registry = ToolRegistry::new(&dir);
         let mut names: Vec<&str> = registry.list_tools().map(|t| t.name()).collect();
         names.sort();
-        assert_eq!(names, ["edit", "read", "sh"]);
+        assert_eq!(names, ["edit", "read", "sh", "write"]);
 
         // Only visible tools are advertised to the model.
         let mut infos = registry.list_tool_infos();
@@ -288,6 +289,21 @@ mod tests {
                         "type": "object",
                         "properties": { "command": { "type": "string" } },
                         "required": ["command"],
+                        "additionalProperties": false,
+                    }),
+                },
+                ToolInfo {
+                    name: "write".to_owned(),
+                    description: "Creates or overwrites a text file with \
+                        the given content."
+                        .to_owned(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "filepath": { "type": "string" },
+                            "content": { "type": "string" },
+                        },
+                        "required": ["filepath", "content"],
                         "additionalProperties": false,
                     }),
                 },
