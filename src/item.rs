@@ -5,6 +5,7 @@ use log::warn;
 use serde_json::{Value, json};
 
 use crate::error::AnyResult;
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::schema::item;
 use crate::session::{DbItem, ItemType};
 
@@ -22,7 +23,6 @@ pub struct Item {
     pub content: ItemContent,
 }
 
-/// Type-specific payload of an [`Item`].
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ItemContent {
     UserText(String),
@@ -40,14 +40,13 @@ pub enum ItemContent {
     },
 }
 
-/// Result of executing a tool call.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ToolOutput {
     Completed { value: Value },
     Failed { error: String },
 }
 
-/// An [`Item`] which has not been persisted yet.
+/// Item creation parameters
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NewItem {
     pub session_id: i32,
@@ -262,6 +261,121 @@ impl Item {
     }
 }
 
+impl DataQuery for Item {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "id": self.query("/id")?,
+                "session_id": self.query("/session_id")?,
+                "turn_id": self.query("/turn_id")?,
+                "response_id": self.query("/response_id")?,
+                "provider_id": self.query("/provider_id")?,
+                "seqno": self.query("/seqno")?,
+                "upstream_id": self.query("/upstream_id")?,
+                "content": self.query("/content")?,
+            }))),
+            "id" => Ok(QueryField::Value(json!(self.id))),
+            "session_id" => Ok(QueryField::Value(json!(self.session_id))),
+            "turn_id" => Ok(QueryField::Value(json!(self.turn_id))),
+            "response_id" => Ok(QueryField::Value(json!(self.response_id))),
+            "provider_id" => Ok(QueryField::Value(json!(self.provider_id))),
+            "seqno" => Ok(QueryField::Value(json!(self.seqno))),
+            "upstream_id" => Ok(QueryField::Value(json!(self.upstream_id))),
+            "content" => Ok(QueryField::DataQuery(&self.content)),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+/// Queries the content as a variant-tagged object. Fields which are unset or
+/// belong to another variant read as `null`.
+impl DataQuery for ItemContent {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match self {
+            ItemContent::UserText(text) => match field {
+                "" => Ok(QueryField::Value(json!({
+                    "type": self.query("/type")?,
+                    "text": self.query("/text")?,
+                }))),
+                "type" => Ok(QueryField::Value(json!("user_text"))),
+                "text" => Ok(QueryField::Value(json!(text))),
+                _ => Err(QueryError::InvalidField(field.to_string())),
+            },
+            ItemContent::ResponseText(text) => match field {
+                "" => Ok(QueryField::Value(json!({
+                    "type": self.query("/type")?,
+                    "text": self.query("/text")?,
+                }))),
+                "type" => Ok(QueryField::Value(json!("response_text"))),
+                "text" => Ok(QueryField::Value(json!(text))),
+                _ => Err(QueryError::InvalidField(field.to_string())),
+            },
+            ItemContent::Reasoning {
+                text,
+                summary,
+                encrypted,
+            } => match field {
+                "" => Ok(QueryField::Value(json!({
+                    "type": self.query("/type")?,
+                    "text": self.query("/text")?,
+                    "summary": self.query("/summary")?,
+                    "encrypted": self.query("/encrypted")?,
+                }))),
+                "type" => Ok(QueryField::Value(json!("reasoning"))),
+                "text" => Ok(QueryField::Value(json!(text))),
+                "summary" => Ok(QueryField::Value(json!(summary))),
+                "encrypted" => Ok(QueryField::Value(json!(encrypted))),
+                _ => Err(QueryError::InvalidField(field.to_string())),
+            },
+            ItemContent::ToolCall {
+                tool_name,
+                call_id,
+                args,
+                output,
+            } => match field {
+                "" => Ok(QueryField::Value(json!({
+                    "type": self.query("/type")?,
+                    "tool_name": self.query("/tool_name")?,
+                    "call_id": self.query("/call_id")?,
+                    "args": self.query("/args")?,
+                    "output": self.query("/output")?,
+                }))),
+                "type" => Ok(QueryField::Value(json!("tool_call"))),
+                "tool_name" => Ok(QueryField::Value(json!(tool_name))),
+                "call_id" => Ok(QueryField::Value(json!(call_id))),
+                "args" => Ok(QueryField::DataQuery(args)),
+                "output" => match output {
+                    Some(output) => Ok(QueryField::DataQuery(output)),
+                    None => Ok(QueryField::Value(json!(null))),
+                },
+                _ => Err(QueryError::InvalidField(field.to_string())),
+            },
+        }
+    }
+}
+
+/// Queries the output as an object with a `completed` and a `failed` key, of
+/// which exactly one is non-null.
+impl DataQuery for ToolOutput {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "completed": self.query("/completed")?,
+                "failed": self.query("/failed")?,
+            }))),
+            "completed" => match self {
+                ToolOutput::Completed { value } => Ok(QueryField::DataQuery(value)),
+                ToolOutput::Failed { .. } => Ok(QueryField::Value(json!(null))),
+            },
+            "failed" => match self {
+                ToolOutput::Completed { .. } => Ok(QueryField::Value(json!(null))),
+                ToolOutput::Failed { error } => Ok(QueryField::Value(json!(error))),
+            },
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
 fn require(id: i32, field: &str, value: Option<String>) -> AnyResult<String> {
     value.ok_or_else(|| anyhow!("item {id}: {field} is missing"))
 }
@@ -328,6 +442,151 @@ mod tests {
                 content,
             },
         )
+    }
+
+    #[test]
+    fn test_item_query() {
+        let mut conn = crate::db::open_new().expect("open db");
+        let (session, turn) = session_turn(&mut conn);
+        let item = create_item(
+            &mut conn,
+            session.id,
+            turn.id,
+            None,
+            ItemContent::UserText("hello".to_owned()),
+        )
+        .unwrap();
+
+        assert_eq!(item.query("/id").unwrap(), json!(item.id));
+        assert_eq!(item.query("/session_id").unwrap(), json!(session.id));
+        assert_eq!(item.query("/turn_id").unwrap(), json!(turn.id));
+        assert_eq!(item.query("/seqno").unwrap(), json!(1));
+        assert_eq!(item.query("/response_id").unwrap(), json!(null));
+        assert_eq!(item.query("/provider_id").unwrap(), json!(null));
+        assert_eq!(item.query("/upstream_id").unwrap(), json!(null));
+        assert_eq!(
+            item.query("/content").unwrap(),
+            json!({"type": "user_text", "text": "hello"})
+        );
+
+        let whole = json!({
+            "id": item.id,
+            "session_id": session.id,
+            "turn_id": turn.id,
+            "response_id": null,
+            "provider_id": null,
+            "seqno": 1,
+            "upstream_id": null,
+            "content": {"type": "user_text", "text": "hello"},
+        });
+        assert_eq!(item.query("/").unwrap(), whole);
+        assert_eq!(item.query("query://content/text").unwrap(), json!("hello"));
+
+        assert!(matches!(item.query("/missing"), Err(QueryError::InvalidField(_))));
+        assert!(matches!(item.query("/content/missing"), Err(QueryError::InvalidField(_))));
+    }
+
+    /// Creates each content variant and queries it.
+    #[test]
+    fn test_item_content_query() {
+        /// Queries `content` of every variant in `contents`.
+        fn query_all(contents: Vec<ItemContent>, expected: Vec<Value>) {
+            let mut conn = crate::db::open_new().expect("open db");
+            let (session, turn) = session_turn(&mut conn);
+            for (content, expected) in contents.into_iter().zip(expected) {
+                let item = create_item(&mut conn, session.id, turn.id, None, content).unwrap();
+                assert_eq!(item.query("/content").unwrap(), expected);
+                assert_eq!(item.query("/content/type").unwrap(), expected["type"]);
+            }
+        }
+
+        query_all(
+            vec![
+                ItemContent::UserText("hello".to_owned()),
+                ItemContent::ResponseText("hi there".to_owned()),
+                ItemContent::Reasoning {
+                    text: Some("thinking".to_owned()),
+                    summary: None,
+                    encrypted: Some("ciphertext".to_owned()),
+                },
+            ],
+            vec![
+                json!({"type": "user_text", "text": "hello"}),
+                json!({"type": "response_text", "text": "hi there"}),
+                json!({
+                    "type": "reasoning",
+                    "text": "thinking",
+                    "summary": null,
+                    "encrypted": "ciphertext",
+                }),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_tool_call_content_query() {
+        let mut conn = crate::db::open_new().expect("open db");
+        let (session, turn) = session_turn(&mut conn);
+        let mut create = |output| {
+            create_item(
+                &mut conn,
+                session.id,
+                turn.id,
+                None,
+                ItemContent::ToolCall {
+                    tool_name: "read".to_owned(),
+                    call_id: "call_1".to_owned(),
+                    args: json!({ "path": "a.txt" }),
+                    output,
+                },
+            )
+            .unwrap()
+        };
+
+        let pending = create(None);
+        assert_eq!(
+            pending.query("/content").unwrap(),
+            json!({
+                "type": "tool_call",
+                "tool_name": "read",
+                "call_id": "call_1",
+                "args": {"path": "a.txt"},
+                "output": null,
+            })
+        );
+        assert_eq!(pending.query("/content/args/path").unwrap(), json!("a.txt"));
+        assert_eq!(pending.query("/content/call_id").unwrap(), json!("call_1"));
+        assert_eq!(pending.query("/content/output").unwrap(), json!(null));
+
+        let completed = create(Some(ToolOutput::Completed {
+            value: json!({ "contents": "file contents" }),
+        }));
+        assert_eq!(
+            completed.query("/content/output").unwrap(),
+            json!({"completed": {"contents": "file contents"}, "failed": null})
+        );
+        assert_eq!(
+            completed.query("/content/output/completed/contents").unwrap(),
+            json!("file contents")
+        );
+        assert_eq!(completed.query("/content/output/failed").unwrap(), json!(null));
+
+        let failed = create(Some(ToolOutput::Failed {
+            error: "file not found".to_owned(),
+        }));
+        assert_eq!(
+            failed.query("/content/output").unwrap(),
+            json!({"completed": null, "failed": "file not found"})
+        );
+        assert_eq!(
+            failed.query("/content/output/failed").unwrap(),
+            json!("file not found")
+        );
+        assert_eq!(failed.query("/content/output/completed").unwrap(), json!(null));
+        assert!(matches!(
+            failed.query("/content/output/missing"),
+            Err(QueryError::InvalidField(_))
+        ));
     }
 
     #[test]
