@@ -138,7 +138,7 @@ impl DbItem {
         conn.transaction(|conn| {
             if new.seqno.is_none() && let Some(session_id) = new.session_id {
                 // Fill in default seqno
-                new.seqno = Some(Self::max_seqno(conn, session_id)?.unwrap_or(0) + 1);
+                new.seqno = Some(Item::max_seqno(conn, session_id)?.unwrap_or(0) + 1);
             };
             let item = diesel::insert_into(item::table)
                 .values(new)
@@ -146,16 +146,6 @@ impl DbItem {
                 .get_result(conn)?;
             Ok(item)
         })
-    }
-
-    /// Returns the highest seqno for the session, if any.
-    // XXX: Why not just next_seqno() -> max + 1 with default, done in query...
-    pub fn max_seqno(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Option<i64>> {
-        let result = item::table
-            .filter(item::session_id.eq(session_id))
-            .select(diesel::dsl::max(item::seqno))
-            .first::<Option<i64>>(conn)?;
-        Ok(result)
     }
 
     pub fn list_by_session(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Vec<DbItem>> {
@@ -266,6 +256,16 @@ pub struct NewItem {
 }
 
 impl Item {
+    /// Returns the highest seqno for the session, if any.
+    // XXX: Why not just next_seqno() -> max + 1 with default, done in query...
+    pub fn max_seqno(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Option<i64>> {
+        let result = item::table
+            .filter(item::session_id.eq(session_id))
+            .select(diesel::dsl::max(item::seqno))
+            .first::<Option<i64>>(conn)?;
+        Ok(result)
+    }
+
     /// Decodes a database row into an item. Malformed rows are logged and
     /// decode to `None`; they should be ignored.
     pub fn from_row(row: &DbItem) -> Option<Item> {

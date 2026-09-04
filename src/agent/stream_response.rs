@@ -1,7 +1,7 @@
 use crate::error::AnyResult;
 use crate::interface::{InferenceParams, build_history};
 use crate::interface::stream::StreamProcessor;
-use crate::item::{DbItem, Item};
+use crate::item::Item;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
@@ -53,7 +53,7 @@ impl StreamResponse {
         };
         let stream = interface.generate(params);
 
-        let base_seqno = DbItem::max_seqno(context.connection()?, self.session.id)?.unwrap_or(0) + 1;
+        let base_seqno = Item::max_seqno(context.connection()?, self.session.id)?.unwrap_or(0) + 1;
         let mut processor = StreamProcessor::new(
             self.session,
             context.sender().clone(),

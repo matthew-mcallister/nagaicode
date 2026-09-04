@@ -447,7 +447,7 @@ async fn test_app_session_new() {
 
 #[tokio::test]
 async fn test_app_session_switch() {
-    use crate::item::{DbItem, ItemType, NewDbItem};
+    use crate::item::{Item, ItemContent, NewItem};
     use crate::session::{Session, Turn, TurnType};
 
     let mut app = App::new().unwrap();
@@ -461,18 +461,20 @@ async fn test_app_session_switch() {
     let session = Session::create(app.conn(), "restored").unwrap();
     let turn = Turn::create(app.conn(), session.id, TurnType::User, None, None, None)
         .expect("create turn");
-    for (ty, text) in [
-        (ItemType::UserText, "hello from the past"),
-        (ItemType::ResponseText, "restored reply"),
+    for content in [
+        ItemContent::UserText("hello from the past".to_owned()),
+        ItemContent::ResponseText("restored reply".to_owned()),
     ] {
-        DbItem::create(
+        Item::create(
             app.conn(),
-            NewDbItem {
-                session_id: Some(session.id),
-                turn_id: Some(turn.id),
-                ty: Some(ty),
-                text: Some(text),
-                ..Default::default()
+            NewItem {
+                session_id: session.id,
+                turn_id: turn.id,
+                response_id: None,
+                provider_id: None,
+                upstream_id: None,
+                seqno: None,
+                content,
             },
         )
         .expect("create item");
