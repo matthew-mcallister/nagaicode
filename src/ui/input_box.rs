@@ -495,7 +495,6 @@ impl InputBox {
         self.set_viewport_top_at(self.first_row(), 0);
         self.cursor_row = self.first_row();
         self.cursor_col = 0;
-        self.buffer.clear();
         self.overwrite_buffer = false;
     }
 
@@ -2058,6 +2057,7 @@ That on himself such murd'rous shame commits.
         assert_eq!(input.buffer, "a");
 
         input.set_text("a b");
+        input.buffer.clear();
         input.cursor_col = 3;
         input.delete_prev_word();
         assert_eq!(input.get_text(), "a \n");
