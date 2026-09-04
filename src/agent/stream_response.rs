@@ -1,11 +1,11 @@
 use crate::error::AnyResult;
 use crate::interface::{InferenceParams, build_history};
 use crate::interface::stream::StreamProcessor;
-use crate::item::Item;
+use crate::item::{DbItem, Item};
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
-use crate::session::{DbItem, Session};
+use crate::session::Session;
 use crate::task::{Task, TaskContext};
 
 pub struct StreamResponse {

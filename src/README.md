@@ -11,6 +11,7 @@
   - `src/query.rs`: debug query trait
   - `src/session.rs`: session, turn, and response tables
   - `src/item.rs`: item table
+  - `src/testing.rs`: unit test helpers
   - `src/tools/`:
     - `src/tools/mod.rs`: tool registry and task definition
   - `src/interface/`

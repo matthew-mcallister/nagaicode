@@ -2,7 +2,8 @@ use diesel::prelude::*;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
-use crate::session::{DbItem, ItemType, NewItem, Turn, TurnType};
+use crate::item::{DbItem, ItemType, NewDbItem};
+use crate::session::{Turn, TurnType};
 use crate::task::{Task, TaskContext};
 
 /// Creates a Turn and Item for a prompt.
@@ -23,7 +24,7 @@ impl CreatePrompt {
         let events: AnyResult<_> = context.connection()?.transaction(|conn| {
             let session_id = self.session_id;
             let turn = Turn::create(conn, session_id, TurnType::User, None, None, None)?;
-            let item = DbItem::create(conn, NewItem {
+            let item = DbItem::create(conn, NewDbItem {
                 session_id: Some(session_id),
                 turn_id: Some(turn.id),
                 ty: Some(ItemType::UserText),
@@ -63,7 +64,7 @@ mod tests {
             .unwrap();
         let tool_call = DbItem::create(
             app.conn(),
-            NewItem {
+            NewDbItem {
                 session_id: Some(session.id),
                 turn_id: Some(turn.id),
                 provider_id: Some(1),

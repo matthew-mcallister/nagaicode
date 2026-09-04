@@ -447,7 +447,8 @@ async fn test_app_session_new() {
 
 #[tokio::test]
 async fn test_app_session_switch() {
-    use crate::session::{DbItem, ItemType, NewItem, Session, Turn, TurnType};
+    use crate::item::{DbItem, ItemType, NewDbItem};
+    use crate::session::{Session, Turn, TurnType};
 
     let mut app = App::new().unwrap();
 
@@ -466,7 +467,7 @@ async fn test_app_session_switch() {
     ] {
         DbItem::create(
             app.conn(),
-            NewItem {
+            NewDbItem {
                 session_id: Some(session.id),
                 turn_id: Some(turn.id),
                 ty: Some(ty),

@@ -30,7 +30,8 @@ fn request_body_value(req: &Request) -> serde_json::Value {
 
 #[tokio::test]
 async fn test_app_prompt_agent() {
-    use crate::session::{ItemType, Response, Turn, TurnType};
+    use crate::item::ItemType;
+    use crate::session::{Response, Turn, TurnType};
 
     let mut app = App::new().unwrap();
 
@@ -124,7 +125,7 @@ async fn test_app_prompt_agent() {
     assert_eq!(assistant_turn.provider_name.as_deref(), Some("test"));
     assert_eq!(assistant_turn.model_id.as_deref(), Some("gpt-4"));
 
-    let items = crate::session::DbItem::list_by_session(app.conn(), session_id).unwrap();
+    let items = crate::item::DbItem::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(
         items.len(),
         2,
@@ -169,7 +170,8 @@ async fn test_app_prompt_agent() {
 
 #[tokio::test]
 async fn test_agent_stream_error() {
-    use crate::session::{DbItem, ItemType, Response, Turn, TurnType};
+    use crate::item::{DbItem, ItemType};
+    use crate::session::{Response, Turn, TurnType};
 
     let mut app = App::new().unwrap();
 
@@ -236,7 +238,7 @@ async fn test_agent_stream_error() {
 
 #[tokio::test]
 async fn test_agent_out_of_order_items() {
-    use crate::session::{DbItem, ItemType};
+    use crate::item::{DbItem, ItemType};
 
     let mut app = App::new().unwrap();
 
@@ -306,7 +308,8 @@ async fn test_agent_out_of_order_items() {
 
 #[tokio::test]
 async fn test_agent_history() {
-    use crate::session::{DbItem, ItemType, Turn, TurnType};
+    use crate::item::{DbItem, ItemType};
+    use crate::session::{Turn, TurnType};
 
     let mut app = App::new().unwrap();
 
@@ -406,7 +409,8 @@ async fn test_agent_history() {
 
 #[tokio::test]
 async fn test_agent_tool_call_loop() {
-    use crate::session::{DbItem, ItemType, Response, Turn, TurnType};
+    use crate::item::{DbItem, ItemType};
+    use crate::session::{Response, Turn, TurnType};
 
     let mut app = App::new().unwrap();
 
@@ -509,9 +513,11 @@ async fn test_agent_tool_call_loop() {
     assert_eq!(items[1].upstream_call_id.as_deref(), Some("call_1"));
     assert_eq!(items[1].text.as_deref(), Some("sh"));
     assert_eq!(items[1].tool_args.as_deref(), Some(r#"{"command": "printf 3"}"#));
+    let output: serde_json::Value =
+        serde_json::from_str(items[1].tool_output.as_deref().unwrap()).unwrap();
     assert_eq!(
-        items[1].tool_output().unwrap(),
-        Some(json!({ "completed": { "stdout": "3", "stderr": "", "return_code": 0 } }))
+        output,
+        json!({ "completed": { "stdout": "3", "stderr": "", "return_code": 0 } })
     );
     assert_eq!(items[2].ty().unwrap(), ItemType::ResponseText);
     assert_eq!(items[2].upstream_id.as_deref(), Some("msg_2"));

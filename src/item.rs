@@ -1,14 +1,210 @@
 use anyhow::{anyhow, bail};
+use chrono::NaiveDateTime;
+use diesel::backend::Backend;
+use diesel::deserialize::{self, FromSql};
 use diesel::prelude::*;
-use diesel::sqlite::SqliteConnection;
+use diesel::serialize::{self, IsNull, ToSql};
+use diesel::sql_types::Text;
+use diesel::sqlite::{Sqlite, SqliteConnection};
 use log::warn;
 use serde_json::{Value, json};
+use std::fmt;
+use std::str::FromStr;
 
-use crate::error::AnyResult;
+use crate::error::{AnyError, AnyResult};
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::schema::item;
-use crate::session::{DbItem, ItemType};
 use crate::try_nested;
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, diesel::AsExpression, diesel::FromSqlRow)]
+#[diesel(sql_type = Text)]
+pub enum ItemType {
+    UserText,
+    ResponseText,
+    Reasoning,
+    ToolCall,
+}
+
+impl fmt::Display for ItemType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ItemType::UserText => write!(f, "user_text"),
+            ItemType::ResponseText => write!(f, "response_text"),
+            ItemType::Reasoning => write!(f, "reasoning"),
+            ItemType::ToolCall => write!(f, "tool_call"),
+        }
+    }
+}
+
+impl FromStr for ItemType {
+    type Err = AnyError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "user_text" => Ok(ItemType::UserText),
+            "response_text" => Ok(ItemType::ResponseText),
+            "reasoning" => Ok(ItemType::Reasoning),
+            "tool_call" => Ok(ItemType::ToolCall),
+            other => Err(anyhow!("unknown item type: {other}")),
+        }
+    }
+}
+
+impl ToSql<Text, Sqlite> for ItemType {
+    fn to_sql<'b>(&'b self, out: &mut serialize::Output<'b, '_, Sqlite>) -> serialize::Result {
+        out.set_value(self.to_string());
+        Ok(IsNull::No)
+    }
+}
+
+impl FromSql<Text, Sqlite> for ItemType {
+    fn from_sql(bytes: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
+        let value = <String as FromSql<Text, Sqlite>>::from_sql(bytes)?;
+        value.parse().map_err(Into::into)
+    }
+}
+
+impl ItemType {
+    pub fn from_upstream(ty: &str) -> Option<Self> {
+        match ty {
+            "message" => Some(ItemType::ResponseText),
+            "reasoning" => Some(ItemType::Reasoning),
+            "function_call" => Some(ItemType::ToolCall),
+            _ => None,
+        }
+    }
+}
+
+/// Raw row from the item table.
+#[derive(Debug, Clone, Eq, PartialEq, Queryable, Selectable)]
+#[diesel(table_name = item)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+pub struct DbItem {
+    pub id: i32,
+    pub session_id: i32,
+    pub turn_id: i32,
+    pub response_id: Option<i32>,
+    pub provider_id: Option<i32>,
+    /// Maps to ItemType, may be converted from upstream_type
+    pub ty: String,
+    pub upstream_id: Option<String>,
+    /// Raw type from API
+    pub upstream_type: Option<String>,
+    /// Correlates tool call and tool output
+    pub upstream_call_id: Option<String>,
+    /// Used by user_text, response_text, and reasoning. Also stores the tool
+    /// name on tool_call
+    pub text: Option<String>,
+    /// Reasoning summary
+    pub summary: Option<String>,
+    /// Encrypted reasoning
+    pub encrypted_text: Option<String>,
+    /// Tool call args
+    pub tool_args: Option<String>,
+    // TODO: config setting to disable
+    pub raw_data: Option<String>,
+    /// Position in the session's item ordering; unique per session.
+    pub seqno: i64,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    /// For tool calls, the JSON output of the call, if finished
+    pub tool_output: Option<String>,
+}
+
+#[derive(Debug, Default, Insertable)]
+#[diesel(table_name = item)]
+pub struct NewDbItem<'a> {
+    pub session_id: Option<i32>,
+    pub turn_id: Option<i32>,
+    pub response_id: Option<i32>,
+    pub provider_id: Option<i32>,
+    pub ty: Option<ItemType>,
+    pub upstream_id: Option<&'a str>,
+    pub upstream_type: Option<&'a str>,
+    pub upstream_call_id: Option<&'a str>,
+    pub text: Option<&'a str>,
+    /// Reasoning summary
+    pub summary: Option<&'a str>,
+    /// Encrypted reasoning
+    pub encrypted_text: Option<&'a str>,
+    pub tool_args: Option<String>,
+    pub tool_output: Option<String>,
+    /// Explicit seqno, or `None` to autoincrement
+    pub seqno: Option<i64>,
+    pub raw_data: Option<&'a str>,
+}
+
+impl DbItem {
+    pub fn create(conn: &mut SqliteConnection, mut new: NewDbItem<'_>) -> AnyResult<DbItem> {
+        conn.transaction(|conn| {
+            if new.seqno.is_none() && let Some(session_id) = new.session_id {
+                // Fill in default seqno
+                new.seqno = Some(Self::max_seqno(conn, session_id)?.unwrap_or(0) + 1);
+            };
+            let item = diesel::insert_into(item::table)
+                .values(new)
+                .returning(item::all_columns)
+                .get_result(conn)?;
+            Ok(item)
+        })
+    }
+
+    /// Returns the highest seqno for the session, if any.
+    // XXX: Why not just next_seqno() -> max + 1 with default, done in query...
+    pub fn max_seqno(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Option<i64>> {
+        let result = item::table
+            .filter(item::session_id.eq(session_id))
+            .select(diesel::dsl::max(item::seqno))
+            .first::<Option<i64>>(conn)?;
+        Ok(result)
+    }
+
+    pub fn get_by_id(conn: &mut SqliteConnection, id: i32) -> AnyResult<Option<DbItem>> {
+        let result = item::table
+            .filter(item::id.eq(id))
+            .first::<DbItem>(conn)
+            .optional()?;
+        Ok(result)
+    }
+
+    pub fn list_by_session(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Vec<DbItem>> {
+        let items = item::table
+            .filter(item::session_id.eq(session_id))
+            .order(item::seqno.asc())
+            .load::<DbItem>(conn)?;
+        Ok(items)
+    }
+
+    pub fn update_text(&mut self, conn: &mut SqliteConnection, text: impl Into<String>) -> AnyResult<()> {
+        use crate::schema::item::dsl;
+        self.text = Some(text.into());
+        diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
+            .set(dsl::text.eq(&self.text))
+            .execute(conn)?;
+        Ok(())
+    }
+
+    pub fn update_summary(&mut self, conn: &mut SqliteConnection, summary: impl Into<String>) -> AnyResult<()> {
+        use crate::schema::item::dsl;
+        self.summary = Some(summary.into());
+        diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
+            .set(dsl::summary.eq(&self.summary))
+            .execute(conn)?;
+        Ok(())
+    }
+
+    pub fn set_raw_data(&mut self, conn: &mut SqliteConnection, raw_data: String) -> AnyResult<()> {
+        use crate::schema::item::dsl;
+        self.raw_data = Some(raw_data);
+        diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
+            .set(dsl::raw_data.eq(self.raw_data.as_deref()))
+            .execute(conn)?;
+        Ok(())
+    }
+
+    pub fn ty(&self) -> AnyResult<ItemType> {
+        ItemType::from_str(&self.ty)
+    }
+}
 
 /// Basic datum in the human/agent/tool loop history.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -75,25 +271,6 @@ pub struct NewItem {
     /// Explicit seqno, or `None` to append to the session.
     pub seqno: Option<i64>,
     pub content: ItemContent,
-}
-
-/// Item content spread across the columns which store it.
-#[derive(Debug, Insertable)]
-#[diesel(table_name = item)]
-struct NewRow<'a> {
-    session_id: i32,
-    turn_id: i32,
-    response_id: Option<i32>,
-    provider_id: Option<i32>,
-    ty: ItemType,
-    upstream_id: Option<&'a str>,
-    upstream_call_id: Option<&'a str>,
-    text: Option<&'a str>,
-    summary: Option<&'a str>,
-    encrypted_text: Option<&'a str>,
-    tool_args: Option<String>,
-    tool_output: Option<String>,
-    seqno: i64,
 }
 
 impl Item {
@@ -188,28 +365,30 @@ impl Item {
 
     /// Inserts an item
     pub fn create(conn: &mut SqliteConnection, new: NewItem) -> AnyResult<Item> {
-        let mut row = NewRow {
-            session_id: new.session_id,
-            turn_id: new.turn_id,
+        let mut row = NewDbItem {
+            session_id: Some(new.session_id),
+            turn_id: Some(new.turn_id),
             response_id: new.response_id,
             provider_id: new.provider_id,
-            ty: ItemType::UserText,
+            ty: None,
             upstream_id: new.upstream_id.as_deref(),
+            upstream_type: None,
             upstream_call_id: None,
             text: None,
             summary: None,
             encrypted_text: None,
             tool_args: None,
             tool_output: None,
-            seqno: 0,
+            seqno: new.seqno,
+            raw_data: None,
         };
         match &new.content {
             ItemContent::UserText(text) => {
-                row.ty = ItemType::UserText;
+                row.ty = Some(ItemType::UserText);
                 row.text = Some(text);
             }
             ItemContent::ResponseText(text) => {
-                row.ty = ItemType::ResponseText;
+                row.ty = Some(ItemType::ResponseText);
                 row.text = Some(text);
             }
             ItemContent::Reasoning(ReasoningContent {
@@ -217,7 +396,7 @@ impl Item {
                 summary,
                 encrypted,
             }) => {
-                row.ty = ItemType::Reasoning;
+                row.ty = Some(ItemType::Reasoning);
                 row.text = text.as_deref();
                 row.summary = summary.as_deref();
                 row.encrypted_text = encrypted.as_deref();
@@ -228,24 +407,15 @@ impl Item {
                 args,
                 output,
             }) => {
-                row.ty = ItemType::ToolCall;
+                row.ty = Some(ItemType::ToolCall);
                 row.text = Some(tool_name);
                 row.upstream_call_id = Some(call_id);
                 row.tool_args = Some(args.to_string());
                 row.tool_output = output.as_ref().map(encode_output);
             }
         }
-        conn.transaction(|conn| {
-            row.seqno = match new.seqno {
-                Some(seqno) => seqno,
-                None => DbItem::max_seqno(conn, new.session_id)?.unwrap_or(0) + 1,
-            };
-            let row = diesel::insert_into(item::table)
-                .values(row)
-                .returning(item::all_columns)
-                .get_result::<DbItem>(conn)?;
-            Ok(Self::from_row(&row).unwrap())
-        })
+        let row = DbItem::create(conn, row)?;
+        Ok(Self::from_row(&row).unwrap())
     }
 
     /// Updates and commits output of a tool call.
@@ -430,7 +600,6 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::session::{ItemType, NewItem as NewDbItem};
     use crate::testing::session_turn;
 
     /// Creates an item in `session`/`turn` with all optional fields unset.
@@ -453,6 +622,36 @@ mod tests {
                 content,
             },
         )
+    }
+
+    #[test]
+    fn test_item_type() {
+        assert_eq!(ItemType::from_upstream("message"), Some(ItemType::ResponseText));
+        assert_eq!(ItemType::from_upstream("reasoning"), Some(ItemType::Reasoning));
+        assert_eq!(ItemType::from_upstream("function_call"), Some(ItemType::ToolCall));
+        assert_eq!(ItemType::from_upstream("function_call_output"), None);
+        assert_eq!("tool_call".parse::<ItemType>().unwrap(), ItemType::ToolCall);
+        assert!("tool_output".parse::<ItemType>().is_err());
+        assert!("bogus".parse::<ItemType>().is_err());
+
+        let mut conn = crate::db::open_new().unwrap();
+        let (session, turn) = session_turn(&mut conn);
+        let item = DbItem::create(
+            &mut conn,
+            NewDbItem {
+                session_id: Some(session.id),
+                turn_id: Some(turn.id),
+                ty: Some(ItemType::UserText),
+                text: Some("hi"),
+                ..Default::default()
+            },
+        ).unwrap();
+        let ty = item::table
+            .filter(item::id.eq(item.id))
+            .select(item::ty)
+            .first::<ItemType>(&mut conn)
+            .unwrap();
+        assert_eq!(ty, ItemType::UserText);
     }
 
     #[test]

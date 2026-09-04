@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use crate::app::AppEvent;
 use crate::error::AnyResult;
 use crate::item::Item;
-use crate::session::DbItem;
+use crate::item::DbItem;
 use crate::task::{Task, TaskContext};
 
 pub struct ExecuteToolCall {

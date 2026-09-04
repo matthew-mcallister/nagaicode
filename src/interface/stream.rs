@@ -10,7 +10,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::app::AppEvent;
 use crate::error::AnyResult;
 use crate::interface::{InferenceEvent, ItemDelta, OutputItemEvent};
-use crate::session::{DbItem, ItemType, NewItem, Response, Session, Turn, TurnType};
+use crate::item::{DbItem, ItemType, NewDbItem};
+use crate::session::{Response, Session, Turn, TurnType};
 
 /// Dumb data pipe. Consumes events off the wire and writes to the DB. Sends
 /// out change notifications.
@@ -131,7 +132,7 @@ impl<'a, S> StreamProcessor<'a, S> {
         let raw = added.raw.to_string();
         let item = DbItem::create(
             self.conn,
-            NewItem {
+            NewDbItem {
                 session_id: Some(self.session.id),
                 turn_id: Some(turn_id),
                 response_id,
@@ -141,7 +142,9 @@ impl<'a, S> StreamProcessor<'a, S> {
                 upstream_type: Some(&added.ty),
                 upstream_call_id: added.call_id.as_deref(),
                 text,
-                tool_args: added.tool_args.as_deref(),
+                summary: None,
+                encrypted_text: None,
+                tool_args: added.tool_args.clone(),
                 tool_output: None,
                 seqno: Some(self.base_seqno + added.output_index),
                 raw_data: Some(&raw),
