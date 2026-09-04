@@ -48,24 +48,12 @@ async fn test_app_prompt_agent() {
     let url = "https://example.test/v1/responses";
     let events: Vec<AnyResult<SseEvent>> = vec![
         Ok(SseEvent::Open),
-        Ok(create_message_event(
-            r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#,
-        )),
-        Ok(create_message_event(
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
-        )),
-        Ok(create_message_event(
-            r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"Hello there, "}"#,
-        )),
-        Ok(create_message_event(
-            r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"how can I help?"}"#,
-        )),
-        Ok(create_message_event(
-            r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello there, how can I help?"}]}}"#,
-        )),
-        Ok(create_message_event(
-            r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed","usage":{"input_tokens":12,"output_tokens":18,"total_tokens":30,"input_tokens_details":{"cached_tokens":4},"output_tokens_details":{"reasoning_tokens":7}}}}"#,
-        )),
+        Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#)),
+        Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#)),
+        Ok(create_message_event(r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"Hello there, "}"#)),
+        Ok(create_message_event(r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"how can I help?"}"#)),
+        Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello there, how can I help?"}]}}"#)),
+        Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed","usage":{"input_tokens":12,"output_tokens":18,"total_tokens":30,"input_tokens_details":{"cached_tokens":4},"output_tokens_details":{"reasoning_tokens":7}}}}"#)),
         Ok(create_message_event("[DONE]")),
     ];
     app.client_mut()
@@ -73,8 +61,7 @@ async fn test_app_prompt_agent() {
 
     // Drive the terminal to input a prompt and submit it.
     for c in "hello".chars() {
-        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
-            .await;
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c)))).await;
     }
     app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
 
@@ -204,15 +191,9 @@ async fn test_agent_stream_error() {
         url,
         ResponseData::Sse(QueueStream::from(vec![
             Ok(SseEvent::Open),
-            Ok(create_message_event(
-                r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"Hello"}"#,
-            )),
+            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"Hello"}"#)),
             Err(anyhow!("network error")),
         ])),
     );
@@ -276,30 +257,14 @@ async fn test_agent_out_of_order_items() {
         url,
         ResponseData::Sse(QueueStream::from(vec![
             Ok(SseEvent::Open),
-            Ok(create_message_event(
-                r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"delta":"The answer is 2."}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The answer is 2."}]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.reasoning_text.delta","item_id":"rs_1","output_index":0,"delta":"I should add."}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed"}}"#,
-            )),
+            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"delta":"The answer is 2."}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The answer is 2."}]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.reasoning_text.delta","item_id":"rs_1","output_index":0,"delta":"I should add."}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed"}}"#)),
             Ok(create_message_event("[DONE]")),
         ])),
     );
@@ -364,30 +329,14 @@ async fn test_agent_history() {
         url,
         ResponseData::Sse(QueueStream::from(vec![
             Ok(SseEvent::Open),
-            Ok(create_message_event(
-                r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.reasoning_text.delta","item_id":"rs_1","output_index":0,"delta":"I should add."}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"delta":"The answer is 2."}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The answer is 2."}]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed"}}"#,
-            )),
+            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.reasoning_text.delta","item_id":"rs_1","output_index":0,"delta":"I should add."}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"delta":"The answer is 2."}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The answer is 2."}]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed"}}"#)),
             Ok(create_message_event("[DONE]")),
         ])),
     );
@@ -424,21 +373,11 @@ async fn test_agent_history() {
         url,
         ResponseData::Sse(QueueStream::from(vec![
             Ok(SseEvent::Open),
-            Ok(create_message_event(
-                r#"{"type":"response.created","response":{"id":"resp-2","status":"in_progress"}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_2","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_text.delta","item_id":"msg_2","output_index":0,"delta":"You're welcome!"}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_2","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"You're welcome!"}]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.completed","response":{"id":"resp-2","status":"completed"}}"#,
-            )),
+            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-2","status":"in_progress"}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_2","type":"message","status":"in_progress","role":"assistant","content":[]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_text.delta","item_id":"msg_2","output_index":0,"delta":"You're welcome!"}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_2","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"You're welcome!"}]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-2","status":"completed"}}"#)),
             Ok(create_message_event("[DONE]")),
         ])),
     );
@@ -490,25 +429,12 @@ async fn test_agent_tool_call_loop() {
         url,
         ResponseData::Sse(QueueStream::from(vec![
             Ok(SseEvent::Open),
-            Ok(create_message_event(
-                r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"sh","call_id":"call_1","arguments":""}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"command\": \"printf"}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":" 3\"}"}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"sh","call_id":"call_1","arguments":"{\"command\": \"printf 3\"}"}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed"}}"#,
-            )),
-            Ok(create_message_event("[DONE]")),
+            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"sh","call_id":"call_1","arguments":""}}"#)),
+            Ok(create_message_event(r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"command\": \"printf"}"#)),
+            Ok(create_message_event(r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":" 3\"}"}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"sh","call_id":"call_1","arguments":"{\"command\": \"printf 3\"}"}}"#)),
+            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed"}}"#)),
         ])),
     );
 
@@ -517,28 +443,16 @@ async fn test_agent_tool_call_loop() {
         url,
         ResponseData::Sse(QueueStream::from(vec![
             Ok(SseEvent::Open),
-            Ok(create_message_event(
-                r#"{"type":"response.created","response":{"id":"resp-2","status":"in_progress"}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_2","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_text.delta","item_id":"msg_2","output_index":0,"delta":"The answer is 3."}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_2","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The answer is 3."}]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.completed","response":{"id":"resp-2","status":"completed"}}"#,
-            )),
-            Ok(create_message_event("[DONE]")),
+            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-2","status":"in_progress"}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_2","type":"message","status":"in_progress","role":"assistant","content":[]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_text.delta","item_id":"msg_2","output_index":0,"delta":"The answer is 3."}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_2","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The answer is 3."}]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-2","status":"completed"}}"#)),
         ])),
     );
 
     for c in "call the sh tool".chars() {
-        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
-            .await;
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c)))).await;
     }
     app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
     app.await_task().await.expect("await agent task");

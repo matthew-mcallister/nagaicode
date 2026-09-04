@@ -23,21 +23,13 @@ impl CreatePrompt {
         let events: AnyResult<_> = context.connection()?.transaction(|conn| {
             let session_id = self.session_id;
             let turn = Turn::create(conn, session_id, TurnType::User, None, None, None)?;
-            let item = DbItem::create(
-                conn,
-                NewItem {
-                    session_id: Some(session_id),
-                    turn_id: Some(turn.id),
-                    response_id: None,
-                    provider_id: None,
-                    ty: Some(ItemType::UserText),
-                    upstream_id: None,
-                    upstream_type: None,
-                    upstream_call_id: None,
-                    text: Some(&self.prompt),
-                    seqno: None,
-                },
-            )?;
+            let item = DbItem::create(conn, NewItem {
+                session_id: Some(session_id),
+                turn_id: Some(turn.id),
+                ty: Some(ItemType::UserText),
+                text: Some(&self.prompt),
+                ..Default::default()
+            })?;
             Ok(vec![AppEvent::DbItemCreated { item }])
         });
         for event in events? {

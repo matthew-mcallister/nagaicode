@@ -12,10 +12,12 @@ use crate::error::AnyResult;
 use crate::interface::{InferenceEvent, ItemDelta, OutputItemEvent};
 use crate::session::{DbItem, ItemType, NewItem, Response, Session, Turn, TurnType};
 
-/// Consumes an inference event stream and persists it into a session.
+/// Dumb data pipe. Consumes events off the wire and writes to the DB. Sends
+/// out change notifications.
 pub struct StreamProcessor<'a, S> {
     stream: Pin<Box<S>>,
     session: Session,
+    send: UnboundedSender<AppEvent>,
     conn: &'a mut SqliteConnection,
     provider_id: i32,
     provider_name: String,
@@ -27,9 +29,9 @@ pub struct StreamProcessor<'a, S> {
 }
 
 impl<'a, S> StreamProcessor<'a, S> {
-    /// Creates a processor for `stream` targeting `session`.
     pub fn new(
         session: Session,
+        send: UnboundedSender<AppEvent>,
         conn: &'a mut SqliteConnection,
         turn_id: Option<i32>,
         base_seqno: i64,
@@ -41,6 +43,7 @@ impl<'a, S> StreamProcessor<'a, S> {
         Self {
             stream: Box::pin(stream),
             session,
+            send,
             conn,
             provider_id,
             provider_name,
@@ -52,7 +55,7 @@ impl<'a, S> StreamProcessor<'a, S> {
         }
     }
 
-    fn handle_event(&mut self, event: InferenceEvent) -> AnyResult<Option<AppEvent>> {
+    fn handle_event(&mut self, event: InferenceEvent) -> AnyResult<()> {
         match event {
             InferenceEvent::Created(created) => {
                 let turn_id = self.ensure_turn()?;
@@ -64,17 +67,13 @@ impl<'a, S> StreamProcessor<'a, S> {
                     Some(&created.status),
                 )?;
                 self.response = Some(response);
-                Ok(None)
             }
-            InferenceEvent::OutputItemAdded(added) => self.handle_item_added(added),
-            InferenceEvent::OutputItemDone(done) => self.handle_item_done(done),
-            InferenceEvent::ReasoningTextDelta(delta) => self.handle_delta(delta),
-            InferenceEvent::ReasoningSummaryDelta(delta) => self.handle_summary_delta(delta),
-            InferenceEvent::OutputTextDelta(delta) => self.handle_delta(delta),
-            InferenceEvent::FunctionCallArgsDelta(delta) => {
-                self.handle_args_delta(delta)?;
-                Ok(None)
-            }
+            InferenceEvent::OutputItemAdded(added) => self.handle_item_added(added)?,
+            InferenceEvent::OutputItemDone(done) => self.handle_item_done(done)?,
+            InferenceEvent::ReasoningTextDelta(delta) => self.handle_delta(delta)?,
+            InferenceEvent::ReasoningSummaryDelta(delta) => self.handle_summary_delta(delta)?,
+            InferenceEvent::OutputTextDelta(delta) => self.handle_delta(delta)?,
+            InferenceEvent::FunctionCallArgsDelta(_) => {},
             InferenceEvent::Completed(completed) => {
                 if let Some(response) = &self.response {
                     Response::finish(
@@ -85,7 +84,6 @@ impl<'a, S> StreamProcessor<'a, S> {
                         Some(&completed.raw_response),
                     )?;
                 }
-                Ok(None)
             }
             InferenceEvent::Failed(failed) => {
                 if let Some(response) = &self.response {
@@ -97,99 +95,10 @@ impl<'a, S> StreamProcessor<'a, S> {
                         Some(&failed.raw_response),
                     )?;
                 }
-                Ok(Some(AppEvent::ErrorMessage(failed.error_message)))
+                let _ = self.send.send(AppEvent::ErrorMessage(failed.error_message));
             }
         }
-    }
-
-    fn handle_item_added(&mut self, added: OutputItemEvent) -> AnyResult<Option<AppEvent>> {
-        let Some(ty) = ItemType::from_upstream(&added.ty) else { return Ok(None); };
-        let text = if ty == ItemType::ToolCall { added.raw["name"].as_str() } else { None };
-        let item = self.create_item(
-            added.output_index,
-            ty,
-            &added.id,
-            added.ty.as_str(),
-            added.call_id.as_deref(),
-            text,
-        )?;
-        Ok(Some(AppEvent::DbItemCreated { item }))
-    }
-
-    fn handle_item_done(&mut self, done: OutputItemEvent) -> AnyResult<Option<AppEvent>> {
-        let Some(item) = self.items.get_mut(&done.output_index) else { return Ok(None) };
-        if item.ty == "tool_call" {
-            if let Some(args) = done.raw.get("arguments").and_then(|args| args.as_str()) {
-                item.update_tool_args(self.conn, args)?;
-            } else {
-                log::warn!("tool call '{}' missing args", done.call_id.as_deref().unwrap_or(""));
-                return Ok(None);
-            }
-        }
-        DbItem::set_raw_data(self.conn, item.id, &done.raw)?;
-        item.raw_data = Some(done.raw.to_string());
-        Ok(Some(AppEvent::DbItemUpdated { item: item.clone() }))
-    }
-
-    fn handle_delta(&mut self, delta: ItemDelta) -> AnyResult<Option<AppEvent>> {
-        let Some(item) = self.items.get_mut(&delta.output_index) else {
-            log::warn!("received delta before item");
-            return Ok(None)
-        };
-        let text = format!("{}{}", item.text.as_deref().unwrap_or(""), &delta.delta);
-        item.update_text(self.conn, &text)?;
-        Ok(Some(AppEvent::DbItemUpdated { item: item.clone() }))
-    }
-
-    fn handle_summary_delta(&mut self, delta: ItemDelta) -> AnyResult<Option<AppEvent>> {
-        let Some(item) = self.items.get_mut(&delta.output_index) else {
-            log::warn!("received delta before item");
-            return Ok(None)
-        };
-        let summary = format!("{}{}", item.summary.as_deref().unwrap_or(""), &delta.delta);
-        item.update_summary(self.conn, &summary)?;
-        Ok(Some(AppEvent::DbItemUpdated { item: item.clone() }))
-    }
-
-    fn handle_args_delta(&mut self, delta: ItemDelta) -> AnyResult<()> {
-        let Some(item) = self.items.get_mut(&delta.output_index) else {
-            log::warn!("received delta before item");
-            return Ok(())
-        };
-        let tool_args = format!("{}{}", item.tool_args.as_deref().unwrap_or(""), &delta.delta);
-        item.tool_args = Some(tool_args);
-        // Don't emit event here, args aren't finished and no one consumes them
         Ok(())
-    }
-
-    fn create_item(
-        &mut self,
-        output_index: i64,
-        ty: ItemType,
-        upstream_id: &str,
-        upstream_type: &str,
-        upstream_call_id: Option<&str>,
-        text: Option<&str>,
-    ) -> AnyResult<DbItem> {
-        let turn_id = self.ensure_turn()?;
-        let response_id = self.response.as_ref().map(|r| r.id);
-        let item = DbItem::create(
-            self.conn,
-            NewItem {
-                session_id: Some(self.session.id),
-                turn_id: Some(turn_id),
-                response_id,
-                provider_id: Some(self.provider_id),
-                ty: Some(ty),
-                upstream_id: Some(upstream_id),
-                upstream_type: Some(upstream_type),
-                upstream_call_id,
-                text,
-                seqno: Some(self.base_seqno + output_index),
-            },
-        )?;
-        self.items.insert(output_index, item.clone());
-        Ok(item)
     }
 
     fn ensure_turn(&mut self) -> AnyResult<i32> {
@@ -208,6 +117,74 @@ impl<'a, S> StreamProcessor<'a, S> {
         Ok(turn.id)
     }
 
+    // Creates a new item. Tool calls require args to be complete and present.
+    fn handle_item_added(&mut self, added: OutputItemEvent) -> AnyResult<()> {
+        let Some(ty) = ItemType::from_upstream(&added.ty) else { return Ok(()); };
+
+        // Tool calls: don't write until arguments are complete
+        let args = added.tool_args.as_deref().unwrap_or("");
+        if ty == ItemType::ToolCall && args.is_empty() { return Ok(()); }
+
+        let text = added.tool_name.as_deref();
+        let turn_id = self.ensure_turn()?;
+        let response_id = self.response.as_ref().map(|r| r.id);
+        let raw = added.raw.to_string();
+        let item = DbItem::create(
+            self.conn,
+            NewItem {
+                session_id: Some(self.session.id),
+                turn_id: Some(turn_id),
+                response_id,
+                provider_id: Some(self.provider_id),
+                ty: Some(ty),
+                upstream_id: Some(&added.id),
+                upstream_type: Some(&added.ty),
+                upstream_call_id: added.call_id.as_deref(),
+                text,
+                tool_args: added.tool_args.as_deref(),
+                tool_output: None,
+                seqno: Some(self.base_seqno + added.output_index),
+                raw_data: Some(&raw),
+            },
+        )?;
+        self.items.insert(added.output_index, item.clone());
+
+        let _ = self.send.send(AppEvent::DbItemCreated { item });
+        Ok(())
+    }
+
+    fn handle_item_done(&mut self, done: OutputItemEvent) -> AnyResult<()> {
+        if ItemType::from_upstream(&done.ty) == Some(ItemType::ToolCall) {
+            return self.handle_item_added(done);
+        }
+        let Some(item) = self.items.get_mut(&done.output_index) else { return Ok(()) };
+        item.set_raw_data(self.conn, done.raw.to_string())?;
+        let _ = self.send.send(AppEvent::DbItemUpdated { item: item.clone() });
+        Ok(())
+    }
+
+    fn handle_delta(&mut self, delta: ItemDelta) -> AnyResult<()> {
+        let Some(item) = self.items.get_mut(&delta.output_index) else {
+            log::warn!("received delta before item");
+            return Ok(())
+        };
+        let text = format!("{}{}", item.text.as_deref().unwrap_or(""), &delta.delta);
+        item.update_text(self.conn, &text)?;
+        let _ = self.send.send(AppEvent::DbItemUpdated { item: item.clone() });
+        Ok(())
+    }
+
+    fn handle_summary_delta(&mut self, delta: ItemDelta) -> AnyResult<()> {
+        let Some(item) = self.items.get_mut(&delta.output_index) else {
+            log::warn!("received delta before item");
+            return Ok(())
+        };
+        let summary = format!("{}{}", item.summary.as_deref().unwrap_or(""), &delta.delta);
+        item.update_summary(self.conn, &summary)?;
+        let _ = self.send.send(AppEvent::DbItemUpdated { item: item.clone() });
+        Ok(())
+    }
+
     fn fail_response(&mut self) -> AnyResult<()> {
         if let Some(response) = &self.response {
             Response::finish(self.conn, response.id, "failed", None, None)?;
@@ -221,14 +198,10 @@ where
     S: Stream<Item = AnyResult<InferenceEvent>>,
 {
     /// Pumps the stream to completion, persisting state and emitting events.
-    pub async fn process(&mut self, sender: &UnboundedSender<AppEvent>) -> AnyResult<(i32, i32)> {
+    pub async fn process(&mut self) -> AnyResult<(i32, i32)> {
         while let Some(item) = self.stream.next().await {
             match item {
-                Ok(event) => {
-                    if let Some(event) = self.handle_event(event)? {
-                        let _ = sender.send(event);
-                    }
-                }
+                Ok(event) => self.handle_event(event)?,
                 Err(e) => {
                     let e = match self.fail_response() {
                         Ok(()) => e,

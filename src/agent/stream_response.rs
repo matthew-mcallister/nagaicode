@@ -52,10 +52,10 @@ impl StreamResponse {
         };
         let stream = interface.generate(params);
 
-        let sender = context.sender().clone();
         let base_seqno = DbItem::max_seqno(context.connection()?, self.session.id)?.unwrap_or(0) + 1;
         let mut processor = StreamProcessor::new(
             self.session,
+            context.sender().clone(),
             context.connection()?,
             self.turn_id,
             base_seqno,
@@ -64,7 +64,7 @@ impl StreamResponse {
             self.provider.name.clone(),
             self.model.id.clone(),
         );
-        processor.process(&sender).await
+        processor.process().await
     }
 }
 

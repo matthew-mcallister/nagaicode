@@ -228,7 +228,7 @@ pub struct Usage {
 
 /// An output item, emitted when an output item is added to or completed in
 /// the response.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct OutputItemEvent {
     /// Position of the item in the response's output array. Add, delta, and
     /// done events for the same item share this index.
@@ -239,6 +239,10 @@ pub struct OutputItemEvent {
     pub ty: String,
     /// Upstream tool call id, e.g. "call_...", present on function call items.
     pub call_id: Option<String>,
+    /// Tool name
+    pub tool_name: Option<String>,
+    /// Tool call arguments
+    pub tool_args: Option<String>,
     /// Full raw JSON of the output item.
     pub raw: Value,
 }
@@ -347,7 +351,6 @@ mod tests {
     use super::*;
     use crate::db;
     use crate::session::{DbItem, NewItem, Session, Turn, TurnType};
-    use crate::tools::ToolResult;
     use diesel::sqlite::SqliteConnection;
 
     fn create_item(
@@ -368,8 +371,7 @@ mod tests {
                 upstream_call_id,
                 ..Default::default()
             },
-        )
-        .unwrap()
+        ).unwrap()
     }
 
     fn create_tool_call(
@@ -381,26 +383,20 @@ mod tests {
         args: Option<&str>,
         output: Option<&Value>,
     ) -> DbItem {
-        let mut call = create_item(
+        let output = output.map(|x| x.to_string());
+        DbItem::create(
             conn,
-            session_id,
-            turn_id,
-            ItemType::ToolCall,
-            Some(name),
-            call_id,
-        );
-        if let Some(args) = args {
-            call.update_tool_args(conn,args).unwrap();
-        }
-        let mut call = DbItem::get_by_id(conn, call.id).unwrap().unwrap();
-        if let Some(output) = output {
-            let result = ToolResult {
-                name: name.to_owned(),
-                output: output.clone(),
-            };
-            call.set_tool_output(conn, &result).unwrap();
-        }
-        call
+            NewItem {
+                session_id: Some(session_id),
+                turn_id: Some(turn_id),
+                ty: Some(ItemType::ToolCall),
+                text: Some(name),
+                upstream_call_id: call_id,
+                tool_args: args,
+                tool_output: output.as_deref(),
+                ..Default::default()
+            },
+        ).unwrap()
     }
 
     #[test]

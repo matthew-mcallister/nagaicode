@@ -502,8 +502,11 @@ pub struct NewItem<'a> {
     pub upstream_type: Option<&'a str>,
     pub upstream_call_id: Option<&'a str>,
     pub text: Option<&'a str>,
+    pub tool_args: Option<&'a str>,
+    pub tool_output: Option<&'a str>,
     /// Explicit seqno, or `None` to autoincrement
     pub seqno: Option<i64>,
+    pub raw_data: Option<&'a str>,
 }
 
 impl DbItem {
@@ -601,15 +604,6 @@ impl DbItem {
         Ok(())
     }
 
-    pub fn update_tool_args(&mut self, conn: &mut SqliteConnection, tool_args: impl Into<String>) -> AnyResult<()> {
-        use crate::schema::item::dsl;
-        self.tool_args = Some(tool_args.into());
-        diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
-            .set(dsl::tool_args.eq(&self.tool_args))
-            .execute(conn)?;
-        Ok(())
-    }
-
     /// Writes a tool call's result. The result's name replaces the item's
     /// name, which is how failed calls are re-routed to the failure tool.
     pub fn set_tool_output(
@@ -627,10 +621,11 @@ impl DbItem {
         Ok(())
     }
 
-    pub fn set_raw_data(conn: &mut SqliteConnection, id: i32, raw_data: &Value) -> AnyResult<()> {
+    pub fn set_raw_data(&mut self, conn: &mut SqliteConnection, raw_data: String) -> AnyResult<()> {
         use crate::schema::item::dsl;
-        diesel::update(dsl::item.filter(dsl::id.eq(id)))
-            .set(dsl::raw_data.eq(raw_data.to_string()))
+        self.raw_data = Some(raw_data);
+        diesel::update(dsl::item.filter(dsl::id.eq(self.id)))
+            .set(dsl::raw_data.eq(self.raw_data.as_deref()))
             .execute(conn)?;
         Ok(())
     }
@@ -730,42 +725,41 @@ mod tests {
 
     #[test]
     fn test_session_crud() {
-        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
+        let mut conn = crate::db::open_new().unwrap();
 
-        let s1 = Session::create(&mut conn, "Session 1").expect("create session failed");
+        let s1 = Session::create(&mut conn, "Session 1").unwrap();
         assert_eq!(s1.name, "Session 1");
 
-        let s2 = Session::create(&mut conn, "Session 2").expect("create session failed");
+        let s2 = Session::create(&mut conn, "Session 2").unwrap();
         assert_eq!(s2.name, "Session 2");
 
         let fetched = Session::get_by_id(&mut conn, s1.id)
-            .expect("get failed")
-            .expect("session not found");
+            .unwrap()
+            .unwrap();
         assert_eq!(fetched.id, s1.id);
         assert_eq!(fetched.name, "Session 1");
 
-        let all = Session::all(&mut conn).expect("all failed");
+        let all = Session::all(&mut conn).unwrap();
         assert_eq!(all.len(), 2);
 
-        let deleted = Session::delete_by_id(&mut conn, s1.id).expect("delete failed");
+        let deleted = Session::delete_by_id(&mut conn, s1.id).unwrap();
         assert!(deleted);
 
-        let gone = Session::get_by_id(&mut conn, s1.id).expect("get failed");
+        let gone = Session::get_by_id(&mut conn, s1.id).unwrap();
         assert!(gone.is_none());
 
-        let already_deleted = Session::delete_by_id(&mut conn, s1.id).expect("delete failed");
+        let already_deleted = Session::delete_by_id(&mut conn, s1.id).unwrap();
         assert!(!already_deleted);
     }
 
     #[test]
     fn test_turn_response_item_crud_and_cascade() {
-        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
-        let session = Session::create(&mut conn, "Chat").expect("create session");
+        let mut conn = crate::db::open_new().unwrap();
+        let session = Session::create(&mut conn, "Chat").unwrap();
 
         // Note: provider_id 999 does not exist in the provider table, proving
         // provider_id is *not* a foreign key
-        let user_turn = Turn::create(&mut conn, session.id, TurnType::User, None, None, None)
-            .expect("create user turn");
+        let user_turn = Turn::create(&mut conn, session.id, TurnType::User, None, None, None).unwrap();
         assert_eq!(user_turn.session_id, session.id);
         assert_eq!(user_turn.ty, "user");
         assert_eq!(user_turn.provider_id, None);
@@ -775,7 +769,7 @@ mod tests {
             .filter(turn::id.eq(user_turn.id))
             .select(turn::ty)
             .first::<TurnType>(&mut conn)
-            .expect("read turn type");
+            .unwrap();
         assert_eq!(turn_ty, TurnType::User);
 
         let assistant_turn = Turn::create(
@@ -785,14 +779,13 @@ mod tests {
             Some(999),
             Some("openai"),
             Some("gpt-4o"),
-        )
-        .expect("create assistant turn");
+        ).unwrap();
         assert_eq!(assistant_turn.ty, "assistant");
         assert_eq!(assistant_turn.provider_id, Some(999));
         assert_eq!(assistant_turn.provider_name.as_deref(), Some("openai"));
         assert_eq!(assistant_turn.model_id.as_deref(), Some("gpt-4o"));
 
-        let turns = Turn::list_by_session(&mut conn, session.id).expect("list turns");
+        let turns = Turn::list_by_session(&mut conn, session.id).unwrap();
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[0].id, user_turn.id);
         assert_eq!(turns[1].id, assistant_turn.id);
@@ -803,8 +796,7 @@ mod tests {
             assistant_turn.id,
             Some("resp-1"),
             Some("in_progress"),
-        )
-        .expect("create response");
+        ).unwrap();
         assert_eq!(response.session_id, session.id);
         assert_eq!(response.turn_id, assistant_turn.id);
         assert_eq!(response.upstream_id.as_deref(), Some("resp-1"));
@@ -827,11 +819,8 @@ mod tests {
             "completed",
             Some(&usage),
             Some(&raw_response),
-        )
-        .expect("update completion");
-        let fetched = Response::get_by_id(&mut conn, response.id)
-            .expect("get response")
-            .expect("response not found");
+        ).unwrap();
+        let fetched = Response::get_by_id(&mut conn, response.id).unwrap().unwrap();
         assert_eq!(fetched.upstream_status.as_deref(), Some("completed"));
         assert_eq!(fetched.input_tokens, Some(12));
         assert_eq!(fetched.cached_input_tokens, Some(4));
@@ -849,8 +838,7 @@ mod tests {
                 text: Some("hello"),
                 ..Default::default()
             },
-        )
-        .expect("create prompt item");
+        ).unwrap();
         assert_eq!(prompt.session_id, session.id);
         assert_eq!(prompt.turn_id, user_turn.id);
         assert_eq!(prompt.ty, "user_text");
@@ -861,7 +849,7 @@ mod tests {
             .filter(item::id.eq(prompt.id))
             .select(item::ty)
             .first::<ItemType>(&mut conn)
-            .expect("read item type");
+            .unwrap();
         assert_eq!(item_ty, ItemType::UserText);
 
         let mut reasoning = DbItem::create(
@@ -876,19 +864,16 @@ mod tests {
                 upstream_type: Some("reasoning"),
                 ..Default::default()
             },
-        )
-        .expect("create reasoning item");
+        ).unwrap();
         assert_eq!(reasoning.ty().unwrap(), ItemType::Reasoning);
         assert_eq!(reasoning.upstream_id.as_deref(), Some("rs_1"));
         assert_eq!(reasoning.upstream_type.as_deref(), Some("reasoning"));
 
-        reasoning.update_text(&mut conn, "thinking").expect("update text");
-        reasoning.update_summary(&mut conn, "summarizing").expect("update summary");
+        reasoning.update_text(&mut conn, "thinking").unwrap();
+        reasoning.update_summary(&mut conn, "summarizing").unwrap();
         let raw_data = json!({"id": "rs_1", "type": "reasoning"});
-        DbItem::set_raw_data(&mut conn, reasoning.id, &raw_data).expect("set raw data");
-        let fetched = DbItem::get_by_id(&mut conn, reasoning.id)
-            .expect("get item")
-            .expect("item not found");
+        reasoning.set_raw_data(&mut conn, raw_data.to_string()).unwrap();
+        let fetched = DbItem::get_by_id(&mut conn, reasoning.id).unwrap().unwrap();
         assert_eq!(fetched.text.as_deref(), Some("thinking"));
         assert_eq!(fetched.summary.as_deref(), Some("summarizing"));
         assert_eq!(fetched.encrypted_text, None);
@@ -907,10 +892,9 @@ mod tests {
                 upstream_type: Some("message"),
                 ..Default::default()
             },
-        )
-        .expect("create answer item");
+        ).unwrap();
 
-        let mut tool_call = DbItem::create(
+        let tool_call = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(session.id),
@@ -924,51 +908,33 @@ mod tests {
                 text: Some("read_file"),
                 ..Default::default()
             },
-        )
-        .expect("create tool call item");
+        ).unwrap();
         assert_eq!(tool_call.ty, "tool_call");
         assert_eq!(tool_call.ty().unwrap(), ItemType::ToolCall);
         assert_eq!(tool_call.upstream_call_id.as_deref(), Some("call_1"));
         assert_eq!(tool_call.tool_output, None);
 
-        tool_call.update_tool_args(&mut conn, r#"{"path": "a.txt"}"#)
-            .expect("update tool args");
-        let output = json!({"error": "file not found"});
-        let mut fetched_call = DbItem::get_by_id(&mut conn, tool_call.id)
-            .expect("get tool call")
-            .expect("tool call not found");
-        let result = ToolResult {
-            name: "read_file".to_owned(),
-            output: output.clone(),
-        };
-        fetched_call.set_tool_output(&mut conn, &result).expect("set tool output");
-        assert_eq!(fetched_call.text.as_deref(), Some("read_file"));
-        assert_eq!(fetched_call.tool_output().unwrap(), Some(output));
-        let args = fetched_call.tool_args().expect("tool args").expect("no args");
-        assert_eq!(args.name, "read_file");
-        assert_eq!(args.args, json!({"path": "a.txt"}));
-
         let session_items =
-            DbItem::list_by_session(&mut conn, session.id).expect("list session items");
+            DbItem::list_by_session(&mut conn, session.id).unwrap();
         assert_eq!(session_items.len(), 4);
         assert_eq!(session_items[0].id, prompt.id);
         assert_eq!(session_items[1].id, reasoning.id);
         assert_eq!(session_items[2].id, answer.id);
         assert_eq!(session_items[3].id, tool_call.id);
 
-        let turn_items = DbItem::list_by_turn(&mut conn, assistant_turn.id).expect("list turn items");
+        let turn_items = DbItem::list_by_turn(&mut conn, assistant_turn.id).unwrap();
         assert_eq!(turn_items.len(), 3);
         assert_eq!(turn_items[0].id, reasoning.id);
         assert_eq!(turn_items[1].id, answer.id);
         assert_eq!(turn_items[2].id, tool_call.id);
 
         let turn_responses =
-            Response::list_by_turn(&mut conn, assistant_turn.id).expect("list turn responses");
+            Response::list_by_turn(&mut conn, assistant_turn.id).unwrap();
         assert_eq!(turn_responses.len(), 1);
         assert_eq!(turn_responses[0].id, response.id);
 
         // Deleting a response cascades to its items but keeps the turn
-        assert!(Response::delete_by_id(&mut conn, response.id).expect("delete response"));
+        assert!(Response::delete_by_id(&mut conn, response.id).unwrap());
         assert!(DbItem::get_by_id(&mut conn, reasoning.id).unwrap().is_none());
         assert!(DbItem::get_by_id(&mut conn, answer.id).unwrap().is_none());
         assert!(DbItem::get_by_id(&mut conn, tool_call.id).unwrap().is_none());
@@ -986,8 +952,7 @@ mod tests {
             assistant_turn.id,
             Some("resp-2"),
             Some("in_progress"),
-        )
-        .expect("create response2");
+        ).unwrap();
         let orphan = DbItem::create(
             &mut conn,
             NewItem {
@@ -999,8 +964,8 @@ mod tests {
                 ..Default::default()
             },
         )
-        .expect("create orphan item");
-        assert!(Turn::delete_by_id(&mut conn, assistant_turn.id).expect("delete turn"));
+        .unwrap();
+        assert!(Turn::delete_by_id(&mut conn, assistant_turn.id).unwrap());
         assert!(
             Response::get_by_id(&mut conn, response2.id)
                 .unwrap()
@@ -1009,7 +974,7 @@ mod tests {
         assert!(DbItem::get_by_id(&mut conn, orphan.id).unwrap().is_none());
 
         // Deleting the session cascades to remaining turns and items
-        assert!(Session::delete_by_id(&mut conn, session.id).expect("delete session"));
+        assert!(Session::delete_by_id(&mut conn, session.id).unwrap());
         assert!(DbItem::get_by_id(&mut conn, prompt.id).unwrap().is_none());
         assert!(Turn::get_by_id(&mut conn, user_turn.id).unwrap().is_none());
 
@@ -1039,8 +1004,8 @@ mod tests {
     fn test_data_query() {
         use serde_json::json;
 
-        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
-        let session = Session::create(&mut conn, "Session 1").expect("create session failed");
+        let mut conn = crate::db::open_new().unwrap();
+        let session = Session::create(&mut conn, "Session 1").unwrap();
         assert_eq!(
             session.query("/").unwrap(),
             json!({
@@ -1058,8 +1023,7 @@ mod tests {
             Some(1),
             Some("openai"),
             Some("gpt-4o"),
-        )
-        .expect("create turn failed");
+        ).unwrap();
         assert_eq!(
             turn.query("/").unwrap(),
             json!({
@@ -1086,8 +1050,7 @@ mod tests {
             turn.id,
             Some("resp-1"),
             Some("in_progress"),
-        )
-        .expect("create response failed");
+        ).unwrap();
         let usage = Usage {
             input_tokens: 12,
             cached_input_tokens: 4,
@@ -1102,11 +1065,8 @@ mod tests {
             "completed",
             Some(&usage),
             Some(&raw_response),
-        )
-        .expect("update completion failed");
-        let response = Response::get_by_id(&mut conn, response.id)
-            .expect("get response")
-            .expect("response not found");
+        ).unwrap();
+        let response = Response::get_by_id(&mut conn, response.id).unwrap().unwrap();
         assert_eq!(
             response.query("/").unwrap(),
             json!({
@@ -1144,7 +1104,7 @@ mod tests {
         );
 
         let raw_data = json!({"id": "rs_1", "type": "reasoning"});
-        let item = DbItem::create(
+        let mut item = DbItem::create(
             &mut conn,
             NewItem {
                 session_id: Some(session.id),
@@ -1157,12 +1117,9 @@ mod tests {
                 text: Some("thinking"),
                 ..Default::default()
             },
-        )
-        .expect("create item failed");
-        DbItem::set_raw_data(&mut conn, item.id, &raw_data).expect("set raw data");
-        let item = DbItem::get_by_id(&mut conn, item.id)
-            .expect("get item")
-            .expect("item not found");
+        ).unwrap();
+        item.set_raw_data(&mut conn, raw_data.to_string()).unwrap();
+        let item = DbItem::get_by_id(&mut conn, item.id).unwrap().unwrap();
         assert_eq!(
             item.query("/").unwrap(),
             json!({
@@ -1216,16 +1173,14 @@ mod tests {
                 seqno,
                 ..Default::default()
             },
-        )
-        .expect("create item")
+        ).unwrap()
     }
 
     #[test]
     fn test_seqno() {
-        let mut conn = crate::db::open_new().expect("failed to open in-memory db");
-        let session = Session::create(&mut conn, "Session").expect("create session");
-        let turn = Turn::create(&mut conn, session.id, TurnType::User, None, None, None)
-            .expect("create turn");
+        let mut conn = crate::db::open_new().unwrap();
+        let session = Session::create(&mut conn, "Session").unwrap();
+        let turn = Turn::create(&mut conn, session.id, TurnType::User, None, None, None).unwrap();
 
         // None appends after the session's highest seqno.
         let a = make_item(&mut conn, session.id, turn.id, None);

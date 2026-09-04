@@ -24,9 +24,9 @@ pub fn tool_registry() -> Arc<ToolRegistry> {
 
 /// Creates a session containing a single empty assistant turn.
 pub fn session_turn(conn: &mut SqliteConnection) -> (Session, Turn) {
-    let session = Session::create(conn, "Session").expect("create session");
+    let session = Session::create(conn, "Session").unwrap();
     let turn = Turn::create(conn, session.id, TurnType::Assistant, None, None, None)
-        .expect("create turn");
+        .unwrap();
     (session, turn)
 }
 
@@ -39,6 +39,7 @@ pub fn tool_call(
     args: Value,
     output: Option<Value>,
 ) -> DbItem {
+    let args = args.to_string();
     let mut item = DbItem::create(
         conn,
         NewItem {
@@ -46,18 +47,18 @@ pub fn tool_call(
             turn_id: Some(turn.id),
             ty: Some(ItemType::ToolCall),
             text: Some(name),
+            tool_args: Some(&args),
             ..Default::default()
         },
-    ).expect("create tool call");
-    item.update_tool_args(conn, args.to_string()).expect("set tool args");
+    ).unwrap();
     if let Some(output) = output {
         let result = crate::tools::ToolResult {
             name: name.to_owned(),
             output,
         };
-        item.set_tool_output(conn, &result).expect("set tool output");
+        item.set_tool_output(conn, &result).unwrap();
     }
-    DbItem::get_by_id(conn, item.id).expect("get item").expect("item exists")
+    DbItem::get_by_id(conn, item.id).unwrap().unwrap()
 }
 
 /// Creates a UI context for components constructed directly in tests.
@@ -70,7 +71,7 @@ pub fn task_context(sender: UnboundedSender<AppEvent>) -> TaskContext {
     TaskContext::root(
         Arc::new(AtomicU64::new(0)),
         sender,
-        crate::db::db_url().expect("db url"),
+        crate::db::db_url().unwrap(),
         tool_registry(),
         Arc::new(crate::cwd::cwd()),
     )

@@ -129,6 +129,7 @@ enum InputItem<'a> {
         r#type: &'static str,
         call_id: &'a str,
         name: &'a str,
+        #[serde(default)]
         arguments: &'a str,
     },
     FunctionCallOutput {
@@ -345,6 +346,10 @@ struct OutputItemPayload {
     ty: String,
     #[serde(default)]
     call_id: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -508,6 +513,8 @@ impl OpenaiInterface {
                                     id: item.id,
                                     ty: item.ty,
                                     call_id: item.call_id,
+                                    tool_name: item.name,
+                                    tool_args: item.arguments,
                                     raw: raw_event["item"].clone(),
                                 });
                             }
@@ -517,6 +524,8 @@ impl OpenaiInterface {
                                     id: item.id,
                                     ty: item.ty,
                                     call_id: item.call_id,
+                                    tool_name: item.name,
+                                    tool_args: item.arguments,
                                     raw: raw_event["item"].clone(),
                                 });
                             }
@@ -631,24 +640,12 @@ mod tests {
     fn default_events() -> Vec<AnyResult<Event>> {
         vec![
             Ok(Event::Open),
-            Ok(create_message_event(
-                r#"{"type":"response.created","response":{"id":"resp-mock-1","status":"in_progress"}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"Hello! "}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"How can I help you today?"}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello! How can I help you today?"}]}}"#,
-            )),
-            Ok(create_message_event(
-                r#"{"type":"response.completed","response":{"id":"resp-mock-1","status":"completed","usage":{"input_tokens":12,"output_tokens":18,"total_tokens":30,"input_tokens_details":{"cached_tokens":4},"output_tokens_details":{"reasoning_tokens":7}}}}"#,
-            )),
+            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-mock-1","status":"in_progress"}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"Hello! "}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"How can I help you today?"}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello! How can I help you today?"}]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-mock-1","status":"completed","usage":{"input_tokens":12,"output_tokens":18,"total_tokens":30,"input_tokens_details":{"cached_tokens":4},"output_tokens_details":{"reasoning_tokens":7}}}}"#)),
             Ok(create_message_event("[DONE]")),
         ]
     }
@@ -758,7 +755,6 @@ mod tests {
                     output_index: 0,
                     id: "msg_1".into(),
                     ty: "message".into(),
-                    call_id: None,
                     raw: json!({
                         "id": "msg_1",
                         "type": "message",
@@ -766,6 +762,7 @@ mod tests {
                         "role": "assistant",
                         "content": [],
                     }),
+                    ..Default::default()
                 }),
                 InferenceEvent::OutputTextDelta(ItemDelta {
                     output_index: 0,
@@ -779,7 +776,6 @@ mod tests {
                     output_index: 0,
                     id: "msg_1".into(),
                     ty: "message".into(),
-                    call_id: None,
                     raw: json!({
                         "id": "msg_1",
                         "type": "message",
@@ -787,6 +783,7 @@ mod tests {
                         "role": "assistant",
                         "content": [{"type": "output_text", "text": "Hello! How can I help you today?"}],
                     }),
+                    ..Default::default()
                 }),
                 InferenceEvent::Completed(ResponseCompleted {
                     status: "completed".into(),
@@ -871,9 +868,7 @@ mod tests {
         client.add_response(
             &format!("{BASE_URL}/responses"),
             sse(vec![
-                Ok(create_message_event(
-                    r#"{"type":"response.completed","response":{"id":"resp-custom-1"}}"#,
-                )),
+                Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-custom-1"}}"#)),
                 Ok(create_message_event("[DONE]")),
             ]),
         );
@@ -916,33 +911,15 @@ mod tests {
         client.add_response(
             &format!("{BASE_URL}/responses"),
             sse(vec![
-                Ok(create_message_event(
-                    r#"{"type":"response.created","response":{"id":"resp-think-1","status":"in_progress"}}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.reasoning_text.delta","item_id":"rs_1","output_index":0,"delta":"step 1"}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.reasoning_summary_text.delta","item_id":"rs_1","output_index":0,"delta":"step 2"}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"step 2"}]}}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"delta":"done"}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.completed","response":{"id":"resp-think-1","status":"completed"}}"#,
-                )),
+                Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-think-1","status":"in_progress"}}"#)),
+                Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}"#)),
+                Ok(create_message_event(r#"{"type":"response.reasoning_text.delta","item_id":"rs_1","output_index":0,"delta":"step 1"}"#)),
+                Ok(create_message_event(r#"{"type":"response.reasoning_summary_text.delta","item_id":"rs_1","output_index":0,"delta":"step 2"}"#)),
+                Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"step 2"}]}}"#)),
+                Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#)),
+                Ok(create_message_event(r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"delta":"done"}"#)),
+                Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#)),
+                Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-think-1","status":"completed"}}"#)),
                 Ok(create_message_event("[DONE]")),
             ]),
         );
@@ -976,8 +953,8 @@ mod tests {
                     output_index: 0,
                     id: "rs_1".into(),
                     ty: "reasoning".into(),
-                    call_id: None,
                     raw: json!({"id": "rs_1", "type": "reasoning", "summary": []}),
+                    ..Default::default()
                 }),
                 InferenceEvent::ReasoningTextDelta(ItemDelta {
                     output_index: 0,
@@ -997,6 +974,7 @@ mod tests {
                         "type": "reasoning",
                         "summary": [{"type": "summary_text", "text": "step 2"}],
                     }),
+                    ..Default::default()
                 }),
                 InferenceEvent::OutputItemAdded(OutputItemEvent {
                     output_index: 1,
@@ -1010,6 +988,7 @@ mod tests {
                         "role": "assistant",
                         "content": [],
                     }),
+                    ..Default::default()
                 }),
                 InferenceEvent::OutputTextDelta(ItemDelta {
                     output_index: 1,
@@ -1027,6 +1006,7 @@ mod tests {
                         "role": "assistant",
                         "content": [{"type": "output_text", "text": "done"}],
                     }),
+                    ..Default::default()
                 }),
                 InferenceEvent::Completed(ResponseCompleted {
                     status: "completed".into(),
@@ -1043,24 +1023,12 @@ mod tests {
         client.add_response(
             &format!("{BASE_URL}/responses"),
             sse(vec![
-                Ok(create_message_event(
-                    r#"{"type":"response.created","response":{"id":"resp-tool-1","status":"in_progress"}}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"get_weather","call_id":"call_1","arguments":""}}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"city\":\"San Francisco\""}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"}"}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"get_weather","call_id":"call_1","arguments":"{\"city\":\"San Francisco\"}"}}"#,
-                )),
-                Ok(create_message_event(
-                    r#"{"type":"response.completed","response":{"id":"resp-tool-1","status":"completed"}}"#,
-                )),
+                Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-tool-1","status":"in_progress"}}"#)),
+                Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"get_weather","call_id":"call_1","arguments":""}}"#)),
+                Ok(create_message_event(r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"city\":\"San Francisco\""}"#)),
+                Ok(create_message_event(r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"}"}"#)),
+                Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"get_weather","call_id":"call_1","arguments":"{\"city\":\"San Francisco\"}"}}"#)),
+                Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-tool-1","status":"completed"}}"#)),
                 Ok(create_message_event("[DONE]")),
             ]),
         );
@@ -1095,6 +1063,8 @@ mod tests {
                     id: "fc_1".into(),
                     ty: "function_call".into(),
                     call_id: Some("call_1".into()),
+                    tool_name: Some("get_weather".to_owned()),
+                    tool_args: Some(String::new()),
                     raw: json!({
                         "id": "fc_1",
                         "type": "function_call",
@@ -1117,6 +1087,8 @@ mod tests {
                     id: "fc_1".into(),
                     ty: "function_call".into(),
                     call_id: Some("call_1".into()),
+                    tool_name: Some("get_weather".to_owned()),
+                    tool_args: Some(r#"{"city":"San Francisco"}"#.into()),
                     raw: json!({
                         "id": "fc_1",
                         "type": "function_call",
@@ -1215,9 +1187,7 @@ mod tests {
         let url = format!("{BASE_URL}/responses");
 
         // A top-level error event surfaces as a stream error.
-        client.add_response(&url, sse(vec![Ok(create_message_event(
-            r#"{"type":"error","message":"Incorrect API key provided","code":"invalid_api_key"}"#,
-        ))]));
+        client.add_response(&url, sse(vec![Ok(create_message_event(r#"{"type":"error","message":"Incorrect API key provided","code":"invalid_api_key"}"#))]));
 
         let params = InferenceParams {
             model_id: "test-model",
@@ -1239,9 +1209,7 @@ mod tests {
 
         // A failed response surfaces as a Failed event carrying the raw
         // response payload.
-        client.add_response(&url, sse(vec![Ok(create_message_event(
-            r#"{"type":"response.failed","response":{"id":"resp-1","status":"failed","error":{"message":"Incorrect API key provided","code":"invalid_api_key"}}}"#,
-        ))]));
+        client.add_response(&url, sse(vec![Ok(create_message_event(r#"{"type":"response.failed","response":{"id":"resp-1","status":"failed","error":{"message":"Incorrect API key provided","code":"invalid_api_key"}}}"#))]));
 
         let params = InferenceParams {
             model_id: "test-model",
