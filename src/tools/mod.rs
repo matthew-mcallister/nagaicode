@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use fnv::FnvHashMap;
@@ -10,15 +11,11 @@ use crate::error::AnyResult;
 use crate::interface::{ToolInfo, ToolOutputContent};
 use crate::item::{ToolCallContent, ToolOutput};
 use crate::query::DataQuery;
-use crate::tools::failed::{render_failure_to_interface, render_failure_to_ui};
-use crate::tools::unknown::{render_unknown_to_interface, render_unknown_to_ui};
-use crate::ui::render_item::RenderItem;
+use crate::ui::render_item::{ErrorRenderItem, HelpRenderItem, RenderItem};
 
 pub mod edit;
-pub mod failed;
 pub mod read;
 pub mod sh;
-pub mod unknown;
 
 /// Interfaces for interacting with tools and rendering their output.
 pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
@@ -123,7 +120,7 @@ impl ToolRegistry {
                     .ok()
                 )
                 .unwrap_or_else(|| Self::unknown_ui(tool_name)),
-            ToolOutput::Failed { error } => render_failure_to_ui(tool_name, error),
+            ToolOutput::Failed { error } => Self::failure_ui(tool_name, error),
         })
     }
 
@@ -137,10 +134,8 @@ impl ToolRegistry {
                     .inspect_err(|e| warn!("tool call parse error: {e}"))
                     .ok()
                 )
-                .unwrap_or_else(render_unknown_to_interface),
-            Some(ToolOutput::Failed { error }) => {
-                render_failure_to_interface(error)
-            }
+                .unwrap_or_else(Self::unknown_to_interface),
+            Some(ToolOutput::Failed { error }) => Self::failure_to_interface(error),
             None => InterfaceToolOutput {
                 content: vec![ToolOutputContent::Text { text: "tool call interrupted".into() }],
             },
@@ -149,7 +144,27 @@ impl ToolRegistry {
 
     fn unknown_ui(tool_name: &str) -> Box<dyn RenderItem> {
         let tool_name = if tool_name.is_empty() { "<missing name>" } else { tool_name };
-        render_unknown_to_ui(tool_name)
+        Box::new(HelpRenderItem::new(format!("Called '{}'", tool_name)))
+    }
+
+    fn unknown_to_interface() -> InterfaceToolOutput {
+        InterfaceToolOutput {
+            content: vec![ToolOutputContent::Text {
+                text: Cow::Owned("error: could not parse output".into()),
+            }],
+        }
+    }
+
+    fn failure_ui(tool_name: &str, error: &str) -> Box<dyn RenderItem> {
+        Box::new(ErrorRenderItem::new(format!("Called '{tool_name}': {error}")))
+    }
+
+    fn failure_to_interface(error: &str) -> InterfaceToolOutput {
+        InterfaceToolOutput {
+            content: vec![ToolOutputContent::Text {
+                text: Cow::Owned(format!("error: {error}")),
+            }],
+        }
     }
 }
 
