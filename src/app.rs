@@ -374,11 +374,11 @@ impl App {
         let Some(session) = Session::get_by_id(&mut self.conn, session_id)? else {
             return Err(anyhow!("no session with id {session_id}"));
         };
-        let items = DbItem::list_by_session(&mut self.conn, session_id)?;
+        let items = Item::list_by_session(&mut self.conn, session_id)?;
         self.clear_session().await?;
         self.session = Some(session);
         for item in items {
-            self.send.send(AppEvent::DbItemCreated { item })?;
+            self.send.send(AppEvent::ItemCreated { item })?;
         }
         Box::pin(self.process_pending_events()).await;
         Ok(())

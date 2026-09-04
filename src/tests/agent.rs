@@ -30,7 +30,7 @@ fn request_body_value(req: &Request) -> serde_json::Value {
 
 #[tokio::test]
 async fn test_app_prompt_agent() {
-    use crate::item::ItemType;
+    use crate::item::{DbItem, Item, ItemContent};
     use crate::session::{Response, Turn, TurnType};
 
     let mut app = App::new().unwrap();
@@ -125,28 +125,28 @@ async fn test_app_prompt_agent() {
     assert_eq!(assistant_turn.provider_name.as_deref(), Some("test"));
     assert_eq!(assistant_turn.model_id.as_deref(), Some("gpt-4"));
 
-    let items = crate::item::DbItem::list_by_session(app.conn(), session_id).unwrap();
+    let items = Item::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(
         items.len(),
         2,
         "expected one user item and one response item"
     );
 
-    assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
+    assert_eq!(items[0].content, ItemContent::UserText("hello".to_owned()));
     assert_eq!(items[0].turn_id, turns[0].id);
     assert_eq!(items[0].response_id, None);
-    assert_eq!(items[0].text.as_deref(), Some("hello"));
 
     let response_item = &items[1];
-    assert_eq!(response_item.ty().unwrap(), ItemType::ResponseText);
     assert_eq!(response_item.turn_id, assistant_turn.id);
     assert_eq!(response_item.upstream_id.as_deref(), Some("msg_1"));
-    assert_eq!(response_item.upstream_type.as_deref(), Some("message"));
     assert_eq!(
-        response_item.text.as_deref(),
-        Some("Hello there, how can I help?")
+        response_item.content,
+        ItemContent::ResponseText("Hello there, how can I help?".to_owned())
     );
-    assert!(response_item.raw_data.is_some());
+
+    let rows = DbItem::list_by_session(app.conn(), session_id).unwrap();
+    assert_eq!(rows[1].upstream_type.as_deref(), Some("message"));
+    assert!(rows[1].raw_data.is_some());
 
     let responses = Response::list_by_turn(app.conn(), assistant_turn.id).unwrap();
     assert_eq!(responses.len(), 1);
@@ -170,7 +170,7 @@ async fn test_app_prompt_agent() {
 
 #[tokio::test]
 async fn test_agent_stream_error() {
-    use crate::item::{DbItem, ItemType};
+    use crate::item::{Item, ItemContent};
     use crate::session::{Response, Turn, TurnType};
 
     let mut app = App::new().unwrap();
@@ -229,16 +229,15 @@ async fn test_agent_stream_error() {
     assert_eq!(responses.len(), 1);
     assert_eq!(responses[0].upstream_status.as_deref(), Some("failed"));
 
-    let items = DbItem::list_by_session(app.conn(), session_id).unwrap();
+    let items = Item::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(items.len(), 2);
-    assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
-    assert_eq!(items[1].ty().unwrap(), ItemType::ResponseText);
-    assert_eq!(items[1].text.as_deref(), Some("Hello"));
+    assert_eq!(items[0].content, ItemContent::UserText("hello".to_owned()));
+    assert_eq!(items[1].content, ItemContent::ResponseText("Hello".to_owned()));
 }
 
 #[tokio::test]
 async fn test_agent_out_of_order_items() {
-    use crate::item::{DbItem, ItemType};
+    use crate::item::{Item, ItemContent, ReasoningContent};
 
     let mut app = App::new().unwrap();
 
@@ -280,19 +279,21 @@ async fn test_agent_out_of_order_items() {
     app.process_pending_events().await;
 
     let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
-    let items = DbItem::list_by_session(app.conn(), session_id).unwrap();
+    let items = Item::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(items.len(), 3);
-    assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
+    assert_eq!(items[0].content, ItemContent::UserText("what is 1+1?".to_owned()));
 
     let reasoning = &items[1];
-    assert_eq!(reasoning.ty().unwrap(), ItemType::Reasoning);
     assert_eq!(reasoning.upstream_id.as_deref(), Some("rs_1"));
-    assert_eq!(reasoning.text.as_deref(), Some("I should add."));
+    assert_eq!(reasoning.content, ItemContent::Reasoning(ReasoningContent {
+        text: Some("I should add.".to_owned()),
+        summary: None,
+        encrypted: None,
+    }));
 
     let answer = &items[2];
-    assert_eq!(answer.ty().unwrap(), ItemType::ResponseText);
     assert_eq!(answer.upstream_id.as_deref(), Some("msg_1"));
-    assert_eq!(answer.text.as_deref(), Some("The answer is 2."));
+    assert_eq!(answer.content, ItemContent::ResponseText("The answer is 2.".to_owned()));
 
     assert!(
         answer.id < reasoning.id,
@@ -308,7 +309,7 @@ async fn test_agent_out_of_order_items() {
 
 #[tokio::test]
 async fn test_agent_history() {
-    use crate::item::{DbItem, ItemType};
+    use crate::item::{DbItem, Item, ItemContent, ReasoningContent};
     use crate::session::{Turn, TurnType};
 
     let mut app = App::new().unwrap();
@@ -355,15 +356,19 @@ async fn test_agent_history() {
     // The first assistant turn should have recorded one reasoning item and
     // one response item, in that order, after the user prompt item.
     let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
-    let items = DbItem::list_by_session(app.conn(), session_id).unwrap();
+    let items = Item::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(items.len(), 3);
-    assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
-    assert_eq!(items[1].ty().unwrap(), ItemType::Reasoning);
+    assert_eq!(items[0].content, ItemContent::UserText("what is 1+1?".to_owned()));
     assert_eq!(items[1].upstream_id.as_deref(), Some("rs_1"));
-    assert_eq!(items[1].upstream_type.as_deref(), Some("reasoning"));
-    assert_eq!(items[1].text.as_deref(), Some("I should add."));
-    assert_eq!(items[2].ty().unwrap(), ItemType::ResponseText);
-    assert_eq!(items[2].text.as_deref(), Some("The answer is 2."));
+    assert_eq!(items[1].content, ItemContent::Reasoning(ReasoningContent {
+        text: Some("I should add.".to_owned()),
+        summary: None,
+        encrypted: None,
+    }));
+    assert_eq!(items[2].content, ItemContent::ResponseText("The answer is 2.".to_owned()));
+
+    let rows = DbItem::list_by_session(app.conn(), session_id).unwrap();
+    assert_eq!(rows[1].upstream_type.as_deref(), Some("reasoning"));
 
     let turns = Turn::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(turns.len(), 2);
@@ -409,7 +414,7 @@ async fn test_agent_history() {
 
 #[tokio::test]
 async fn test_agent_tool_call_loop() {
-    use crate::item::{DbItem, ItemType};
+    use crate::item::{Item, ItemContent, ToolCallContent, ToolOutput};
     use crate::session::{Response, Turn, TurnType};
 
     let mut app = App::new().unwrap();
@@ -505,21 +510,18 @@ async fn test_agent_tool_call_loop() {
     assert_eq!(responses[1].upstream_id.as_deref(), Some("resp-2"));
     assert_eq!(responses[1].upstream_status.as_deref(), Some("completed"));
 
-    let items = DbItem::list_by_session(app.conn(), session_id).unwrap();
+    let items = Item::list_by_session(app.conn(), session_id).unwrap();
     assert_eq!(items.len(), 3);
-    assert_eq!(items[0].ty().unwrap(), ItemType::UserText);
-    assert_eq!(items[1].ty().unwrap(), ItemType::ToolCall);
+    assert_eq!(items[0].content, ItemContent::UserText("call the sh tool".to_owned()));
     assert_eq!(items[1].upstream_id.as_deref(), Some("fc_1"));
-    assert_eq!(items[1].upstream_call_id.as_deref(), Some("call_1"));
-    assert_eq!(items[1].text.as_deref(), Some("sh"));
-    assert_eq!(items[1].tool_args.as_deref(), Some(r#"{"command": "printf 3"}"#));
-    let output: serde_json::Value =
-        serde_json::from_str(items[1].tool_output.as_deref().unwrap()).unwrap();
-    assert_eq!(
-        output,
-        json!({ "completed": { "stdout": "3", "stderr": "", "return_code": 0 } })
-    );
-    assert_eq!(items[2].ty().unwrap(), ItemType::ResponseText);
+    assert_eq!(items[1].content, ItemContent::ToolCall(ToolCallContent {
+        tool_name: "sh".to_owned(),
+        call_id: "call_1".to_owned(),
+        args: json!({ "command": "printf 3" }),
+        output: Some(ToolOutput::Completed {
+            value: json!({ "stdout": "3", "stderr": "", "return_code": 0 }),
+        }),
+    }));
     assert_eq!(items[2].upstream_id.as_deref(), Some("msg_2"));
-    assert_eq!(items[2].text.as_deref(), Some("The answer is 3."));
+    assert_eq!(items[2].content, ItemContent::ResponseText("The answer is 3.".to_owned()));
 }

@@ -158,14 +158,6 @@ impl DbItem {
         Ok(result)
     }
 
-    pub fn get_by_id(conn: &mut SqliteConnection, id: i32) -> AnyResult<Option<DbItem>> {
-        let result = item::table
-            .filter(item::id.eq(id))
-            .first::<DbItem>(conn)
-            .optional()?;
-        Ok(result)
-    }
-
     pub fn list_by_session(conn: &mut SqliteConnection, session_id: i32) -> AnyResult<Vec<DbItem>> {
         let items = item::table
             .filter(item::session_id.eq(session_id))

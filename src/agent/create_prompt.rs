@@ -2,7 +2,7 @@ use diesel::prelude::*;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
-use crate::item::{DbItem, ItemType, NewDbItem};
+use crate::item::{Item, ItemContent, NewItem};
 use crate::session::{Turn, TurnType};
 use crate::task::{Task, TaskContext};
 
@@ -24,14 +24,16 @@ impl CreatePrompt {
         let events: AnyResult<_> = context.connection()?.transaction(|conn| {
             let session_id = self.session_id;
             let turn = Turn::create(conn, session_id, TurnType::User, None, None, None)?;
-            let item = DbItem::create(conn, NewDbItem {
-                session_id: Some(session_id),
-                turn_id: Some(turn.id),
-                ty: Some(ItemType::UserText),
-                text: Some(&self.prompt),
-                ..Default::default()
+            let item = Item::create(conn, NewItem {
+                session_id,
+                turn_id: turn.id,
+                response_id: None,
+                provider_id: None,
+                upstream_id: None,
+                seqno: None,
+                content: ItemContent::UserText(self.prompt.clone()),
             })?;
-            Ok(vec![AppEvent::DbItemCreated { item }])
+            Ok(vec![AppEvent::ItemCreated { item }])
         });
         for event in events? {
             context.send(event);
@@ -50,7 +52,10 @@ impl Task for CreatePrompt {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use crate::app::App;
+    use crate::item::ToolCallContent;
     use crate::session::Session;
 
     use super::*;
@@ -62,18 +67,21 @@ mod tests {
         let session = Session::create(app.conn(), "Session").unwrap();
         let turn = Turn::create(app.conn(), session.id, TurnType::Assistant, None, None, None)
             .unwrap();
-        let tool_call = DbItem::create(
+        let tool_call = Item::create(
             app.conn(),
-            NewDbItem {
-                session_id: Some(session.id),
-                turn_id: Some(turn.id),
+            NewItem {
+                session_id: session.id,
+                turn_id: turn.id,
+                response_id: None,
                 provider_id: Some(1),
-                ty: Some(ItemType::ToolCall),
-                upstream_id: Some("fc_1"),
-                upstream_type: Some("function_call"),
-                upstream_call_id: Some("call_1"),
-                text: Some("read_file"),
-                ..Default::default()
+                upstream_id: Some("fc_1".to_owned()),
+                seqno: None,
+                content: ItemContent::ToolCall(ToolCallContent {
+                    tool_name: "read_file".to_owned(),
+                    call_id: "call_1".to_owned(),
+                    args: json!({}),
+                    output: None,
+                }),
             },
         ).unwrap();
 
@@ -86,11 +94,10 @@ mod tests {
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[1].ty().unwrap(), TurnType::User);
 
-        let items = DbItem::list_by_session(app.conn(), session.id).unwrap();
+        let items = Item::list_by_session(app.conn(), session.id).unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, tool_call.id);
-        assert_eq!(items[1].ty().unwrap(), ItemType::UserText);
-        assert_eq!(items[1].text.as_deref(), Some("hello"));
+        assert_eq!(items[1].content, ItemContent::UserText("hello".to_owned()));
         assert!(items[1].seqno > tool_call.seqno);
     }
 }

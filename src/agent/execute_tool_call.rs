@@ -1,9 +1,6 @@
-use anyhow::anyhow;
-
 use crate::app::AppEvent;
 use crate::error::AnyResult;
 use crate::item::Item;
-use crate::item::DbItem;
 use crate::task::{Task, TaskContext};
 
 pub struct ExecuteToolCall {
@@ -19,12 +16,6 @@ impl ExecuteToolCall {
         let tc = self.item.content.as_tool_call().expect("tried to execute non-tool-call");
         let output = context.tool_registry().call(&tc.tool_name, &tc.args).await;
         self.item.set_output(context.connection()?, output)?;
-
-        // FIXME: Stop sending DbItemUpdated
-        let id = self.item.id;
-        let row = DbItem::get_by_id(context.connection()?, id)?
-            .ok_or_else(|| anyhow!("item {id} is missing"))?;
-        context.send(AppEvent::DbItemUpdated { item: row });
 
         context.send(AppEvent::ItemUpdated {
             item: self.item,
@@ -99,11 +90,7 @@ mod tests {
             ]
         );
 
-        let events: Vec<_> = app
-            .drain_events()
-            .into_iter()
-            .filter(|event| !matches!(event, AppEvent::DbItemUpdated { .. }))
-            .collect();
+        let events = app.drain_events();
         assert_eq!(events.len(), items.len());
         for (event, item) in events.iter().zip(&items) {
             match event {
@@ -126,11 +113,7 @@ mod tests {
         let mut context = app.context();
         ExecuteToolCall::new(call).run(&mut context).await.unwrap();
 
-        let events: Vec<_> = app
-            .drain_events()
-            .into_iter()
-            .filter(|event| !matches!(event, AppEvent::DbItemUpdated { .. }))
-            .collect();
+        let events = app.drain_events();
         let AppEvent::ItemUpdated { item } = &events[0] else {
             panic!("unexpected event: {:?}", events[0]);
         };
