@@ -1126,7 +1126,7 @@ mod tests {
                 ChatMessage::ToolCall {
                     call_id: "call_1",
                     name: Cow::Borrowed("add"),
-                    arguments: r#"{"a":1}"#,
+                    arguments: Cow::Borrowed(r#"{"a":1}"#),
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_1",

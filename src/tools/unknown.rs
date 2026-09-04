@@ -8,9 +8,8 @@ pub fn render_unknown_to_ui(tool_name: &str) -> Box<dyn RenderItem> {
     Box::new(HelpRenderItem::new(format!("Called '{}'", tool_name)))
 }
 
-pub fn render_unknown_to_interface(tool_name: &str) -> InterfaceToolOutput {
+pub fn render_unknown_to_interface() -> InterfaceToolOutput {
     InterfaceToolOutput {
-        name: tool_name.to_owned(),
         content: vec![ToolOutputContent::Text {
             text: Cow::Owned("error: could not parse output".into()),
         }],
@@ -28,7 +27,7 @@ mod tests {
 
     #[test]
     fn test_unknown_ui() {
-        let result = render_unknown_to_interface("sh");
+        let result = render_unknown_to_interface();
         assert_eq!(
             result.content,
             vec![ToolOutputContent::Text { text: Cow::Owned("error: could not parse output".into()) }],

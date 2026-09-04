@@ -11,9 +11,9 @@ use serde_json::Value;
 
 use crate::error::{AnyError, AnyResult};
 use crate::interface::openai::OpenaiInterface;
+use crate::item::{Item, ItemContent};
 use crate::provider::Provider;
 use crate::request::DefaultClient;
-use crate::session::{DbItem, ItemType};
 use crate::tools::ToolRegistry;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -103,10 +103,11 @@ pub enum ChatMessage<'a> {
     /// A tool invocation requested by the assistant.
     ToolCall {
         call_id: &'a str,
-        /// Name of the called tool. Owned when it comes from a rendered
-        /// output, e.g. for calls which failed and were renamed.
+        /// Name of the called tool.
         name: Cow<'a, str>,
-        arguments: &'a str,
+        /// Arguments as JSON. Owned, since it is re-serialized from the
+        /// stored value.
+        arguments: Cow<'a, str>,
     },
     /// The output of a tool invocation.
     ToolOutput {
@@ -124,44 +125,42 @@ pub enum ChatMessage<'a> {
 /// fallback for incomplete/failed calls.
 pub fn build_history<'a>(
     tools: &ToolRegistry,
-    items: &'a [DbItem],
+    items: &'a [Item],
     include_reasoning: bool,
-) -> AnyResult<Vec<ChatMessage<'a>>> {
+) -> Vec<ChatMessage<'a>> {
     let mut messages = Vec::with_capacity(items.len());
     for item in items {
-        match item.ty()? {
-            ItemType::UserText => {
-                if let Some(text) = item.text.as_deref() {
-                    messages.push(ChatMessage::Message { content: text });
-                }
+        match &item.content {
+            ItemContent::UserText(text) => {
+                messages.push(ChatMessage::Message { content: text });
             }
-            ItemType::ResponseText => {
-                if let Some(text) = item.text.as_deref() {
-                    messages.push(ChatMessage::Response { content: text });
-                }
+            ItemContent::ResponseText(text) => {
+                messages.push(ChatMessage::Response { content: text });
             }
-            ItemType::Reasoning => {
+            ItemContent::Reasoning(content) => {
                 if !include_reasoning {
                     continue;
                 }
-                let content = item.summary.as_deref().or(item.text.as_deref());
-                if let Some(content) = content {
-                    messages.push(ChatMessage::Reasoning { content });
+                let text = content.summary.as_deref().or(content.text.as_deref());
+                if let Some(text) = text {
+                    messages.push(ChatMessage::Reasoning { content: text });
                 }
             }
-            ItemType::ToolCall => {
-                let Some(call_id) = item.upstream_call_id.as_deref() else { continue };
-                let Some(output) = tools.render_db_item_to_interface(item) else { continue };
+            ItemContent::ToolCall(content) => {
+                let output = tools.render_to_interface(content);
                 messages.push(ChatMessage::ToolCall {
-                    call_id,
-                    name: output.name.into(),
-                    arguments: item.tool_args.as_deref().unwrap_or(""),
+                    call_id: &content.call_id,
+                    name: content.tool_name.as_str().into(),
+                    arguments: content.args.to_string().into(),
                 });
-                messages.push(ChatMessage::ToolOutput { call_id, output: output.content });
+                messages.push(ChatMessage::ToolOutput {
+                    call_id: &content.call_id,
+                    output: output.content,
+                });
             }
         }
     }
-    Ok(messages)
+    messages
 }
 
 /// Describes a tool in human- and model-readable format.
@@ -327,232 +326,156 @@ mod tests {
 
     use super::*;
     use crate::db;
-    use crate::session::{DbItem, NewItem, Session, Turn, TurnType};
+    use crate::item::{NewItem, ReasoningContent, ToolOutput};
+    use crate::testing::{session_turn, tool_call, tool_registry};
     use diesel::sqlite::SqliteConnection;
 
     fn create_item(
         conn: &mut SqliteConnection,
         session_id: i32,
         turn_id: i32,
-        ty: ItemType,
-        text: Option<&str>,
-        upstream_call_id: Option<&str>,
-    ) -> DbItem {
-        DbItem::create(
+        content: ItemContent,
+    ) -> Item {
+        Item::create(
             conn,
             NewItem {
-                session_id: Some(session_id),
-                turn_id: Some(turn_id),
-                ty: Some(ty),
-                text,
-                upstream_call_id,
-                ..Default::default()
-            },
-        ).unwrap()
-    }
-
-    fn create_tool_call(
-        conn: &mut SqliteConnection,
-        session_id: i32,
-        turn_id: i32,
-        name: &str,
-        call_id: Option<&str>,
-        args: Option<&str>,
-        output: Option<&Value>,
-    ) -> DbItem {
-        let output = output.map(|x| json!({ "completed": x }).to_string());
-        DbItem::create(
-            conn,
-            NewItem {
-                session_id: Some(session_id),
-                turn_id: Some(turn_id),
-                ty: Some(ItemType::ToolCall),
-                text: Some(name),
-                upstream_call_id: call_id,
-                tool_args: args,
-                tool_output: output.as_deref(),
-                ..Default::default()
+                session_id,
+                turn_id,
+                response_id: None,
+                provider_id: None,
+                upstream_id: None,
+                seqno: None,
+                content,
             },
         ).unwrap()
     }
 
     #[test]
     fn test_build_history() {
-        let registry = crate::testing::tool_registry();
+        let registry = tool_registry();
         let mut conn = db::open_new().unwrap();
-        let session = Session::create(&mut conn, "Session").unwrap();
-        let turn = Turn::create(&mut conn, session.id, TurnType::Assistant, None, None, None)
-            .unwrap();
+        let (_, turn) = session_turn(&mut conn);
+        let mut create = |content| create_item(&mut conn, turn.session_id, turn.id, content);
 
-        let user_text =
-            create_item(&mut conn, session.id, turn.id, ItemType::UserText, Some("hello"), None);
-        let mut reasoning =
-            create_item(&mut conn, session.id, turn.id, ItemType::Reasoning, Some("thinking"), None);
-        reasoning.update_summary(&mut conn, "summarizing").unwrap();
-        let response_text = create_item(
+        let user_text = create(ItemContent::UserText("hello".to_owned()));
+        let reasoning = create(ItemContent::Reasoning(ReasoningContent {
+            text: Some("thinking".to_owned()),
+            summary: Some("summarizing".to_owned()),
+            encrypted: None,
+        }));
+        let response_text = create(ItemContent::ResponseText("hi there".to_owned()));
+        let sh_item = tool_call(
             &mut conn,
-            session.id,
-            turn.id,
-            ItemType::ResponseText,
-            Some("hi there"),
-            None,
-        );
-        let tool_call = create_tool_call(
-            &mut conn,
-            session.id,
-            turn.id,
+            &turn,
             "sh",
-            Some("call_1"),
-            Some(r#"{"command":"echo hi"}"#),
-            Some(&json!({"stdout": "hi\n", "stderr": "", "return_code": 0})),
+            "call_1",
+            json!({ "command": "echo hi" }),
+            Some(ToolOutput::Completed {
+                value: json!({ "stdout": "hi\n", "stderr": "", "return_code": 0 }),
+            }),
         );
-        let error_tool_call = create_tool_call(
+        // Calls to unknown tools render a placeholder
+        let cat_item = tool_call(
             &mut conn,
-            session.id,
-            turn.id,
+            &turn,
             "cat",
-            Some("call_2"),
-            Some(r#"{"path":"a.txt"}"#),
-            Some(&json!({"error": "file not found"})),
+            "call_2",
+            json!({ "path": "a.txt" }),
+            Some(ToolOutput::Completed {
+                value: json!({ "error": "file not found" }),
+            }),
         );
-        let orphan_call = create_tool_call(
-            &mut conn,
-            session.id,
-            turn.id,
-            "add",
-            None,
-            None,
-            Some(&json!({"result": 3})),
-        );
-        let undecodable_call = create_tool_call(
-            &mut conn,
-            session.id,
-            turn.id,
-            "rm",
-            Some("call_3"),
-            None,
-            None,
-        );
-
-        let ids = [
-            user_text.id,
-            reasoning.id,
-            response_text.id,
-            tool_call.id,
-            error_tool_call.id,
-            orphan_call.id,
-            undecodable_call.id,
-        ];
-        let items: Vec<DbItem> = ids
-            .iter()
-            .map(|&id| {
-                DbItem::get_by_id(&mut conn, id)
-                    .unwrap()
-                    .unwrap()
-            })
-            .collect();
-
-        assert_eq!(
-            build_history(&registry, &items, true).unwrap(),
-            vec![
-                ChatMessage::Message { content: "hello" },
-                ChatMessage::Reasoning {
-                    content: "summarizing"
-                },
-                ChatMessage::Response { content: "hi there" },
-                ChatMessage::ToolCall {
-                    call_id: "call_1",
-                    name: Cow::Borrowed("sh"),
-                    arguments: r#"{"command":"echo hi"}"#,
-                },
-                ChatMessage::ToolOutput {
-                    call_id: "call_1",
-                    output: vec![
-                        ToolOutputContent::Text {
-                            text: Cow::Owned("stdout:\nhi\n".to_owned()),
-                        },
-                        ToolOutputContent::Text {
-                            text: Cow::Owned("return code: 0".to_owned()),
-                        },
-                    ],
-                },
-                // Calls to unknown tools render a placeholder
-                ChatMessage::ToolCall {
-                    call_id: "call_2",
-                    name: Cow::Borrowed("cat"),
-                    arguments: r#"{"path":"a.txt"}"#,
-                },
-                ChatMessage::ToolOutput {
-                    call_id: "call_2",
-                    output: vec![ToolOutputContent::Text {
-                        text: Cow::Borrowed("error: could not parse output"),
-                    }],
-                },
-            ]
-        );
-
-        assert_eq!(
-            build_history(&registry, &items, false).unwrap(),
-            vec![
-                ChatMessage::Message { content: "hello" },
-                ChatMessage::Response { content: "hi there" },
-                ChatMessage::ToolCall {
-                    call_id: "call_1",
-                    name: Cow::Borrowed("sh"),
-                    arguments: r#"{"command":"echo hi"}"#,
-                },
-                ChatMessage::ToolOutput {
-                    call_id: "call_1",
-                    output: vec![
-                        ToolOutputContent::Text {
-                            text: Cow::Owned("stdout:\nhi\n".to_owned()),
-                        },
-                        ToolOutputContent::Text {
-                            text: Cow::Owned("return code: 0".to_owned()),
-                        },
-                    ],
-                },
-                // Calls to unknown tools render a placeholder
-                ChatMessage::ToolCall {
-                    call_id: "call_2",
-                    name: Cow::Borrowed("cat"),
-                    arguments: r#"{"path":"a.txt"}"#,
-                },
-                ChatMessage::ToolOutput {
-                    call_id: "call_2",
-                    output: vec![ToolOutputContent::Text {
-                        text: Cow::Borrowed("error: could not parse output"),
-                    }],
-                },
-            ]
-        );
-
         // A failed call records its error as output; the model still sees the
         // name it called.
-        let failed_call = DbItem::create(
+        let failed_item = tool_call(
             &mut conn,
-            NewItem {
-                session_id: Some(session.id),
-                turn_id: Some(turn.id),
-                ty: Some(ItemType::ToolCall),
-                text: Some("sh"),
-                upstream_call_id: Some("call_4"),
-                tool_args: Some(r#"{"command":123}"#),
-                tool_output: Some(&json!({ "failed": "boom" }).to_string()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+            &turn,
+            "sh",
+            "call_3",
+            json!({ "command": 123 }),
+            Some(ToolOutput::Failed { error: "boom".to_owned() }),
+        );
+
+        let items = [
+            user_text,
+            reasoning,
+            response_text,
+            sh_item,
+            cat_item,
+            failed_item,
+        ];
+
+        let sh_call = ChatMessage::ToolCall {
+            call_id: "call_1",
+            name: Cow::Borrowed("sh"),
+            arguments: r#"{"command":"echo hi"}"#.into(),
+        };
+        let sh_output = ChatMessage::ToolOutput {
+            call_id: "call_1",
+            output: vec![
+                ToolOutputContent::Text { text: Cow::Owned("stdout:\nhi\n".to_owned()) },
+                ToolOutputContent::Text { text: Cow::Owned("return code: 0".to_owned()) },
+            ],
+        };
+
         assert_eq!(
-            build_history(&registry, &[failed_call], false).unwrap(),
+            build_history(&registry, &items, true),
             vec![
+                ChatMessage::Message { content: "hello" },
+                ChatMessage::Reasoning { content: "summarizing" },
+                ChatMessage::Response { content: "hi there" },
+                sh_call.clone(),
+                sh_output.clone(),
                 ChatMessage::ToolCall {
-                    call_id: "call_4",
-                    name: Cow::Borrowed("sh"),
-                    arguments: r#"{"command":123}"#,
+                    call_id: "call_2",
+                    name: Cow::Borrowed("cat"),
+                    arguments: r#"{"path":"a.txt"}"#.into(),
                 },
                 ChatMessage::ToolOutput {
-                    call_id: "call_4",
+                    call_id: "call_2",
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Borrowed("error: could not parse output"),
+                    }],
+                },
+                ChatMessage::ToolCall {
+                    call_id: "call_3",
+                    name: Cow::Borrowed("sh"),
+                    arguments: r#"{"command":123}"#.into(),
+                },
+                ChatMessage::ToolOutput {
+                    call_id: "call_3",
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Owned("error: boom".to_owned()),
+                    }],
+                },
+            ]
+        );
+
+        assert_eq!(
+            build_history(&registry, &items, false),
+            vec![
+                ChatMessage::Message { content: "hello" },
+                ChatMessage::Response { content: "hi there" },
+                sh_call,
+                sh_output,
+                ChatMessage::ToolCall {
+                    call_id: "call_2",
+                    name: Cow::Borrowed("cat"),
+                    arguments: r#"{"path":"a.txt"}"#.into(),
+                },
+                ChatMessage::ToolOutput {
+                    call_id: "call_2",
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Borrowed("error: could not parse output"),
+                    }],
+                },
+                ChatMessage::ToolCall {
+                    call_id: "call_3",
+                    name: Cow::Borrowed("sh"),
+                    arguments: r#"{"command":123}"#.into(),
+                },
+                ChatMessage::ToolOutput {
+                    call_id: "call_3",
                     output: vec![ToolOutputContent::Text {
                         text: Cow::Owned("error: boom".to_owned()),
                     }],

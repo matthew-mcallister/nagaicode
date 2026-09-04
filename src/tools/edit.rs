@@ -155,7 +155,6 @@ impl Tool for EditTool {
     ) -> AnyResult<InterfaceToolOutput> {
         if let Some(error) = output.get("error").and_then(Value::as_str) {
             return Ok(InterfaceToolOutput {
-                name: self.name().to_owned(),
                 content: vec![ToolOutputContent::Text {
                     text: Cow::Owned(format!("error: {error}")),
                 }],
@@ -166,7 +165,6 @@ impl Tool for EditTool {
             .and_then(Value::as_i64)
             .ok_or_else(|| anyhow!("invalid tool output"))?;
         Ok(InterfaceToolOutput {
-            name: self.name().to_owned(),
             content: vec![ToolOutputContent::Text {
                 text: Cow::Owned(format!("matches replaced: {matches}")),
             }],
@@ -548,7 +546,6 @@ mod tests {
 
         let output = json!({ "matches": 3, "diff": "-two\n+TWO\n" });
         let result = tool.render_to_interface(&input, &output).unwrap();
-        assert_eq!(result.name, "edit");
         assert_eq!(
             result.content,
             vec![ToolOutputContent::Text { text: Cow::Owned("matches replaced: 3".into()) }]

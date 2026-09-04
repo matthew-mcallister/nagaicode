@@ -61,7 +61,6 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
 /// Tool call representation submitted to inference API.
 #[derive(Debug)]
 pub struct InterfaceToolOutput {
-    pub name: String,
     pub content: Vec<ToolOutputContent<'static>>,
 }
 
@@ -139,12 +138,11 @@ impl ToolRegistry {
                     .inspect_err(|e| warn!("tool call parse error: {e}"))
                     .ok()
                 )
-                .unwrap_or_else(|| render_unknown_to_interface(tool_name)),
+                .unwrap_or_else(render_unknown_to_interface),
             Some(ToolOutput::Failed { error }) => {
-                render_failure_to_interface(tool_name, error)
+                render_failure_to_interface(error)
             }
             None => InterfaceToolOutput {
-                name: tool_name.to_owned(),
                 content: vec![ToolOutputContent::Text { text: "tool call interrupted".into() }],
             },
         }
@@ -155,13 +153,6 @@ impl ToolRegistry {
         let item = Item::from_row(row).ok()?;
         let content = item.content.as_tool_call()?;
         self.render_to_ui(content)
-    }
-
-    // Temp shim
-    pub fn render_db_item_to_interface(&self, row: &DbItem) -> Option<InterfaceToolOutput> {
-        let item = Item::from_row(row).ok()?;
-        let content = item.content.as_tool_call()?;
-        Some(self.render_to_interface(content))
     }
 
     fn unknown_ui(tool_name: &str) -> Box<dyn RenderItem> {
@@ -310,8 +301,6 @@ mod tests {
         let ui = registry.render_to_ui(&call).unwrap();
         assert_eq!(ui.query("/type").unwrap(), json!("help"));
         let out = registry.render_to_interface(&call);
-        // The model sees the name it called.
-        assert_eq!(out.name, "missing");
         assert_eq!(out.content.len(), 1);
     }
 
@@ -329,7 +318,6 @@ mod tests {
         let ui = registry.render_to_ui(&call).unwrap();
         assert_eq!(ui.query("/type").unwrap(), json!("error"));
         let out = registry.render_to_interface(&call);
-        assert_eq!(out.name, "boom");
         assert_eq!(out.content.len(), 1);
     }
 

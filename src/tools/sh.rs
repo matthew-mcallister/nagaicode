@@ -117,10 +117,7 @@ impl Tool for ShTool {
         contents.push(ToolOutputContent::Text {
             text: Cow::Owned(format!("return code: {return_code}")),
         });
-        Ok(InterfaceToolOutput {
-            name: self.name().to_owned(),
-            content: contents,
-        })
+        Ok(InterfaceToolOutput { content: contents })
     }
 }
 
@@ -358,7 +355,6 @@ mod tests {
         let input = json!({});
         let output = json!({"stdout": "hi", "stderr": "", "return_code": 0});
         let result = tool.render_to_interface(&input, &output).unwrap();
-        assert_eq!(result.name, "sh");
         assert_eq!(
             result.content,
             vec![

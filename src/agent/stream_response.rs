@@ -1,6 +1,7 @@
 use crate::error::AnyResult;
 use crate::interface::{InferenceParams, build_history};
 use crate::interface::stream::StreamProcessor;
+use crate::item::Item;
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
@@ -36,12 +37,12 @@ impl StreamResponse {
     async fn process(self, context: &mut TaskContext) -> AnyResult<(i32, i32)> {
         let interface = self.provider.create_interface(&self.client)?;
 
-        let history = DbItem::list_by_session(context.connection()?, self.session.id)?;
+        let history = Item::list_by_session(context.connection()?, self.session.id)?;
         let messages = build_history(
             context.tool_registry(),
             &history,
             interface.supports_reasoning_input(),
-        )?;
+        );
         let params = InferenceParams {
             model_id: &self.model.id,
             system_prompt: "",

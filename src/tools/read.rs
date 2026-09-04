@@ -155,7 +155,6 @@ impl Tool for ReadTool {
     ) -> AnyResult<InterfaceToolOutput> {
         if let Some(error) = output.get("error").and_then(Value::as_str) {
             return Ok(InterfaceToolOutput {
-                name: self.name().to_owned(),
                 content: vec![ToolOutputContent::Text {
                     text: Cow::Owned(format!("error: {error}")),
                 }],
@@ -178,7 +177,6 @@ impl Tool for ReadTool {
             None => "reached end of file".to_owned(),
         };
         Ok(InterfaceToolOutput {
-            name: self.name().to_owned(),
             content: vec![
                 ToolOutputContent::Text {
                     text: Cow::Owned(format!("read {num_lines} lines\n{next_line}")),
@@ -424,7 +422,6 @@ mod tests {
         let input = json!({ "filepath": path, "start_line": 1, "max_lines": 2 });
         let output = json!({ "content": BASE64_STANDARD.encode("one\ntwo\n"), "num_lines": 2, "next_line": 3 });
         let result = tool.render_to_interface(&input, &output).unwrap();
-        assert_eq!(result.name, "read");
         assert_eq!(
             result.content,
             vec![

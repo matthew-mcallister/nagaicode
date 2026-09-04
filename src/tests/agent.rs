@@ -474,7 +474,7 @@ async fn test_agent_tool_call_loop() {
                 "type": "function_call",
                 "call_id": "call_1",
                 "name": "sh",
-                "arguments": r#"{"command": "printf 3"}"#,
+                "arguments": r#"{"command":"printf 3"}"#,
             },
             {
                 "type": "function_call_output",

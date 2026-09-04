@@ -8,9 +8,8 @@ pub fn render_failure_to_ui(tool_name: &str, error: &str) -> Box<dyn RenderItem>
     Box::new(ErrorRenderItem::new(format!("Called '{tool_name}': {error}")))
 }
 
-pub fn render_failure_to_interface(tool_name: &str, error: &str) -> InterfaceToolOutput {
+pub fn render_failure_to_interface(error: &str) -> InterfaceToolOutput {
     InterfaceToolOutput {
-        name: tool_name.to_owned(),
         content: vec![ToolOutputContent::Text {
             text: Cow::Owned(format!("error: {error}")),
         }],
@@ -28,7 +27,7 @@ mod tests {
 
     #[test]
     fn test_failure_interface() {
-        let result = render_failure_to_interface("sh", "invalid arguments");
+        let result = render_failure_to_interface("invalid arguments");
         assert_eq!(
             result.content,
             vec![
