@@ -8,6 +8,7 @@ use crate::error::AnyResult;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::schema::item;
 use crate::session::{DbItem, ItemType};
+use crate::try_nested;
 
 /// Basic datum in the human/agent/tool loop history.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -135,20 +136,17 @@ impl Item {
     }
 
     /// Loads an item by id, or `None` if it is missing or undecodable.
-    pub fn get(conn: &mut SqliteConnection, id: i32) -> Option<Item> {
-        let row = item::table
-            .filter(item::id.eq(id))
-            .first::<DbItem>(conn)
-            .optional()
-            .unwrap();
-        let row = row?;
-        match Self::from_row(&row) {
-            Ok(item) => Some(item),
-            Err(e) => {
-                warn!("skipping item {}: {e}", row.id);
-                None
-            }
-        }
+    pub fn get(conn: &mut SqliteConnection, id: i32) -> AnyResult<Option<Item>> {
+        let row = try_nested!(
+            item::table
+                .filter(item::id.eq(id))
+                .first::<DbItem>(conn)
+                .optional()
+        );
+        Ok(Self::from_row(&row)
+            .inspect_err(|e| warn!("malformed item {}: {e}", row.id))
+            .ok()
+        )
     }
 
     /// Lists a session's items in seqno order, skipping undecodable rows.
@@ -264,16 +262,13 @@ impl Item {
         Ok(())
     }
 
-    // Decodes rows. Warns about malformed item data.
+    // Decodes rows. Ignores and warns about malformed item data.
     fn decode_rows(rows: Vec<DbItem>) -> Vec<Item> {
         rows.into_iter()
-            .filter_map(|row| match Self::from_row(&row) {
-                Ok(item) => Some(item),
-                Err(e) => {
-                    warn!("malformed item {}: {e}", row.id);
-                    None
-                }
-            })
+            .filter_map(|row| Self::from_row(&row)
+                .inspect_err(|e| warn!("malformed item {}: {e}", row.id))
+                .ok()
+            )
             .collect()
     }
 }
@@ -550,9 +545,9 @@ mod tests {
             encrypted: None,
         }));
 
-        assert_eq!(Item::get(&mut conn, user_text.id).as_ref(), Some(&user_text));
+        assert_eq!(Item::get(&mut conn, user_text.id).unwrap().as_ref(), Some(&user_text));
         assert_eq!(
-            Item::get(&mut conn, response_text.id),
+            Item::get(&mut conn, response_text.id).unwrap(),
             Some(Item {
                 id: response_text.id,
                 seqno: 2,
@@ -561,7 +556,7 @@ mod tests {
             })
         );
         assert_eq!(
-            Item::get(&mut conn, reasoning.id),
+            Item::get(&mut conn, reasoning.id).unwrap(),
             Some(Item {
                 id: reasoning.id,
                 seqno: 3,
@@ -593,21 +588,21 @@ mod tests {
             |content| create_item(&mut conn, session.id, turn.id, None, content).unwrap();
 
         let mut call = create(call_with(None));
-        assert_eq!(Item::get(&mut conn, call.id).unwrap(), call);
+        assert_eq!(Item::get(&mut conn, call.id).unwrap().unwrap(), call);
 
         let completed = ToolOutput::Completed {
             value: json!({ "contents": "file contents" }),
         };
         call.set_output(&mut conn, completed.clone())
             .unwrap();
-        let reloaded = Item::get(&mut conn, call.id).unwrap();
+        let reloaded = Item::get(&mut conn, call.id).unwrap().unwrap();
         assert_eq!(reloaded.content, call_with(Some(completed)));
 
         let failed = ToolOutput::Failed {
             error: "file not found".to_owned(),
         };
         call.set_output(&mut conn, failed.clone()).unwrap();
-        let reloaded = Item::get(&mut conn, call.id).unwrap();
+        let reloaded = Item::get(&mut conn, call.id).unwrap().unwrap();
         assert_eq!(reloaded.content, call_with(Some(failed)));
     }
 
@@ -641,7 +636,7 @@ mod tests {
         let ids: Vec<i32> = items.iter().map(|item| item.id).collect();
         assert_eq!(ids, [healthy.id]);
 
-        assert!(Item::get(&mut conn, invalid.id).is_none());
+        assert!(Item::get(&mut conn, invalid.id).unwrap().is_none());
     }
 
     #[test]

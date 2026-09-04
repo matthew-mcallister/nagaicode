@@ -219,7 +219,7 @@ mod tests {
         item.set_output(&mut conn, output).unwrap();
 
         // Round trip gives expected results
-        let item = Item::get(&mut conn, item.id).unwrap();
+        let item = Item::get(&mut conn, item.id).unwrap().unwrap();
         assert_eq!(
             item.content.as_tool_call().unwrap(),
             &ToolCallContent {
