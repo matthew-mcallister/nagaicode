@@ -111,7 +111,9 @@ impl Tool for EditTool {
                     ));
                 }
                 if matches == 0 {
-                    return Err(anyhow!("{filepath}: replacement failed: no matches found"));
+                    return Err(anyhow!(
+                        "{filepath}: replacement failed: no matches found, \
+                        file may have changed"));
                 }
             }
 
