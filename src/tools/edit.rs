@@ -425,7 +425,7 @@ mod tests {
         })).unwrap_err();
         assert_eq!(
             err.to_string(),
-            format!("{path}: replacement failed: no matches found")
+            format!("{path}: replacement failed: no matches found, file may have changed")
         );
 
         // Failed edits leave the file untouched.

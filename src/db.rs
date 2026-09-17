@@ -1,5 +1,5 @@
 use diesel::sqlite::SqliteConnection;
-use diesel_migrations::MigrationHarness;
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness};
 
 use crate::error::AnyResult;
 
@@ -8,9 +8,10 @@ pub use self::real::{db_url, open};
 #[cfg(test)]
 pub use self::mock::{db_url, open, open_new};
 
+pub const MIGRATIONS: EmbeddedMigrations = diesel_migrations::embed_migrations!("migrations");
+
 fn run_migrations(conn: &mut SqliteConnection) -> AnyResult<()> {
-    let migrations = diesel_migrations::FileBasedMigrations::find_migrations_directory()?;
-    conn.run_pending_migrations(migrations)
+    conn.run_pending_migrations(MIGRATIONS)
         .map_err(anyhow::Error::from_boxed)?;
     Ok(())
 }
