@@ -75,7 +75,6 @@ impl ToolRegistry {
         // - read
         // - write
         // - edit
-        // - grep
         // - glob
         let mut tools: FnvHashMap<String, Box<dyn Tool>> = FnvHashMap::default();
         let sh = sh::ShTool::new(Arc::clone(cwd));

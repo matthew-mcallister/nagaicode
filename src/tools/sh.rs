@@ -214,7 +214,11 @@ fn render_sh_stdout(
 
     // Command line
     let prompt = format!("$ {cmd_line}");
-    push_rows(&mut rows, &wrap_line_naive(inner_width, &prompt));
+    let cmd_rows: Vec<Row> = prompt
+        .lines()
+        .flat_map(|line| wrap_line_naive(inner_width, line))
+        .collect();
+    push_rows(&mut rows, &cmd_rows);
 
     // Output
     let (head, tail) = ellipsize(inner_width, MAX_ROWS, stdout);
@@ -314,6 +318,19 @@ mod tests {
 
         assert!(render(14, &json!({}), &ok_output()).is_err());
         assert!(render(14, &json!({"command": "echo hi"}), &json!({})).is_err());
+    }
+
+    #[test]
+    fn test_sh_render_multiline_command() {
+        let theme = &THEME_DARK;
+        let style = Style::new(theme.text_base, theme.bg_prompt);
+        let output = json!({"stdout": "hi\n", "stderr": "", "return_code": 0});
+        assert_eq!(
+            render(14, &json!({"command": "echo a\necho b"}), &output).unwrap(),
+            format!(
+                "{style}              \n{style}  $ echo a    \n{style}  echo b      \n{style}  hi          \n{style}              "
+            )
+        );
     }
 
     #[tokio::test]
