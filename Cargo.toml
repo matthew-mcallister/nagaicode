@@ -39,3 +39,4 @@ url = "2.5.8"
 anyhow = "1.0.104"
 base64 = "0.22"
 similar = "3.2.0"
+nglob = { git = "https://github.com/matthew-mcallister/nglob.git", tag = "v0.99.0", features = ["tokio"] }

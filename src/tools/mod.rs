@@ -14,6 +14,7 @@ use crate::query::DataQuery;
 use crate::ui::render_item::{ErrorRenderItem, HelpRenderItem, RenderItem};
 
 pub mod edit;
+pub mod glob;
 pub mod read;
 pub mod sh;
 pub mod write;
@@ -85,6 +86,8 @@ impl ToolRegistry {
         tools.insert(edit.name().to_owned(), Box::new(edit));
         let write = write::WriteTool::new(Arc::clone(cwd));
         tools.insert(write.name().to_owned(), Box::new(write));
+        let glob = glob::GlobTool::new(Arc::clone(cwd));
+        tools.insert(glob.name().to_owned(), Box::new(glob));
         Self { tools }
     }
 
@@ -237,7 +240,7 @@ mod tests {
         let registry = ToolRegistry::new(&dir);
         let mut names: Vec<&str> = registry.list_tools().map(|t| t.name()).collect();
         names.sort();
-        assert_eq!(names, ["edit", "read", "sh", "write"]);
+        assert_eq!(names, ["edit", "glob", "read", "sh", "write"]);
 
         // Only visible tools are advertised to the model.
         let mut infos = registry.list_tool_infos();
@@ -259,6 +262,26 @@ mod tests {
                             "replace_all": { "type": "boolean" },
                         },
                         "required": ["filepath", "old_string", "new_string", "replace_all"],
+                        "additionalProperties": false,
+                    }),
+                },
+                ToolInfo {
+                    name: "glob".to_owned(),
+                    description: "Searches for files using glob syntax:\n\
+                        - `\\`: escape character\n\
+                        - `{a,b,c}`: alternatives\n\
+                        - `?`: match any one character\n\
+                        - `*`: match zero or more characters except path separators\n\
+                        - `**` match zero or more characters, including path separators"
+                        .to_owned(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "pattern": { "type": "string" },
+                            "match": { "enum": ["files", "directories", "all"] },
+                            "max_results": { "type": "integer", "minimum": 1 },
+                        },
+                        "required": ["pattern", "match", "max_results"],
                         "additionalProperties": false,
                     }),
                 },
