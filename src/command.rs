@@ -385,7 +385,7 @@ pub fn run_provider_command(
         } => {
             let base_url_ref = base_url.as_deref();
             Provider::create(app.conn(), &name, interface, &api_key, base_url_ref)?;
-            // FIXME urgent: Need to revalidate models
+            app.spawn_revalidate_models();
             Ok(format!("Created provider \"{name}\""))
         }
         ProviderCommand::Rm(name) => {

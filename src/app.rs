@@ -198,6 +198,7 @@ impl App {
         }
         self.settings.set_current_model(None)?;
         self.selected_model = None;
+        // TODO: Delete models from table
         Ok(())
     }
 
@@ -275,7 +276,7 @@ impl App {
     }
 
     /// Spawns a background task to revalidate stale model lists.
-    fn spawn_revalidate_models(&mut self) {
+    pub fn spawn_revalidate_models(&mut self) {
         self.spawn_background(RevalidateModelsTask);
     }
 
