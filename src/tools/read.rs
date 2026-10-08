@@ -116,9 +116,7 @@ impl Tool for ReadTool {
                 line.clear();
                 let n = reader.read_line(&mut line)?;
                 if n == 0 { break; }
-                // FIXME: This does not handle CRLF
-                push_line(&mut content, line.strip_suffix('\n').unwrap_or(&line));
-                content.push('\n');
+                push_line(&mut content, &line);
                 num_lines += 1;
             }
 
@@ -204,12 +202,15 @@ fn push_line(out: &mut String, line: &str) {
         out.push_str(line);
         return;
     }
+    let content = line.strip_suffix('\n').unwrap_or(line);
+    let content = content.strip_suffix('\r').unwrap_or(content);
     let mut end = MAX_LINE_BYTES;
-    while !line.is_char_boundary(end) {
+    while !content.is_char_boundary(end) {
         end -= 1;
     }
-    out.push_str(&line[..end]);
+    out.push_str(&content[..end]);
     out.push_str(TRUNCATION_SUFFIX);
+    out.push_str(&line[content.len()..]);
 }
 
 fn display_path(cwd: &Path, path: &Path) -> String {
@@ -299,7 +300,7 @@ mod tests {
         let out = tool.call(&json!({ "filepath": no_newline, "start_line": 1, "max_lines": 5 }))
             .await
             .unwrap();
-        assert_eq!(read_content(&out), "x\ny\n");
+        assert_eq!(read_content(&out), "x\ny");
         assert_eq!(out["num_lines"], json!(2));
         assert_eq!(out.get("next_line"), None);
 
@@ -350,7 +351,7 @@ mod tests {
         assert_eq!(out["num_lines"], json!(1));
         assert_eq!(
             content,
-            format!("{}{TRUNCATION_SUFFIX}\n", long_line(MAX_LINE_BYTES))
+            format!("{}{TRUNCATION_SUFFIX}", long_line(MAX_LINE_BYTES))
         );
 
         // Truncation backs up to the nearest codepoint boundary.
@@ -362,7 +363,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             read_content(&out),
-            format!("{}{TRUNCATION_SUFFIX}\n", long_line(MAX_LINE_BYTES - 2))
+            format!("{}{TRUNCATION_SUFFIX}", long_line(MAX_LINE_BYTES - 2))
         );
 
         // Lines exactly at the limit are not truncated.
@@ -370,7 +371,7 @@ mod tests {
         let out = tool.call(&json!({ "filepath": path, "start_line": 1, "max_lines": 1 }))
             .await
             .unwrap();
-        assert_eq!(read_content(&out), format!("{}\n", long_line(MAX_LINE_BYTES)));
+        assert_eq!(read_content(&out), format!("{}", long_line(MAX_LINE_BYTES)));
     }
 
     #[test]
