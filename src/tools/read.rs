@@ -3,8 +3,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use base64::Engine;
-use base64::prelude::BASE64_STANDARD;
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
 
@@ -17,7 +15,6 @@ use crate::ui::render_item::{ErrorRenderItem, HelpRenderItem, RenderItem};
 
 const MAX_LINE_BYTES: usize = 2000;
 const TRUNCATION_SUFFIX: &str = "... (truncated at 2000 bytes)";
-const TEXT_MIME: &str = "text/plain";
 
 /// Reads lines from a UTF-8 text file.
 #[derive(Debug)]
@@ -94,6 +91,7 @@ impl Tool for ReadTool {
                 return Err(invalid());
             }
 
+            // FIXME: Reading the entire file is freaking stupid
             let text = std::fs::read(filepath)
                 .map_err(AnyError::from)
                 .and_then(|bytes| Ok(String::from_utf8(bytes)?))
@@ -116,7 +114,7 @@ impl Tool for ReadTool {
             }
 
             let mut output = json!({
-                "content": BASE64_STANDARD.encode(&content),
+                "content": content,
                 "num_lines": end - start,
             });
             if end < lines.len() {
@@ -150,7 +148,7 @@ impl Tool for ReadTool {
 
     fn render_to_interface(
         &self,
-        input: &Value,
+        _input: &Value,
         output: &Value,
     ) -> AnyResult<InterfaceToolOutput> {
         if let Some(error) = output.get("error").and_then(Value::as_str) {
@@ -160,10 +158,6 @@ impl Tool for ReadTool {
                 }],
             });
         }
-        let filepath = input
-            .get("filepath")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("invalid tool input"))?;
         let content = output
             .get("content")
             .and_then(Value::as_str)
@@ -181,10 +175,8 @@ impl Tool for ReadTool {
                 ToolOutputContent::Text {
                     text: Cow::Owned(format!("read {num_lines} lines\n{next_line}")),
                 },
-                ToolOutputContent::File {
-                    filepath: Cow::Owned(filepath.to_owned()),
-                    data: Cow::Owned(content.to_owned()),
-                    mime: Cow::Borrowed(TEXT_MIME),
+                ToolOutputContent::Text {
+                    text: Cow::Owned(content.to_owned()),
                 },
             ],
         })
@@ -223,10 +215,11 @@ mod tests {
         path.to_string_lossy().into_owned()
     }
 
-    fn decode(output: &Value) -> String {
-        let encoded = output["content"].as_str().expect("base64 content");
-        let bytes = BASE64_STANDARD.decode(encoded).expect("valid base64");
-        String::from_utf8(bytes).expect("valid utf-8")
+    fn read_content(output: &Value) -> String {
+        output["content"]
+            .as_str()
+            .expect("string content")
+            .to_owned()
     }
 
     fn long_line(len: usize) -> String {
@@ -259,7 +252,7 @@ mod tests {
         let out = tool.call(&json!({ "filepath": path, "start_line": 1, "max_lines": 10 }))
             .await
             .unwrap();
-        assert_eq!(decode(&out), "one\ntwo\nthree\n");
+        assert_eq!(read_content(&out), "one\ntwo\nthree\n");
         assert_eq!(out["num_lines"], json!(3));
         assert_eq!(out.get("next_line"), None);
 
@@ -267,14 +260,14 @@ mod tests {
         let out = tool.call(&json!({ "filepath": path, "start_line": 1, "max_lines": 2 }))
             .await
             .unwrap();
-        assert_eq!(decode(&out), "one\ntwo\n");
+        assert_eq!(read_content(&out), "one\ntwo\n");
         assert_eq!(out["num_lines"], json!(2));
         assert_eq!(out["next_line"], json!(3));
 
         let out = tool.call(&json!({ "filepath": path, "start_line": 3, "max_lines": 2 }))
             .await
             .unwrap();
-        assert_eq!(decode(&out), "three\n");
+        assert_eq!(read_content(&out), "three\n");
         assert_eq!(out["num_lines"], json!(1));
         assert_eq!(out.get("next_line"), None);
 
@@ -282,7 +275,7 @@ mod tests {
         let out = tool.call(&json!({ "filepath": path, "start_line": 2, "max_lines": 2 }))
             .await
             .unwrap();
-        assert_eq!(decode(&out), "two\nthree\n");
+        assert_eq!(read_content(&out), "two\nthree\n");
         assert_eq!(out.get("next_line"), None);
 
         // A missing trailing newline is added to the output.
@@ -290,7 +283,7 @@ mod tests {
         let out = tool.call(&json!({ "filepath": no_newline, "start_line": 1, "max_lines": 5 }))
             .await
             .unwrap();
-        assert_eq!(decode(&out), "x\ny\n");
+        assert_eq!(read_content(&out), "x\ny\n");
         assert_eq!(out["num_lines"], json!(2));
         assert_eq!(out.get("next_line"), None);
 
@@ -299,7 +292,7 @@ mod tests {
         let out = tool.call(&json!({ "filepath": empty, "start_line": 1, "max_lines": 5 }))
             .await
             .unwrap();
-        assert_eq!(decode(&out), "");
+        assert_eq!(read_content(&out), "");
         assert_eq!(out["num_lines"], json!(0));
         assert_eq!(out.get("next_line"), None);
 
@@ -311,7 +304,7 @@ mod tests {
         let out = tool.call(&json!({ "filepath": path, "start_line": 0, "max_lines": 1 }))
             .await
             .unwrap();
-        assert_eq!(decode(&out), "one\n");
+        assert_eq!(read_content(&out), "one\n");
         assert_eq!(out["next_line"], json!(2));
 
         // Invalid arguments and unreadable files are errors.
@@ -337,7 +330,7 @@ mod tests {
         let out = tool.call(&json!({ "filepath": path, "start_line": 1, "max_lines": 1 }))
             .await
             .unwrap();
-        let content = decode(&out);
+        let content = read_content(&out);
         assert_eq!(out["num_lines"], json!(1));
         assert_eq!(
             content,
@@ -352,7 +345,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            decode(&out),
+            read_content(&out),
             format!("{}{TRUNCATION_SUFFIX}\n", long_line(MAX_LINE_BYTES - 2))
         );
 
@@ -361,7 +354,7 @@ mod tests {
         let out = tool.call(&json!({ "filepath": path, "start_line": 1, "max_lines": 1 }))
             .await
             .unwrap();
-        assert_eq!(decode(&out), format!("{}\n", long_line(MAX_LINE_BYTES)));
+        assert_eq!(read_content(&out), format!("{}\n", long_line(MAX_LINE_BYTES)));
     }
 
     #[test]
@@ -420,17 +413,13 @@ mod tests {
         let path = dir.path().join("a.txt").to_string_lossy().into_owned();
 
         let input = json!({ "filepath": path, "start_line": 1, "max_lines": 2 });
-        let output = json!({ "content": BASE64_STANDARD.encode("one\ntwo\n"), "num_lines": 2, "next_line": 3 });
+        let output = json!({ "content": "one\ntwo\n", "num_lines": 2, "next_line": 3 });
         let result = tool.render_to_interface(&input, &output).unwrap();
         assert_eq!(
             result.content,
             vec![
                 ToolOutputContent::Text { text: Cow::Owned("read 2 lines\nnext line: 3".into()) },
-                ToolOutputContent::File {
-                    filepath: Cow::Owned(path.clone()),
-                    data: Cow::Owned(BASE64_STANDARD.encode("one\ntwo\n")),
-                    mime: Cow::Borrowed("text/plain"),
-                },
+                ToolOutputContent::Text { text: Cow::Owned("one\ntwo\n".into()) },
             ]
         );
 
@@ -441,11 +430,7 @@ mod tests {
             result.content,
             vec![
                 ToolOutputContent::Text { text: Cow::Owned("read 2 lines\nreached end of file".into()) },
-                ToolOutputContent::File {
-                    filepath: Cow::Owned(path.clone()),
-                    data: Cow::Owned("".into()),
-                    mime: Cow::Borrowed("text/plain"),
-                },
+                ToolOutputContent::Text { text: Cow::Owned("".into()) },
             ]
         );
 
@@ -456,7 +441,6 @@ mod tests {
             vec![ToolOutputContent::Text { text: Cow::Owned("error: no such file".into()) }]
         );
 
-        assert!(tool.render_to_interface(&json!({}), &output).is_err());
         assert!(tool.render_to_interface(&input, &json!({})).is_err());
     }
 

@@ -146,22 +146,12 @@ enum InputItem<'a> {
 enum RequestOutputContent<'a> {
     #[serde(rename = "input_text")]
     Text { text: &'a str },
-    #[serde(rename = "input_file")]
-    File {
-        filename: &'a str,
-        // File in data URI format
-        file_data: String,
-    },
 }
 
 impl<'a> From<&'a ToolOutputContent<'a>> for RequestOutputContent<'a> {
     fn from(content: &'a ToolOutputContent<'a>) -> Self {
         match content {
             ToolOutputContent::Text { text } => Self::Text { text },
-            ToolOutputContent::File { filepath, data, mime } => Self::File {
-                filename: filepath,
-                file_data: format!("data:{mime};base64,{data}"),
-            },
         }
     }
 }
@@ -1130,16 +1120,9 @@ mod tests {
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_1",
-                    output: vec![
-                        ToolOutputContent::Text {
-                            text: Cow::Borrowed(r#"{"result":3}"#),
-                        },
-                        ToolOutputContent::File {
-                            filepath: Cow::Borrowed("a.txt"),
-                            data: Cow::Borrowed("b25lCnR3bwo="),
-                            mime: Cow::Borrowed("text/plain"),
-                        },
-                    ],
+                    output: vec![ToolOutputContent::Text {
+                        text: Cow::Borrowed(r#"{"result":3}"#),
+                    }],
                 },
             ],
         };
@@ -1167,12 +1150,6 @@ mod tests {
                         {
                             "type": "input_text",
                             "text": r#"{"result":3}"#,
-                        },
-                        {
-                            // file_data must be a data URI, not bare base64
-                            "type": "input_file",
-                            "filename": "a.txt",
-                            "file_data": "data:text/plain;base64,b25lCnR3bwo=",
                         },
                     ],
                 },

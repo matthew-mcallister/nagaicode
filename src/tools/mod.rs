@@ -378,7 +378,7 @@ mod tests {
             output: None,
         };
         assert!(registry.render_to_ui(&pending).is_none());
-        let ToolOutputContent::Text { text } = &registry.render_to_interface(&pending).content[0] else { panic!() };
+        let ToolOutputContent::Text { text } = &registry.render_to_interface(&pending).content[0];
         assert_eq!(text, "tool call interrupted");
     }
 }
