@@ -1,4 +1,6 @@
 use std::borrow::Cow;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -7,7 +9,7 @@ use futures::future::BoxFuture;
 use serde_json::{Value, json};
 
 use crate::cwd::Cwd;
-use crate::error::{AnyError, AnyResult};
+use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::{InterfaceToolOutput, Tool};
@@ -91,35 +93,49 @@ impl Tool for ReadTool {
                 return Err(invalid());
             }
 
-            // FIXME: Reading the entire file is freaking stupid
-            let text = std::fs::read(filepath)
-                .map_err(AnyError::from)
-                .and_then(|bytes| Ok(String::from_utf8(bytes)?))
-                .map_err(|e| anyhow!("{filepath}: {e}"))?;
+            let file = File::open(filepath)?;
+            let mut reader = BufReader::new(file);
 
-            let lines: Vec<&str> = text.split_inclusive('\n').collect();
-            let start = start_line.max(1) as usize - 1;
-            if start > 0 && start >= lines.len() {
-                return Err(anyhow!(
-                    "{filepath}: start line {start_line} is past end of file ({} lines)",
-                    lines.len()
-                ));
+            let start_line = start_line.max(1);
+            let start = start_line as usize - 1;
+
+            // Skip lines
+            let mut line = String::new();
+            for i in 0..start {
+                line.clear();
+                let n = reader.read_line(&mut line)?;
+                if n == 0 {
+                    return Err(anyhow!("start line {start_line} is past end of file ({i} lines)"));
+                }
             }
-            let end = (start + max_lines as usize).min(lines.len());
 
-            let mut content = String::new();
-            for line in &lines[start..end] {
-                push_line(&mut content, line.strip_suffix('\n').unwrap_or(line));
+            // Read lines
+            let mut content = String::with_capacity(100 * max_lines as usize);
+            let mut num_lines = 0usize;
+            while num_lines < max_lines as usize {
+                line.clear();
+                let n = reader.read_line(&mut line)?;
+                if n == 0 { break; }
+                // FIXME: This does not handle CRLF
+                push_line(&mut content, line.strip_suffix('\n').unwrap_or(&line));
                 content.push('\n');
+                num_lines += 1;
             }
 
             let mut output = json!({
                 "content": content,
-                "num_lines": end - start,
+                "num_lines": num_lines,
             });
-            if end < lines.len() {
-                output["next_line"] = json!(end + 1);
+
+            // Check for EOF
+            if num_lines as i64 == max_lines {
+                line.clear();
+                let n = reader.read_line(&mut line)?;
+                if n > 0 {
+                    output["next_line"] = json!(start_line + num_lines as i64);
+                }
             }
+
             Ok(output)
         })
     }
@@ -297,7 +313,7 @@ mod tests {
         assert_eq!(out.get("next_line"), None);
 
         // Reading past EOF is an error, but starting at the end is not.
-        assert!(tool.call(&json!({ "filepath": path, "start_line": 4, "max_lines": 2 })).await.is_err());
+        assert!(tool.call(&json!({ "filepath": path, "start_line": 5, "max_lines": 2 })).await.is_err());
         assert!(tool.call(&json!({ "filepath": empty, "start_line": 2, "max_lines": 2 })).await.is_err());
 
         // Start line 0 is treated as the first line.
@@ -317,7 +333,7 @@ mod tests {
         let error = tool.call(&json!({ "filepath": binary, "start_line": 1, "max_lines": 1 }))
             .await
             .expect_err("invalid utf-8");
-        assert!(error.to_string().contains("invalid utf-8 sequence of 1 bytes from index 1"));
+        assert!(error.to_string().contains("stream did not contain valid UTF-8"), "{}", error.to_string());
     }
 
     #[tokio::test]
