@@ -109,15 +109,20 @@ pub enum ChatMessage<'a> {
 /// Text items are always included; reasoning items are only included when
 /// `include_reasoning` is true, preferring the summary over the raw text.
 ///
-/// Tool calls are rendered as a call/output pair. ToolRegistry handles
-/// fallback for incomplete/failed calls.
+/// Tool calls are rendered as a block of calls followed by a block of outputs,
+/// since some providers expect this format. ToolRegistry handles fallback for
+/// incomplete/failed calls.
 pub fn build_history<'a>(
     tools: &ToolRegistry,
     items: &'a [Item],
     include_reasoning: bool,
 ) -> Vec<ChatMessage<'a>> {
     let mut messages = Vec::with_capacity(items.len());
+    let mut pending_outputs: Vec<ChatMessage<'a>> = Vec::new();
     for item in items {
+        if !matches!(&item.content, ItemContent::ToolCall(_)) {
+            messages.append(&mut pending_outputs);
+        }
         match &item.content {
             ItemContent::UserText(text) => {
                 messages.push(ChatMessage::Message { content: text });
@@ -141,13 +146,14 @@ pub fn build_history<'a>(
                     name: content.tool_name.as_str().into(),
                     arguments: content.args.to_string().into(),
                 });
-                messages.push(ChatMessage::ToolOutput {
+                pending_outputs.push(ChatMessage::ToolOutput {
                     call_id: &content.call_id,
                     output: output.content,
                 });
             }
         }
     }
+    messages.append(&mut pending_outputs);
     messages
 }
 
@@ -413,22 +419,22 @@ mod tests {
                 ChatMessage::Reasoning { content: "summarizing" },
                 ChatMessage::Response { content: "hi there" },
                 sh_call.clone(),
-                sh_output.clone(),
                 ChatMessage::ToolCall {
                     call_id: "call_2",
                     name: Cow::Borrowed("cat"),
                     arguments: r#"{"path":"a.txt"}"#.into(),
                 },
+                ChatMessage::ToolCall {
+                    call_id: "call_3",
+                    name: Cow::Borrowed("sh"),
+                    arguments: r#"{"command":123}"#.into(),
+                },
+                sh_output.clone(),
                 ChatMessage::ToolOutput {
                     call_id: "call_2",
                     output: vec![ToolOutputContent::Text {
                         text: Cow::Borrowed("error: could not parse output"),
                     }],
-                },
-                ChatMessage::ToolCall {
-                    call_id: "call_3",
-                    name: Cow::Borrowed("sh"),
-                    arguments: r#"{"command":123}"#.into(),
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_3",
@@ -445,22 +451,22 @@ mod tests {
                 ChatMessage::Message { content: "hello" },
                 ChatMessage::Response { content: "hi there" },
                 sh_call,
-                sh_output,
                 ChatMessage::ToolCall {
                     call_id: "call_2",
                     name: Cow::Borrowed("cat"),
                     arguments: r#"{"path":"a.txt"}"#.into(),
                 },
+                ChatMessage::ToolCall {
+                    call_id: "call_3",
+                    name: Cow::Borrowed("sh"),
+                    arguments: r#"{"command":123}"#.into(),
+                },
+                sh_output,
                 ChatMessage::ToolOutput {
                     call_id: "call_2",
                     output: vec![ToolOutputContent::Text {
                         text: Cow::Borrowed("error: could not parse output"),
                     }],
-                },
-                ChatMessage::ToolCall {
-                    call_id: "call_3",
-                    name: Cow::Borrowed("sh"),
-                    arguments: r#"{"command":123}"#.into(),
                 },
                 ChatMessage::ToolOutput {
                     call_id: "call_3",
