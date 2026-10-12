@@ -430,7 +430,7 @@ pub fn run_model_command(
             let p = Provider::get_by_name(app.conn(), &provider)?
                 .ok_or_else(|| anyhow!("No provider '{provider}'"))?;
             let m = Model::get(app.conn(), p.id, &model)?
-                .ok_or_else(|| anyhow!("No model '{provider}:{model}''"))?;
+                .ok_or_else(|| anyhow!("No model '{provider}:{model}'"))?;
             app.switch_model(p, m)?;
             Ok(format!("Using '{provider}:{model}'"))
         }
