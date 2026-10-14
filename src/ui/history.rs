@@ -108,13 +108,21 @@ pub struct HistoryItem {
     content: Box<dyn RenderItem>,
     resume_point: ResumePoint,
     item_id: Option<i32>,
-    seqno: Option<i64>,
+    /// Every item either comes from the DB (and has a real seqno) or is
+    /// temporary and inherits the seqno of the most recent item before it.
+    seqno: i64,
+    /// Offset relative to first item with same seqno.
+    seq_offset: u32,
     first_row: Id<HistoryRow>,
     last_row: Id<HistoryRow>,
     num_rows: usize,
 }
 
 impl HistoryItem {
+    fn sort_key(&self) -> (i64, u32) {
+        (self.seqno, self.seq_offset)
+    }
+
     fn render(
         theme: &Theme,
         width: usize,
@@ -157,7 +165,8 @@ impl HistoryItem {
             content,
             resume_point,
             item_id,
-            seqno: None,
+            seqno: 0,
+            seq_offset: 0,
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 0,
@@ -218,6 +227,8 @@ impl DataQuery for HistoryItem {
                 "resume_point": self.query("/resume_point")?,
                 "item_id": self.query("/item_id")?,
                 "seqno": self.query("/seqno")?,
+                "seq_offset": self.query("/seq_offset")?,
+                "sort_key": self.query("/sort_key")?,
                 "first_row": self.query("/first_row")?,
                 "last_row": self.query("/last_row")?,
                 "num_rows": self.query("/num_rows")?,
@@ -226,6 +237,8 @@ impl DataQuery for HistoryItem {
             "resume_point" => Ok(QueryField::DataQuery(&self.resume_point)),
             "item_id" => Ok(QueryField::Value(json!(self.item_id))),
             "seqno" => Ok(QueryField::Value(json!(self.seqno))),
+            "seq_offset" => Ok(QueryField::Value(json!(self.seq_offset))),
+            "sort_key" => Ok(QueryField::Value(json!(self.sort_key()))),
             "first_row" => Ok(QueryField::Value(self.first_row.to_json())),
             "last_row" => Ok(QueryField::Value(self.last_row.to_json())),
             "num_rows" => Ok(QueryField::Value(json!(self.num_rows))),
@@ -311,6 +324,10 @@ impl History {
 
     fn last_row(&self) -> Id<HistoryRow> {
         self.rows[self.head].prev
+    }
+
+    fn last_item(&self) -> Option<Id<HistoryItem>> {
+        (self.num_rows() > 0).then(|| self.rows[self.last_row()].item)
     }
 
     /// Iterate over a range of rows. `prev` is not inclusive; `last` is
@@ -444,6 +461,7 @@ impl History {
                 saved.item_id,
             );
             self.item[id].seqno = saved.seqno;
+            self.item[id].seq_offset = saved.seq_offset;
             if let Some(item_id) = saved.item_id {
                 self.by_item_id.insert(item_id, id);
             }
@@ -455,23 +473,28 @@ impl History {
         self.add_item(content, None, None)
     }
 
-    // TODO: insert tool calls in completion order, not seqno order
+    // TODO: decouple tool calls from tool outputs so they are sorted in
+    // completion order
     fn find_insertion_point(&self, seqno: i64) -> Id<HistoryRow> {
-        // Insert right before the last item with larger seqno, or at the end
+        // Insert after first row with smaller seqno (or at beginning)
         let mut cur = self.last_row();
-        let mut result = cur;
         while cur != self.head {
             let item = &self.item[self.rows[cur].item];
-            cur = self.rows[item.first_row].prev;
-            if let Some(seqno2) = item.seqno {
-                if seqno2 < seqno {
-                    return result;
-                } else {
-                    result = cur;
-                }
+            if item.seqno < seqno {
+                return cur;
             }
+            cur = self.rows[item.first_row].prev;
         }
-        result
+        self.head
+    }
+
+    fn next_sort_key(&self) -> (i64, u32) {
+        if let Some(last) = self.last_item() {
+            let last = &self.item[last];
+            (last.seqno, last.seq_offset + 1)
+        } else {
+            (0, 0)
+        }
     }
 
     fn add_item(
@@ -486,6 +509,11 @@ impl History {
             self.last_row()
         };
 
+        let (seqno, seq_offset) = match seqno {
+            Some(seqno) => (seqno, 0),
+            None => self.next_sort_key(),
+        };
+
         let created_id = HistoryItem::create(
             self.theme,
             &mut self.item,
@@ -496,6 +524,7 @@ impl History {
             item_id,
         );
         self.item[created_id].seqno = seqno;
+        self.item[created_id].seq_offset = seq_offset;
         if let Some(id) = item_id {
             self.by_item_id.insert(id, created_id);
         }
@@ -947,7 +976,8 @@ mod tests {
             content: Box::new(ResponseRenderItem::new("hello")),
             resume_point: ResumePoint { offset: 0, row: 0 },
             item_id: None,
-            seqno: Some(7),
+            seqno: 7,
+            seq_offset: 3,
             first_row: Id::null(),
             last_row: Id::null(),
             num_rows: 0,
@@ -957,6 +987,8 @@ mod tests {
             "resume_point": item.resume_point.query("/").unwrap(),
             "item_id": null,
             "seqno": 7,
+            "seq_offset": 3,
+            "sort_key": [7, 3],
             "first_row": item.first_row.to_json(),
             "last_row": item.last_row.to_json(),
             "num_rows": 0,
@@ -971,6 +1003,8 @@ mod tests {
         );
         assert_eq!(item.query("/item_id").unwrap(), json!(null));
         assert_eq!(item.query("/seqno").unwrap(), json!(7));
+        assert_eq!(item.query("/seq_offset").unwrap(), json!(3));
+        assert_eq!(item.query("/sort_key").unwrap(), json!([7, 3]));
         assert_eq!(item.query("/first_row").unwrap(), item.first_row.to_json());
         assert_eq!(item.query("/last_row").unwrap(), item.last_row.to_json());
         assert_eq!(item.query("/num_rows").unwrap(), json!(0));
@@ -1123,7 +1157,7 @@ mod tests {
             .iter()
             .filter_map(|item| item["seqno"].as_i64())
             .collect();
-        assert_eq!(seqnos, [1, 2, 3]);
+        assert_eq!(seqnos, [0, 1, 2, 3]);
         assert_eq!(item_contents(&h), ["help", "message 1", "message 2", "message 3"]);
 
         // No seqno: append at tail
@@ -1149,6 +1183,28 @@ mod tests {
             item_contents(&h),
             ["help", "message 1", "updated", "message 3", "help", "message 4"]
         );
+    }
+
+    #[test]
+    fn test_sort_key() {
+        let mut h = history(80, 10);
+
+        h.handle_update(Update::HelpMessage("one"));
+        assert_eq!(h.query("/items/0/sort_key").unwrap(), json!([0, 0]));
+
+        h.handle_update(Update::HelpMessage("two"));
+        assert_eq!(h.query("/items/0/sort_key").unwrap(), json!([0, 0]));
+        assert_eq!(h.query("/items/1/sort_key").unwrap(), json!([0, 1]));
+
+        let item = item_with_seqno(1, 5);
+        h.handle_update(Update::ItemCreated { item: &item });
+        assert_eq!(h.query("/items/2/sort_key").unwrap(), json!([5, 0]));
+
+        h.handle_update(Update::HelpMessage("three"));
+        assert_eq!(h.query("/items/3/sort_key").unwrap(), json!([5, 1]));
+
+        assert_eq!(h.query("/items/3/seqno").unwrap(), json!(5));
+        assert_eq!(h.query("/items/3/seq_offset").unwrap(), json!(1));
     }
 
     #[test]
