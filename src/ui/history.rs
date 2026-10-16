@@ -366,12 +366,16 @@ impl History {
         }
     }
 
-    /// O(n) row lookup relative to base row. Returns None if the offset is
-    /// out of bounds.
+    /// O(n) row lookup relative to base row. Returns None if the offset is out
+    /// of bounds (i.e. reaches the list head). Does *not* return None if the
+    /// base is already out of bounds. This means that row_offset() can be used
+    /// to search in the forward or backward direction, but callers may need to
+    /// explicitly check for edge cases where the base can be out of bounds.
     fn row_offset(&self, base: Id<HistoryRow>, offset: isize) -> Option<Id<HistoryRow>> {
         row_offset(&self.rows, self.head, base, offset)
     }
 
+    /// Determines the relative order of two history items based on sort keys.
     fn less_than(&self, item: Id<HistoryItem>, other: Id<HistoryItem>) -> bool {
         self.item[item].sort_key() < self.item[other].sort_key()
     }
@@ -685,6 +689,7 @@ impl History {
     }
 
     fn scroll_down(&mut self, rows: usize) {
+        if self.viewport.bottom == self.head { return; }
         if let Some(bottom) = self.row_offset(self.viewport.bottom, rows as isize) {
             self.set_viewport_bottom_at(bottom, self.viewport.bottom_row + rows);
         } else {
