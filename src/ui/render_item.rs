@@ -32,8 +32,7 @@ pub trait RenderItem: std::fmt::Debug + DataQuery {
 }
 
 macro_rules! string_render_item {
-    ($name:ident, $ty:literal, $doc:literal) => {
-        #[doc = $doc]
+    ($name:ident, $ty:literal) => {
         #[derive(Debug)]
         pub struct $name(String);
 
@@ -60,13 +59,13 @@ macro_rules! string_render_item {
     };
 }
 
-string_render_item!(HelpRenderItem, "help", "Renders help text.");
-string_render_item!(ErrorRenderItem, "error", "Renders an error message.");
-string_render_item!(UserRenderItem, "user", "Renders user input.");
-string_render_item!(ThoughtRenderItem, "thought", "Renders model reasoning.");
-string_render_item!(ResponseRenderItem, "response", "Renders model response text.");
-string_render_item!(CommandPromptRenderItem, "command_prompt", "Renders a command prompt.");
-string_render_item!(CommandOutputRenderItem, "command_output", "Renders command output.");
+string_render_item!(HelpRenderItem, "help");
+string_render_item!(ErrorRenderItem, "error");
+string_render_item!(UserRenderItem, "user");
+string_render_item!(ThoughtRenderItem, "thought");
+string_render_item!(ResponseRenderItem, "response");
+string_render_item!(CommandPromptRenderItem, "command_prompt");
+string_render_item!(CommandOutputRenderItem, "command_output");
 
 impl RenderItem for HelpRenderItem {
     fn render(

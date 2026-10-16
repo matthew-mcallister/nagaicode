@@ -310,11 +310,11 @@ impl History {
 
     fn item_ids(&self) -> Vec<Id<HistoryItem>> {
         let mut items: Vec<Id<HistoryItem>> = Vec::new();
-        for (_, row) in self.iter_range(self.head, self.last_row()) {
-            let item = row.item;
-            if items.last() != Some(&item) {
-                items.push(item);
-            }
+        let mut row = self.first_row();
+        while row != self.head {
+            let item = self.rows[row].item;
+            items.push(item);
+            row = self.rows[self.item[item].last_row].next;
         }
         items
     }
@@ -586,9 +586,11 @@ impl History {
         let item = &self.item[created_id];
         if let Some(bottom_item) = self.bottom_item() {
             if item.sort_key() < self.item[bottom_item].sort_key() {
-                self.viewport.top_row += item.num_rows;
-                self.viewport.bottom_row += item.num_rows;
                 self.viewport.bottom_item_row += item.num_rows;
+                self.set_viewport_bottom_at(
+                    self.viewport.bottom,
+                    self.viewport.bottom_row + item.num_rows,
+                );
             }
         } else {
             self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
@@ -621,7 +623,14 @@ impl History {
 
         // Update viewport
         match self.item[item_id].sort_key().cmp(&self.item[bottom_item].sort_key()) {
-            std::cmp::Ordering::Less => {},
+            std::cmp::Ordering::Less => {
+                let delta = new_num_rows - old_num_rows;
+                self.viewport.bottom_item_row += delta;
+                self.set_viewport_bottom_at(
+                    self.viewport.bottom,
+                    self.viewport.bottom_row + delta,
+                );
+            },
             std::cmp::Ordering::Equal => {
                 let base = self.viewport.bottom_item_row;
                 let offset = self.viewport.bottom_row - base;
@@ -634,11 +643,7 @@ impl History {
                     self.set_viewport_bottom_at(new_bottom, base + offset);
                 }
             },
-            std::cmp::Ordering::Greater => {
-                let delta = new_num_rows - old_num_rows;
-                self.viewport.bottom_row += delta;
-                self.viewport.bottom_item_row += delta;
-            },
+            std::cmp::Ordering::Greater => {},
         }
     }
 
@@ -1027,7 +1032,7 @@ mod tests {
         let mut h = history(80, 4);
 
         // Initial insert
-        add_item(&mut h, 1, 10, &message(9));
+        add_item(&mut h, 2, 2, &message(9));
         assert_eq!(h.num_rows(), 10);
         assert_eq!(h.viewport.top_row, 6);
         assert_eq!(h.viewport.bottom_row, 9);
@@ -1035,18 +1040,44 @@ mod tests {
 
         // Insert below
         h.set_viewport_top(h.first_row());
-        add_item(&mut h, 2, 20, &message(9));
+        add_item(&mut h, 3, 3, &message(9));
         assert_eq!(h.num_rows(), 20);
         assert_eq!(h.viewport.top_row, 0);
         assert_eq!(h.viewport.bottom_row, 3);
         assert_eq!(h.viewport.bottom_item_row, 0);
 
         // Insert above
-        add_item(&mut h, 3, 1, &message(9));
+        add_item(&mut h, 1, 1, &message(9));
         assert_eq!(h.num_rows(), 30);
         assert_eq!(h.viewport.top_row, 10);
         assert_eq!(h.viewport.bottom_row, 13);
         assert_eq!(h.viewport.bottom_item_row, 10);
+    }
+
+    #[test]
+    fn test_viewport_update() {
+        let mut h = history(80, 4);
+        add_item(&mut h, 1, 1, &message(9));
+        add_item(&mut h, 2, 2, &message(9));
+        add_item(&mut h, 3, 3, &message(9));
+        let items = h.item_ids();
+        h.set_viewport_top_at(h.item[items[1]].first_row, 10);
+
+        assert_eq!(h.num_rows(), 30);
+        assert_eq!(h.viewport.top_row, 10);
+        assert_eq!(h.viewport.bottom_row, 13);
+
+        // Update above
+        update_item(&mut h, 0, "- item\n");
+        assert_eq!(h.num_rows(), 31);
+        assert_eq!(h.viewport.top_row, 11);
+        assert_eq!(h.viewport.bottom_row, 14);
+
+        // Update below
+        update_item(&mut h, 2, "- item\n");
+        assert_eq!(h.num_rows(), 32);
+        assert_eq!(h.viewport.top_row, 11);
+        assert_eq!(h.viewport.bottom_row, 14);
     }
 
     #[test]
