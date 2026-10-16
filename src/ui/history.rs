@@ -605,6 +605,8 @@ impl History {
     }
 
     fn update_item(&mut self, item_id: Id<HistoryItem>, content: Box<dyn RenderItem>) {
+        let bottom_item = self.bottom_item().unwrap();
+
         // Update content
         let old_resume_point = self.item[item_id].resume_point;
         let old_num_rows = self.item[item_id].num_rows;
@@ -618,17 +620,18 @@ impl History {
         let new_num_rows = self.item[item_id].num_rows;
 
         // Update viewport
-        let bottom_item = self.bottom_item().unwrap();
         match self.item[item_id].sort_key().cmp(&self.item[bottom_item].sort_key()) {
             std::cmp::Ordering::Less => {},
             std::cmp::Ordering::Equal => {
-                let offset = self.viewport.bottom_row - self.viewport.bottom_item_row;
+                let base = self.viewport.bottom_item_row;
+                let offset = self.viewport.bottom_row - base;
                 if old_resume_point.row <= offset {
                     let offset = offset.min(new_num_rows); // Handle shrinking
                     let last_row = self.item[item_id].last_row;
                     let diff = offset as isize - new_num_rows as isize + 1;
                     // XXX: Maybe walk from first row if it's shorter
-                    self.viewport.bottom = self.row_offset(last_row, diff).unwrap();
+                    let new_bottom = self.row_offset(last_row, diff).unwrap();
+                    self.set_viewport_bottom_at(new_bottom, base + offset);
                 }
             },
             std::cmp::Ordering::Greater => {
@@ -906,15 +909,13 @@ mod tests {
         out
     }
 
-    fn update_item(history: &mut History, id: Id<HistoryItem>, delta: &str) {
-        //let id = history.item.id_at(index);
-        //let theme = history.theme;
-        //let width = history.width;
-        //let mut text = history.item[id].content.query("/value").unwrap()
-        //    .as_str().expect("response value").to_string();
-        //text.push_str(delta);
-        //let content = Box::new(ResponseRenderItem::new(text));
-        //history.item[id].update(theme, &mut history.rows, history.head, width, content);
+    fn update_item(history: &mut History, index: usize, delta: &str) {
+        let id = history.item_ids()[index];
+        let mut text = history.item[id].content.query("/value").unwrap()
+            .as_str().expect("response value").to_string();
+        text.push_str(delta);
+        let content = Box::new(ResponseRenderItem::new(text));
+        history.update_item(id, content);
     }
 
     fn render_draw(history: &History) -> String {
@@ -1050,22 +1051,22 @@ mod tests {
 
     #[test]
     fn test_append() {
-        //let full = "# Title\n\nfirst\n\nsecond\n\nthird";
-        //
-        //let mut incremental = history(20, 20);
-        //incremental.add_content(Box::new(ResponseRenderItem::new("# Title")));
-        //assert_eq!(incremental.num_rows(), 2);
-        //update_item(&mut incremental, 0, "\n\nfirst");
-        //assert_eq!(incremental.num_rows(), 4);
-        //update_item(&mut incremental, 0, "\n\nsecond");
-        //assert_eq!(incremental.num_rows(), 6);
-        //update_item(&mut incremental, 0, "\n\nthird");
-        //assert_eq!(incremental.num_rows(), 8);
-        //
-        //let mut whole = history(20, 20);
-        //whole.add_content(Box::new(ResponseRenderItem::new(full)));
-        //
-        //assert_eq!(render_draw(&incremental), render_draw(&whole));
+        let full = "# Title\n\nfirst\n\nsecond\n\nthird";
+
+        let mut incremental = history(20, 20);
+        incremental.add_content(Box::new(ResponseRenderItem::new("# Title")));
+        assert_eq!(incremental.num_rows(), 2);
+        update_item(&mut incremental, 0, "\n\nfirst");
+        assert_eq!(incremental.num_rows(), 4);
+        update_item(&mut incremental, 0, "\n\nsecond");
+        assert_eq!(incremental.num_rows(), 6);
+        update_item(&mut incremental, 0, "\n\nthird");
+        assert_eq!(incremental.num_rows(), 8);
+
+        let mut whole = history(20, 20);
+        whole.add_content(Box::new(ResponseRenderItem::new(full)));
+
+        assert_eq!(render_draw(&incremental), render_draw(&whole));
     }
 
     #[test]
