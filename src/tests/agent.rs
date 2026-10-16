@@ -320,8 +320,7 @@ async fn test_agent_history() {
         InterfaceId::Openai,
         "sk-test",
         Some("https://example.test/v1"),
-    )
-    .expect("create provider");
+    ).expect("create provider");
     let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
     app.switch_model(provider, model).unwrap();
 

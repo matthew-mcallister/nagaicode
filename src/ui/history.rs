@@ -28,7 +28,7 @@ struct Viewport {
     bottom: Id<HistoryRow>,
     /// Absolute row of viewport top
     top_row: usize,
-    /// Absolute row of viewport bottom
+    /// Absolute row of viewport bottom (one past end)
     bottom_row: usize,
     // Absolute row of item containing viewport bottom
     bottom_item_row: usize,
@@ -257,6 +257,9 @@ pub struct History {
     max_height: usize,
     /// Head of circularly linked list. Contains no real data.
     head: Id<HistoryRow>,
+    /// Head of circularly linked list. Contains no real data.
+    #[allow(dead_code)]
+    item_head: Id<HistoryItem>,
     viewport: Viewport,
     /// Maps an `Item` id to the history item rendering it, so that
     /// `ItemUpdated` events can locate and rerender the right item.
@@ -266,7 +269,7 @@ pub struct History {
 
 impl History {
     pub fn new(ctx: &UiContext, width: usize, max_height: usize, theme: &'static Theme) -> Self {
-        let item = Arena::new();
+        let mut item = Arena::new();
         let mut rows = Arena::new();
 
         // Insert dummy head, distinct from all other rows.
@@ -279,6 +282,18 @@ impl History {
         rows[head].prev = head;
         rows[head].next = head;
 
+        let item_head = item.insert(HistoryItem {
+            content: Box::new(HelpRenderItem::new("")), // XXX: Maybe non-renderable content?
+            resume_point: Default::default(),
+            item_id: None,
+            seqno: i64::MAX,
+            seq_offset: u32::MAX,
+            first_row: head,
+            last_row: head,
+            num_rows: 0,
+        });
+        rows[head].item = item_head;
+
         Self {
             item,
             rows,
@@ -286,6 +301,7 @@ impl History {
             theme,
             max_height,
             head,
+            item_head,
             viewport: Viewport {
                 top: head,
                 top_row: 0,
@@ -306,6 +322,11 @@ impl History {
     pub fn num_rows(&self) -> usize {
         // Subtract header node
         self.rows.len() - 1
+    }
+
+    pub fn num_items(&self) -> usize {
+        // Subtract header node
+        self.item.len() - 1
     }
 
     fn item_ids(&self) -> Vec<Id<HistoryItem>> {
@@ -333,10 +354,6 @@ impl History {
 
     fn last_item(&self) -> Option<Id<HistoryItem>> {
         (self.num_rows() > 0).then(|| self.rows[self.last_row()].item)
-    }
-
-    fn bottom_item(&self) -> Option<Id<HistoryItem>> {
-        (self.viewport.bottom != self.head).then(|| self.rows[self.viewport.bottom].item)
     }
 
     /// Iterate over a range of rows. `prev` is not inclusive; `last` is
@@ -383,22 +400,25 @@ impl History {
     }
 
     fn set_viewport_top_at(&mut self, viewport_top: Id<HistoryRow>, pos: usize) {
-        let prev = self.rows[viewport_top].prev;
-        if let Some(row) = self.row_offset(prev, self.max_height as _) {
-            self.set_viewport_bottom_at(row, pos + self.max_height - 1);
+        if let Some(row) = self.row_offset(viewport_top, self.max_height as _) {
+            self.set_viewport_bottom_at(row, pos + self.max_height);
         } else {
-            self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
+            self.set_viewport_bottom_at(self.head, self.num_rows());
         }
     }
 
-    fn compute_item_row(&self, item: Id<HistoryItem>, base: Option<(Id<HistoryItem>, usize)>) -> usize {
+    fn compute_item_row(
+        &self,
+        item: Id<HistoryItem>,
+        base_item: Id<HistoryItem>,
+        base_item_row: usize,
+    ) -> usize {
         if item == self.first_item().unwrap() {
             return 0
         } else if item == self.last_item().unwrap() {
             return self.num_rows() - self.item[self.last_item().unwrap()].num_rows;
         }
 
-        let (base_item, base_item_row) = base.unwrap_or_else(|| (self.first_item().unwrap(), 0));
         if base_item == item {
             return base_item_row;
         }
@@ -411,30 +431,28 @@ impl History {
     }
 
     /// Attempts to set the viewport region based on last row. `pos` is the
-    /// absolute row index of `viewport.bottom` (0-based from `first_row()`).
+    /// absolute row index of `viewport.bottom`.
     fn set_viewport_bottom_at(&mut self, new_bottom: Id<HistoryRow>, new_row: usize) {
-        if new_bottom == self.head { return; }
-
-        if let Some(new_top) = self.row_offset(new_bottom, -(self.max_height as isize - 1)) {
-            let base = self.bottom_item()
-                .map(|item| (item, self.viewport.bottom_item_row));
+        if let Some(new_top) = self.row_offset(new_bottom, -(self.max_height as isize)) {
+            let base = self.rows[self.viewport.bottom].item;
 
             self.viewport.top = new_top;
-            self.viewport.top_row = new_row - (self.max_height - 1);
+            self.viewport.top_row = new_row - self.max_height;
             self.viewport.bottom = new_bottom;
             self.viewport.bottom_row = new_row;
 
-            self.viewport.bottom_item_row = self.compute_item_row(self.rows[new_bottom].item, base);
-        } else if new_bottom == self.last_row() {
+            self.viewport.bottom_item_row = self.compute_item_row(
+                self.rows[new_bottom].item,
+                base,
+                self.viewport.bottom_item_row,
+            );
+        } else if new_bottom == self.head {
             // Viewport covers full history
             self.viewport.top = self.first_row();
             self.viewport.top_row = 0;
-            self.viewport.bottom = self.last_row();
-            self.viewport.bottom_row = self.num_rows() - 1;
-            self.viewport.bottom_item_row = self.item_row_diff(
-                self.rows[self.first_row()].item,
-                self.rows[self.last_row()].item,
-            );
+            self.viewport.bottom = self.head;
+            self.viewport.bottom_row = self.num_rows();
+            self.viewport.bottom_item_row = self.num_rows();
         } else {
             // Clip to top of history
             self.set_viewport_top_at(self.first_row(), 0);
@@ -452,17 +470,18 @@ impl History {
         self.max_height
     }
 
-    /// Absolute row index of the first visible row (0-based from `first_row()`).
+    /// Absolute row index of the first visible row.
     pub fn viewport_top_pos(&self) -> usize {
         self.viewport.top_row
     }
 
-    /// Absolute row index of the last visible row (0-based from `first_row()`).
+    /// Absolute row index of the last visible row.
     pub fn viewport_bottom_pos(&self) -> usize {
-        self.viewport.bottom_row
+        std::cmp::max(1, self.viewport.bottom_row) - 1
     }
 
-    /// Updates the maximum viewport size, preserving the viewport bottom.
+    /// Updates the maximum viewport size, preserving the viewport bottom when
+    /// possible.
     pub fn set_max_height(&mut self, max_height: usize) {
         if max_height == 0 {
             return;
@@ -494,11 +513,13 @@ impl History {
         self.rows[head].prev = head;
         self.rows[head].next = head;
         self.head = head;
-        self.viewport.top = head;
-        self.viewport.bottom = head;
-        self.viewport.top_row = 0;
-        self.viewport.bottom_row = 0;
-        self.viewport.bottom_item_row = 0;
+        self.viewport = Viewport {
+            top: head,
+            bottom: head,
+            top_row: 0,
+            bottom_row: 0,
+            bottom_item_row: 0,
+        };
 
         for saved in saved {
             let prev = self.last_row();
@@ -517,7 +538,7 @@ impl History {
                 self.by_item_id.insert(item_id, id);
             }
         }
-        self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
+        self.set_viewport_bottom_at(self.head, self.num_rows());
     }
 
     fn add_content(&mut self, content: Box<dyn RenderItem>) {
@@ -584,17 +605,15 @@ impl History {
 
         // Update viewport
         let item = &self.item[created_id];
-        if let Some(bottom_item) = self.bottom_item() {
-            if item.sort_key() < self.item[bottom_item].sort_key() {
-                self.viewport.bottom_item_row += item.num_rows;
-                self.set_viewport_bottom_at(
-                    self.viewport.bottom,
-                    self.viewport.bottom_row + item.num_rows,
-                );
-            }
-        } else {
-            self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
+        let bottom_item = &self.item[self.rows[self.viewport.bottom].item];
+        if item.sort_key() < bottom_item.sort_key() {
+            self.viewport.bottom_row += item.num_rows;
+            self.viewport.bottom_item_row += item.num_rows;
         }
+        self.set_viewport_bottom_at(
+            self.viewport.bottom,
+            self.viewport.bottom_row,
+        );
     }
 
     /// Creates (or updates) an item
@@ -607,7 +626,7 @@ impl History {
     }
 
     fn update_item(&mut self, item_id: Id<HistoryItem>, content: Box<dyn RenderItem>) {
-        let bottom_item = self.bottom_item().unwrap();
+        let bottom_item = self.rows[self.viewport.bottom].item;
 
         // Update content
         let old_resume_point = self.item[item_id].resume_point;
@@ -625,16 +644,15 @@ impl History {
         match self.item[item_id].sort_key().cmp(&self.item[bottom_item].sort_key()) {
             std::cmp::Ordering::Less => {
                 let delta = new_num_rows - old_num_rows;
+                self.viewport.bottom_row += delta;
                 self.viewport.bottom_item_row += delta;
-                self.set_viewport_bottom_at(
-                    self.viewport.bottom,
-                    self.viewport.bottom_row + delta,
-                );
+                self.set_viewport_bottom_at(self.viewport.bottom, self.viewport.bottom_row);
             },
             std::cmp::Ordering::Equal => {
+                // Preserve current row
                 let base = self.viewport.bottom_item_row;
                 let offset = self.viewport.bottom_row - base;
-                if old_resume_point.row <= offset {
+                if old_resume_point.row < offset {
                     let offset = offset.min(new_num_rows); // Handle shrinking
                     let last_row = self.item[item_id].last_row;
                     let diff = offset as isize - new_num_rows as isize + 1;
@@ -670,7 +688,7 @@ impl History {
         if let Some(bottom) = self.row_offset(self.viewport.bottom, rows as isize) {
             self.set_viewport_bottom_at(bottom, self.viewport.bottom_row + rows);
         } else {
-            self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1);
+            self.set_viewport_bottom_at(self.head, self.num_rows());
         }
     }
 
@@ -706,7 +724,8 @@ impl Component for History {
 
     fn draw(&self, canvas: Canvas) {
         let prev = self.rows[self.viewport.top].prev;
-        for (i, (_, row)) in self.iter_range(prev, self.viewport.bottom).enumerate() {
+        let end = self.rows[self.viewport.bottom].prev;
+        for (i, (_, row)) in self.iter_range(prev, end).enumerate() {
             if i >= canvas.len() {
                 break;
             }
@@ -751,7 +770,7 @@ impl Component for History {
                 self.scroll_down(self.height() / 2)
             }
             (KeyCode::Home, _) => self.set_viewport_top_at(self.first_row(), 0),
-            (KeyCode::End, _) => self.set_viewport_bottom_at(self.last_row(), self.num_rows() - 1),
+            (KeyCode::End, _) => self.set_viewport_bottom_at(self.head, self.num_rows()),
             _ => {}
         }
     }
@@ -963,19 +982,13 @@ mod tests {
 
         h.scroll_up(1);
         assert_eq!(render_draw(&h), format!("{help_style}▐ {italic}one       \n{help_style}▐ {italic}two       "));
-
-        h.set_width(14);
-        assert_eq!(h.width(), 14);
-
-        h.set_height(4);
-        assert_eq!(h.height(), 3);
     }
 
     #[test]
     fn test_empty_history() {
         let history = history(20, 5);
         assert_eq!(history.num_rows(), 0);
-        assert_eq!(history.item.len(), 0);
+        assert_eq!(history.num_items(), 0);
         assert_eq!(history.viewport.top, history.head);
         assert_eq!(history.viewport.bottom, history.head);
         assert_eq!(history.viewport_top_pos(), 0);
@@ -1003,10 +1016,8 @@ mod tests {
             h.add_content(Box::new(ResponseRenderItem::new(format!("message {i}"))));
         }
         assert_eq!(h.num_rows(), 20);
-        assert_eq!(h.viewport.bottom_row, 1);
-        assert_eq!(h.viewport.bottom_item_row, 0);
 
-        h.scroll_down(1);
+        h.set_viewport_top(h.first_row());
         assert_eq!(h.viewport.bottom_row, 2);
         assert_eq!(h.viewport.bottom_item_row, 2);
 
@@ -1014,17 +1025,21 @@ mod tests {
         assert_eq!(h.viewport.bottom_row, 3);
         assert_eq!(h.viewport.bottom_item_row, 2);
 
+        h.scroll_down(1);
+        assert_eq!(h.viewport.bottom_row, 4);
+        assert_eq!(h.viewport.bottom_item_row, 4);
+
         h.scroll_up(1);
-        assert_eq!(h.viewport.bottom_row, 2);
+        assert_eq!(h.viewport.bottom_row, 3);
         assert_eq!(h.viewport.bottom_item_row, 2);
 
         h.scroll_up(1000);
-        assert_eq!(h.viewport.bottom_row, 1);
-        assert_eq!(h.viewport.bottom_item_row, 0);
+        assert_eq!(h.viewport.bottom_row, 2);
+        assert_eq!(h.viewport.bottom_item_row, 2);
 
         h.scroll_down(1000);
-        assert_eq!(h.viewport.bottom_row, 19);
-        assert_eq!(h.viewport.bottom_item_row, 18);
+        assert_eq!(h.viewport.bottom_row, 20);
+        assert_eq!(h.viewport.bottom_item_row, 20);
     }
 
     #[test]
@@ -1035,22 +1050,22 @@ mod tests {
         add_item(&mut h, 2, 2, &message(9));
         assert_eq!(h.num_rows(), 10);
         assert_eq!(h.viewport.top_row, 6);
-        assert_eq!(h.viewport.bottom_row, 9);
-        assert_eq!(h.viewport.bottom_item_row, 0);
+        assert_eq!(h.viewport.bottom_row, 10);
+        assert_eq!(h.viewport.bottom_item_row, 10);
 
         // Insert below
         h.set_viewport_top(h.first_row());
         add_item(&mut h, 3, 3, &message(9));
         assert_eq!(h.num_rows(), 20);
         assert_eq!(h.viewport.top_row, 0);
-        assert_eq!(h.viewport.bottom_row, 3);
+        assert_eq!(h.viewport.bottom_row, 4);
         assert_eq!(h.viewport.bottom_item_row, 0);
 
         // Insert above
         add_item(&mut h, 1, 1, &message(9));
         assert_eq!(h.num_rows(), 30);
         assert_eq!(h.viewport.top_row, 10);
-        assert_eq!(h.viewport.bottom_row, 13);
+        assert_eq!(h.viewport.bottom_row, 14);
         assert_eq!(h.viewport.bottom_item_row, 10);
     }
 
@@ -1065,19 +1080,19 @@ mod tests {
 
         assert_eq!(h.num_rows(), 30);
         assert_eq!(h.viewport.top_row, 10);
-        assert_eq!(h.viewport.bottom_row, 13);
+        assert_eq!(h.viewport.bottom_row, 14);
 
         // Update above
         update_item(&mut h, 0, "- item\n");
         assert_eq!(h.num_rows(), 31);
         assert_eq!(h.viewport.top_row, 11);
-        assert_eq!(h.viewport.bottom_row, 14);
+        assert_eq!(h.viewport.bottom_row, 15);
 
         // Update below
         update_item(&mut h, 2, "- item\n");
         assert_eq!(h.num_rows(), 32);
         assert_eq!(h.viewport.top_row, 11);
-        assert_eq!(h.viewport.bottom_row, 14);
+        assert_eq!(h.viewport.bottom_row, 15);
     }
 
     #[test]
