@@ -434,23 +434,19 @@ impl History {
         }
     }
 
-    /// Attempts to set the viewport region based on last row. `pos` is the
-    /// absolute row index of `viewport.bottom`.
-    fn set_viewport_bottom_at(&mut self, new_bottom: Id<HistoryRow>, new_row: usize) {
-        if let Some(new_top) = self.row_offset(new_bottom, -(self.max_height as isize)) {
+    /// Computes viewport extent from bottom row and clips viewport to valid
+    /// range if needed. Also recomputes `bottom_item_row`.
+    fn revalidate_viewport(&mut self) {
+        if let Some(new_top) = self.row_offset(self.viewport.bottom, -(self.max_height as isize)) {
             let base = self.rows[self.viewport.bottom].item;
-
             self.viewport.top = new_top;
-            self.viewport.top_row = new_row - self.max_height;
-            self.viewport.bottom = new_bottom;
-            self.viewport.bottom_row = new_row;
-
+            self.viewport.top_row = self.viewport.bottom_row - self.max_height;
             self.viewport.bottom_item_row = self.compute_item_row(
-                self.rows[new_bottom].item,
+                self.rows[self.viewport.bottom].item,
                 base,
                 self.viewport.bottom_item_row,
             );
-        } else if new_bottom == self.head {
+        } else if self.viewport.bottom == self.head {
             // Viewport covers full history
             self.viewport.top = self.first_row();
             self.viewport.top_row = 0;
@@ -461,6 +457,14 @@ impl History {
             // Clip to top of history
             self.set_viewport_top_at(self.first_row(), 0);
         }
+    }
+
+    /// Sets the viewport region based on desired last row. `pos` is the
+    /// absolute row index of `viewport.bottom`.
+    fn set_viewport_bottom_at(&mut self, new_bottom: Id<HistoryRow>, new_row: usize) {
+        self.viewport.bottom = new_bottom;
+        self.viewport.bottom_row = new_row;
+        self.revalidate_viewport();
     }
 
     /// Slightly inefficient helper for tests
@@ -647,22 +651,23 @@ impl History {
         // Update viewport
         match self.item[item_id].sort_key().cmp(&self.item[bottom_item].sort_key()) {
             std::cmp::Ordering::Less => {
-                let delta = new_num_rows - old_num_rows;
-                self.viewport.bottom_row += delta;
-                self.viewport.bottom_item_row += delta;
-                self.set_viewport_bottom_at(self.viewport.bottom, self.viewport.bottom_row);
+                let delta = new_num_rows as isize - old_num_rows as isize;
+                self.viewport.bottom_row = (self.viewport.bottom_row as isize + delta) as usize;
+                self.viewport.bottom_item_row = (self.viewport.bottom_item_row as isize + delta) as usize;
+                self.revalidate_viewport();
             },
             std::cmp::Ordering::Equal => {
                 // Preserve current row
                 let base = self.viewport.bottom_item_row;
                 let offset = self.viewport.bottom_row - base;
-                if old_resume_point.row < offset {
+                if old_resume_point.row <= offset {
                     let offset = offset.min(new_num_rows); // Handle shrinking
-                    let last_row = self.item[item_id].last_row;
-                    let diff = offset as isize - new_num_rows as isize + 1;
+                    let end = self.rows[self.item[item_id].last_row].next;
+                    let diff = -((new_num_rows - offset) as isize);
                     // XXX: Maybe walk from first row if it's shorter
-                    let new_bottom = self.row_offset(last_row, diff).unwrap();
-                    self.set_viewport_bottom_at(new_bottom, base + offset);
+                    self.viewport.bottom = self.row_offset(end, diff).unwrap();
+                    self.viewport.bottom_row = base + offset;
+                    self.revalidate_viewport();
                 }
             },
             std::cmp::Ordering::Greater => {},
