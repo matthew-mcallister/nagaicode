@@ -25,13 +25,15 @@ use crate::ui::styled_string::StyledString;
 #[derive(Debug)]
 struct Viewport {
     top: Id<HistoryRow>,
-    bottom: Id<HistoryRow>,
     /// Absolute row of viewport top
     top_row: usize,
+    bottom: Id<HistoryRow>,
     /// Absolute row of viewport bottom (one past end)
     bottom_row: usize,
-    // Absolute row of item containing viewport bottom
+    /// Absolute row of item containing viewport bottom
     bottom_item_row: usize,
+    /// Item previously used to calculate bottom_item_row
+    prev_bottom_item: Id<HistoryItem>,
 }
 
 #[derive(Debug)]
@@ -267,6 +269,19 @@ pub struct History {
     tools: Arc<ToolRegistry>,
 }
 
+fn item_head(head: Id<HistoryRow>) -> HistoryItem {
+    HistoryItem {
+        content: Box::new(HelpRenderItem::new("")), // XXX: Maybe non-renderable content?
+        resume_point: Default::default(),
+        item_id: None,
+        seqno: i64::MAX,
+        seq_offset: u32::MAX,
+        first_row: head,
+        last_row: head,
+        num_rows: 0,
+    }
+}
+
 impl History {
     pub fn new(ctx: &UiContext, width: usize, max_height: usize, theme: &'static Theme) -> Self {
         let mut item = Arena::new();
@@ -282,16 +297,7 @@ impl History {
         rows[head].prev = head;
         rows[head].next = head;
 
-        let item_head = item.insert(HistoryItem {
-            content: Box::new(HelpRenderItem::new("")), // XXX: Maybe non-renderable content?
-            resume_point: Default::default(),
-            item_id: None,
-            seqno: i64::MAX,
-            seq_offset: u32::MAX,
-            first_row: head,
-            last_row: head,
-            num_rows: 0,
-        });
+        let item_head = item.insert(item_head(head));
         rows[head].item = item_head;
 
         Self {
@@ -308,6 +314,7 @@ impl History {
                 bottom: head,
                 bottom_row: 0,
                 bottom_item_row: 0,
+                prev_bottom_item: item_head,
             },
             by_item_id: FnvHashMap::default(),
             tools: ctx.tools().clone(),
@@ -435,15 +442,14 @@ impl History {
     }
 
     /// Computes viewport extent from bottom row and clips viewport to valid
-    /// range if needed. Also recomputes `bottom_item_row`.
+    /// range if needed.
     fn revalidate_viewport(&mut self) {
         if let Some(new_top) = self.row_offset(self.viewport.bottom, -(self.max_height as isize)) {
-            let base = self.rows[self.viewport.bottom].item;
             self.viewport.top = new_top;
             self.viewport.top_row = self.viewport.bottom_row - self.max_height;
             self.viewport.bottom_item_row = self.compute_item_row(
                 self.rows[self.viewport.bottom].item,
-                base,
+                self.viewport.prev_bottom_item,
                 self.viewport.bottom_item_row,
             );
         } else if self.viewport.bottom == self.head {
@@ -456,7 +462,9 @@ impl History {
         } else {
             // Clip to top of history
             self.set_viewport_top_at(self.first_row(), 0);
+            return;
         }
+        self.viewport.prev_bottom_item = self.rows[self.viewport.bottom].item;
     }
 
     /// Sets the viewport region based on desired last row. `pos` is the
@@ -521,12 +529,15 @@ impl History {
         self.rows[head].prev = head;
         self.rows[head].next = head;
         self.head = head;
+        let item_head = self.item.insert(item_head(head));
+        self.rows[head].item = item_head;
         self.viewport = Viewport {
             top: head,
-            bottom: head,
             top_row: 0,
+            bottom: head,
             bottom_row: 0,
             bottom_item_row: 0,
+            prev_bottom_item: item_head,
         };
 
         for saved in saved {
@@ -613,15 +624,13 @@ impl History {
 
         // Update viewport
         let item = &self.item[created_id];
-        let bottom_item = &self.item[self.rows[self.viewport.bottom].item];
+        let row = &self.rows[self.viewport.bottom];
+        let bottom_item = &self.item[row.item];
         if item.sort_key() < bottom_item.sort_key() {
             self.viewport.bottom_row += item.num_rows;
             self.viewport.bottom_item_row += item.num_rows;
         }
-        self.set_viewport_bottom_at(
-            self.viewport.bottom,
-            self.viewport.bottom_row,
-        );
+        self.revalidate_viewport();
     }
 
     /// Creates (or updates) an item
@@ -653,6 +662,9 @@ impl History {
             std::cmp::Ordering::Less => {
                 let delta = new_num_rows as isize - old_num_rows as isize;
                 self.viewport.bottom_row = (self.viewport.bottom_row as isize + delta) as usize;
+                // Manual correction to bottom_item_row; revalidate_viewport
+                // will not even write to bottom_item_row here because the
+                // bottom did not move to a different item
                 self.viewport.bottom_item_row = (self.viewport.bottom_item_row as isize + delta) as usize;
                 self.revalidate_viewport();
             },
