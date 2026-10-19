@@ -10,6 +10,7 @@
   - `src/task.rs`: task spawning and lifecycle
   - `src/query.rs`: debug query trait
   - `src/session.rs`: session, turn, and response tables
+  - `src/system_prompt.rs`: system prompt builder
   - `src/item.rs`: item table
   - `src/testing.rs`: unit test helpers
   - `src/tools/`:

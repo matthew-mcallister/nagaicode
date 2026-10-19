@@ -169,6 +169,66 @@ async fn test_app_prompt_agent() {
 }
 
 #[tokio::test]
+async fn test_system_prompt() {
+    let mut app = App::new().unwrap();
+
+    let provider = Provider::create(
+        app.conn(),
+        "test",
+        InterfaceId::Openai,
+        "sk-test",
+        Some("https://example.test/v1"),
+    )
+    .expect("create provider");
+    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    app.switch_model(provider, model).unwrap();
+
+    let agents_md = app.cwd().path().join("AGENTS.md");
+    std::fs::write(&agents_md, "Always answer in lowercase.\n").unwrap();
+
+    let url = "https://example.test/v1/responses";
+    app.client_mut().add_response(
+        url,
+        ResponseData::Sse(QueueStream::from(vec![
+            Ok(SseEvent::Open),
+            Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"delta":"hello."}"#)),
+            Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed"}}"#)),
+            Ok(create_message_event("[DONE]")),
+        ])),
+    );
+
+    for c in "hello".chars() {
+        app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c))))
+            .await;
+    }
+    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
+    app.await_task().await.expect("await agent task");
+    app.process_pending_events().await;
+
+    let requests = app.client_mut().get_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].url().as_str(), url);
+    let body = request_body_value(&requests[0]);
+    let canonical = std::fs::canonicalize(&agents_md).unwrap();
+    assert_eq!(
+        body["input"],
+        json!([
+            {
+                "type": "message",
+                "role": "system",
+                "content": format!(
+                    "Instructions from {}:\nAlways answer in lowercase.\n",
+                    canonical.display(),
+                ),
+            },
+            {"type": "message", "role": "user", "content": "hello"},
+        ])
+    );
+}
+
+#[tokio::test]
 async fn test_agent_stream_error() {
     use crate::item::{Item, ItemContent};
     use crate::session::{Response, Turn, TurnType};

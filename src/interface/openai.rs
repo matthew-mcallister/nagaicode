@@ -199,8 +199,6 @@ struct CreateResponseRequest<'a> {
     model: &'a str,
     input: Vec<InputItem<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    instructions: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<RequestReasoning>,
@@ -215,6 +213,11 @@ impl<'a> CreateResponseRequest<'a> {
             .input
             .iter()
             .map(|msg| match msg {
+                ChatMessage::System { content } => InputItem::Message {
+                    r#type: "message",
+                    role: "system",
+                    content: content.as_ref(),
+                },
                 ChatMessage::Message { content } => InputItem::Message {
                     r#type: "message",
                     role: "user",
@@ -253,18 +256,11 @@ impl<'a> CreateResponseRequest<'a> {
             })
             .collect();
 
-        let instructions = if params.system_prompt.is_empty() {
-            None
-        } else {
-            Some(params.system_prompt)
-        };
-
         let tools = params.tools.iter().map(RequestTool::from).collect();
 
         Self {
             model: params.model_id,
             input,
-            instructions,
             temperature: Some(params.temperature),
             reasoning: params.reasoning_effort.map(|effort| RequestReasoning {
                 effort: effort.into(),
@@ -685,7 +681,7 @@ mod tests {
         let iface = make_iface(client);
         let params = InferenceParams {
             model_id: "gpt-4o",
-            system_prompt: "You are a helpful assistant.",
+            system_prompt_parts: vec!["You are a helpful assistant.".to_owned()],
             temperature: 0.75,
             reasoning_effort: Some(ReasoningEffort::Low),
             tools: vec![
@@ -716,6 +712,9 @@ mod tests {
                 },
             ],
             input: &[
+                ChatMessage::System {
+                    content: "You are a helpful assistant.\n".into(),
+                },
                 ChatMessage::Message { content: "Hello" },
                 ChatMessage::Response {
                     content: "Hi there!",
@@ -809,10 +808,11 @@ mod tests {
         assert_eq!(body["temperature"], 0.75);
         assert_eq!(body["reasoning"]["effort"], "low");
         assert_eq!(body["stream"], true);
-        assert_eq!(body["instructions"], "You are a helpful assistant.");
+        assert!(body.get("instructions").is_none());
         assert_eq!(
             body["input"],
             serde_json::json!([
+                {"type": "message", "role": "system", "content": "You are a helpful assistant.\n"},
                 {"type": "message", "role": "user", "content": "Hello"},
                 {"type": "message", "role": "assistant", "content": "Hi there!"},
                 {"type": "message", "role": "user", "content": "How are you?"}
@@ -866,7 +866,7 @@ mod tests {
         let iface = make_iface(client);
         let params = InferenceParams {
             model_id: "test-model",
-            system_prompt: "",
+            system_prompt_parts: vec![],
             temperature: 0.0,
             reasoning_effort: None,
             tools: vec![],
@@ -917,7 +917,7 @@ mod tests {
         let iface = make_iface(client);
         let params = InferenceParams {
             model_id: "test-model",
-            system_prompt: "",
+            system_prompt_parts: vec![],
             temperature: 0.0,
             reasoning_effort: None,
             tools: vec![],
@@ -1026,7 +1026,7 @@ mod tests {
         let iface = make_iface(client);
         let params = InferenceParams {
             model_id: "test-model",
-            system_prompt: "",
+            system_prompt_parts: vec![],
             temperature: 0.0,
             reasoning_effort: None,
             tools: vec![],
@@ -1108,7 +1108,7 @@ mod tests {
         let iface = make_iface(client);
         let params = InferenceParams {
             model_id: "test-model",
-            system_prompt: "",
+            system_prompt_parts: vec![],
             temperature: 0.0,
             reasoning_effort: None,
             tools: vec![],
@@ -1168,7 +1168,7 @@ mod tests {
 
         let params = InferenceParams {
             model_id: "test-model",
-            system_prompt: "",
+            system_prompt_parts: vec![],
             temperature: 0.0,
             reasoning_effort: None,
             tools: vec![],
@@ -1190,7 +1190,7 @@ mod tests {
 
         let params = InferenceParams {
             model_id: "test-model",
-            system_prompt: "",
+            system_prompt_parts: vec![],
             temperature: 0.0,
             reasoning_effort: None,
             tools: vec![],

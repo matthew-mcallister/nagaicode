@@ -82,6 +82,7 @@ pub enum ToolOutputContent<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChatMessage<'a> {
+    System { content: Cow<'a, str> },
     /// A user prompt.
     Message { content: &'a str },
     /// A visible assistant response.
@@ -114,10 +115,16 @@ pub enum ChatMessage<'a> {
 /// incomplete/failed calls.
 pub fn build_history<'a>(
     tools: &ToolRegistry,
+    system_prompt_parts: &[String],
     items: &'a [Item],
     include_reasoning: bool,
 ) -> Vec<ChatMessage<'a>> {
-    let mut messages = Vec::with_capacity(items.len());
+    let mut messages = Vec::with_capacity(items.len() + 1);
+    if !system_prompt_parts.is_empty() {
+        messages.push(ChatMessage::System {
+            content: concat_parts(system_prompt_parts).into(),
+        });
+    }
     let mut pending_outputs: Vec<ChatMessage<'a>> = Vec::new();
     for item in items {
         if !matches!(&item.content, ItemContent::ToolCall(_)) {
@@ -157,6 +164,24 @@ pub fn build_history<'a>(
     messages
 }
 
+fn concat_parts(parts: &[String]) -> String {
+    parts
+        .iter()
+        .map(|part| ensure_newline(part))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn ensure_newline(part: &str) -> String {
+    if part.ends_with('\n') {
+        part.to_owned()
+    } else {
+        let mut part = part.to_owned();
+        part.push('\n');
+        part
+    }
+}
+
 /// Describes a tool in human- and model-readable format.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolInfo {
@@ -169,7 +194,7 @@ pub struct ToolInfo {
 #[derive(Clone, Debug, PartialEq)]
 pub struct InferenceParams<'a> {
     pub model_id: &'a str,
-    pub system_prompt: &'a str,
+    pub system_prompt_parts: Vec<String>,
     pub temperature: f32,
     /// Reasoning effort. `Some(ReasoningEffort::None)` means *no* reasoning,
     /// while `None` means *default* reasoning.
@@ -413,7 +438,7 @@ mod tests {
         };
 
         assert_eq!(
-            build_history(&registry, &items, true),
+            build_history(&registry, &[], &items, true),
             vec![
                 ChatMessage::Message { content: "hello" },
                 ChatMessage::Reasoning { content: "summarizing" },
@@ -446,7 +471,7 @@ mod tests {
         );
 
         assert_eq!(
-            build_history(&registry, &items, false),
+            build_history(&registry, &[], &items, false),
             vec![
                 ChatMessage::Message { content: "hello" },
                 ChatMessage::Response { content: "hi there" },

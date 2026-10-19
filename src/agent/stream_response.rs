@@ -6,6 +6,7 @@ use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::Session;
+use crate::system_prompt::build_system_prompt;
 use crate::task::{Task, TaskContext};
 
 pub struct StreamResponse {
@@ -38,14 +39,16 @@ impl StreamResponse {
         let interface = self.provider.create_interface(&self.client)?;
 
         let history = Item::list_by_session(context.connection()?, self.session.id)?;
+        let system_prompt_parts = build_system_prompt(context.cwd())?;
         let messages = build_history(
             context.tool_registry(),
+            &system_prompt_parts,
             &history,
             interface.supports_reasoning_input(),
         );
         let params = InferenceParams {
             model_id: &self.model.id,
-            system_prompt: "",
+            system_prompt_parts,
             temperature: 1.0,
             reasoning_effort: None,
             tools: context.tool_registry().list_tool_infos(),

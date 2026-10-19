@@ -17,6 +17,7 @@ pub mod request;
 pub mod schema;
 pub mod session;
 pub mod settings;
+pub mod system_prompt;
 pub mod task;
 pub mod terminal;
 pub mod testing;
