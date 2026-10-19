@@ -340,7 +340,7 @@ impl App {
         if let Some(session) = &self.session {
             return Ok(session.clone());
         }
-        // TODO: asynchronously overwrite with a model-generated name
+        // TODO?: asynchronously overwrite with a model-generated name
         let session = Session::create(&mut self.conn, name)?;
         self.session = Some(session.clone());
         Ok(session)

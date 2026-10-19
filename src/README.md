@@ -38,12 +38,10 @@ persistence.
 
 ## Rendering
 
-The rendering code is a bit rough but is functional and row-based: each
-component is a rectangle and "renders" itself by returning a list of rows to
-display. Each row is a formatted sequence of text and terminal commands which
-must be the exact width expected by the parent. Components must always be the
-exact width expected by the parent, but parents have the option to accommodate
-variable-height children.
+Rendering code is row-based: each component is given rectangular dimensions by
+its parent and it renders itself by writing to a Canvas, which is a slice of
+StyledString rows. Each component is responsible for filling its given
+dimensions exactly.
 
 ## Async
 
