@@ -20,7 +20,7 @@ pub struct Chat {
 
 impl Chat {
     pub fn new(ctx: &UiContext, w: u16, h: u16, theme: &'static Theme) -> Self {
-        // Minimum dimensions are 80x24. If the terminal is smaller the UI will
+        // Minimum dimensions are 80x28. If the terminal is smaller the UI will
         // just overflow the screen. This helps avoid crashes or bizarre bugs
         // caused by pathologically tiny terminals.
         let w = w.max(80);
@@ -30,7 +30,7 @@ impl Chat {
             ctx,
             w as usize - 4,
             h as usize - 2,
-            TEXT_INPUT_MAX_HEIGHT.min(h.saturating_sub(2)) as usize,
+            TEXT_INPUT_MAX_HEIGHT.min(h.saturating_sub(14)) as usize,
             theme,
         );
 
