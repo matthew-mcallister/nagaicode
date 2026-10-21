@@ -12,6 +12,9 @@ use crate::ui::history_view;
 use crate::ui::history_view::HistoryView;
 use crate::ui::style::Theme;
 
+const INPUT_MAX_HEIGHT: usize = 24;
+const HISTORY_MIN_HEIGHT: usize = 11;
+
 /// Which child of `StackedView` currently receives keyboard input.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
 pub enum FocusState {
@@ -44,23 +47,21 @@ pub struct StackedView {
 }
 
 impl StackedView {
-    pub fn new(
-        ctx: &UiContext,
-        width: usize,
-        height: usize,
-        input_max_height: usize,
-        theme: &'static Theme,
-    ) -> Self {
+    pub fn new(ctx: &UiContext, width: usize, height: usize, theme: &'static Theme) -> Self {
         let mut this = Self {
             width,
             height,
             history: HistoryView::new(ctx, width, 0, theme),
-            input: CommandEditor::new(width, input_max_height, theme),
+            input: CommandEditor::new(width, Self::input_max_height(height), theme),
             focus_state: FocusState::default(),
         };
         this.resize(); // Compute history height
         this.focus_child();
         this
+    }
+
+    fn input_max_height(height: usize) -> usize {
+        INPUT_MAX_HEIGHT.min(height.saturating_sub(HISTORY_MIN_HEIGHT + 1))
     }
 
     pub fn input_mut(&mut self) -> &mut CommandEditor {
@@ -161,6 +162,7 @@ impl Component for StackedView {
 
     fn set_height(&mut self, height: usize) {
         self.height = height;
+        self.input.set_max_height(Self::input_max_height(height));
         self.resize();
     }
 
@@ -254,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let stacked = StackedView::new(&crate::testing::ui_context(), 80, 24, 8, &THEME_DARK);
+        let stacked = StackedView::new(&crate::testing::ui_context(), 80, 24, &THEME_DARK);
         let expected = json!({
             "width": 80,
             "height": 24,

@@ -49,6 +49,10 @@ impl CommandEditor {
         self.input.inner_mut()
     }
 
+    pub fn set_max_height(&mut self, max_height: usize) {
+        self.set_height(max_height);
+    }
+
     /// Syncs the scroll bar with the current state of the input box.
     // XXX: This is kind of a kludge to handle the way StackedView allows the
     // input box to set its own height

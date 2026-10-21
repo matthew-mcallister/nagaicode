@@ -542,7 +542,6 @@ impl InputBox {
         self.viewport_bottom_pos
     }
 
-    #[allow(dead_code)]
     /// Updates the maximum viewport size
     pub fn set_max_height(&mut self, max_height: usize) {
         assert!(max_height > 0);

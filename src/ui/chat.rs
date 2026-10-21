@@ -11,7 +11,8 @@ use crate::ui::padded::Padded;
 use crate::ui::stacked_view::{self, StackedView};
 use crate::ui::style::Theme;
 
-const TEXT_INPUT_MAX_HEIGHT: u16 = 24;
+const MIN_WIDTH: u16 = 80;
+const MIN_HEIGHT: u16 = 24;
 
 #[derive(Debug)]
 pub struct Chat {
@@ -23,16 +24,10 @@ impl Chat {
         // Minimum dimensions are 80x28. If the terminal is smaller the UI will
         // just overflow the screen. This helps avoid crashes or bizarre bugs
         // caused by pathologically tiny terminals.
-        let w = w.max(80);
-        let h = h.max(24);
+        let w = w.max(MIN_WIDTH);
+        let h = h.max(MIN_HEIGHT);
 
-        let stacked = StackedView::new(
-            ctx,
-            w as usize - 4,
-            h as usize - 2,
-            TEXT_INPUT_MAX_HEIGHT.min(h.saturating_sub(14)) as usize,
-            theme,
-        );
+        let stacked = StackedView::new(ctx, w as usize - 4, h as usize - 2, theme);
 
         Self {
             stacked: Padded::new(stacked, 2, 1, Some(theme.bg_base)),
@@ -40,6 +35,8 @@ impl Chat {
     }
 
     pub fn resize(&mut self, w: u16, h: u16) {
+        let w = w.max(MIN_WIDTH);
+        let h = h.max(MIN_HEIGHT);
         self.stacked.set_width(w as usize);
         self.stacked.set_height(h as usize);
     }
