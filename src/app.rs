@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use crossterm::cursor::{Hide, MoveTo, Show};
@@ -13,9 +14,11 @@ use crossterm::terminal::{
 use diesel::SqliteConnection;
 use dedent::dedent;
 use fnv::FnvHashSet;
-use futures::StreamExt;
+use futures::{StreamExt, pin_mut};
 use serde_json::json;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::time::Instant;
 
 use crate::agent::Agent;
 use crate::command::Command;
@@ -40,6 +43,9 @@ use crate::ui::UiContext;
 use crate::ui::style::{THEME_DARK, Theme};
 use crate::ui::styled_string::StyledString;
 use crate::ui::text::truncate_line;
+use crate::util::poll;
+
+const EVENT_PUMP_TIMEOUT: Duration = Duration::from_millis(5);
 
 const WELCOME: &str = dedent!(
     "
@@ -88,7 +94,7 @@ pub enum AppEvent {
 #[derive(Debug)]
 enum Poll {
     Input(crossterm::event::Event),
-    Event(Box<AppEvent>),
+    Event(AppEvent),
 }
 
 pub struct App {
@@ -270,6 +276,36 @@ impl App {
         }
     }
 
+    /// Handles a polled terminal input or app event.
+    async fn handle_poll(&mut self, poll: Poll) {
+        match poll {
+            Poll::Input(event) => self.handle_input(event).await,
+            Poll::Event(event) => self.process_event(event).await,
+        }
+    }
+
+    /// Waits for the next terminal input or app event.
+    async fn wait_for_event(&mut self) -> AnyResult<Poll> {
+        tokio::select! {
+            input = self.terminal.events().next() => Ok(Poll::Input(input.unwrap()?)),
+            event = self.recv.recv() => Ok(Poll::Event(event.unwrap())),
+        }
+    }
+
+    /// Returns a terminal input or app event if one is immediately available.
+    async fn poll_event(&mut self) -> AnyResult<Option<Poll>> {
+        let events = self.terminal.events();
+        pin_mut!(events);
+        if let std::task::Poll::Ready(Some(input)) = poll(events).await? {
+            return Ok(Some(Poll::Input(input)));
+        }
+        match self.recv.try_recv() {
+            Ok(event) => Ok(Some(Poll::Event(event))),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(anyhow!("app event channel closed")),
+        }
+    }
+
     /// Returns whether the app has received a quit signal.
     pub fn quit(&self) -> bool {
         self.quit
@@ -280,9 +316,29 @@ impl App {
         self.spawn_background(RevalidateModelsTask);
     }
 
+    async fn run_event_loop(&mut self) -> AnyResult<()> {
+        'top: while !self.quit {
+            self.render()?;
+
+            let poll = self.wait_for_event().await?;
+            self.handle_poll(poll).await;
+
+            'outer: loop {
+                let deadline = Instant::now() + EVENT_PUMP_TIMEOUT;
+                loop {
+                    if self.quit { break 'top; }
+                    let Some(poll) = self.poll_event().await? else { break 'outer };
+                    self.handle_poll(poll).await;
+                    if Instant::now() >= deadline { break; }
+                }
+                self.render()?;
+            }
+        }
+        Ok(())
+    }
+
     /// Runs the main event loop.
     pub async fn run(&mut self) -> AnyResult<()> {
-        self.spawn_revalidate_models();
         self.terminal.enable_raw_mode()?;
         execute!(
             self.terminal.stdout(),
@@ -290,20 +346,9 @@ impl App {
             DisableLineWrap
         )?;
 
-        while !self.quit {
-            self.render()?;
-            let poll = tokio::select! {
-                input = self.terminal.events().next() => {
-                    Poll::Input(input.ok_or_else(|| std::io::Error::other("terminal stream closed"))??)
-                }
-                event = self.recv.recv() => Poll::Event(Box::new(event.expect("channel closed"))),
-            };
-            match poll {
-                Poll::Input(event) => self.handle_input(event).await,
-                Poll::Event(event) => self.process_event(*event).await,
-            }
-        }
+        self.run_event_loop().await?;
 
+        // FIXME: This teardown code should run after uncaught errors and panics
         execute!(self.terminal.stdout(), EnableLineWrap, LeaveAlternateScreen)?;
         self.terminal.disable_raw_mode()?;
 
