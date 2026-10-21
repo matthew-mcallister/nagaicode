@@ -514,7 +514,14 @@ fn list(flow: &mut FlowBuilder<'_>, list: &List) {
 
         match child {
             Node::ListItem(item) => {
-                push_flow_children(flow, item.spread, &item.children);
+                if item.children.is_empty() {
+                    push_phrasing(flow, &[Node::Text(Text {
+                        value: String::new(),
+                        position: None,
+                    })]);
+                } else {
+                    push_flow_children(flow, item.spread, &item.children);
+                }
             }
             other => {
                 push_flow_node(flow, other);
@@ -652,7 +659,9 @@ pub fn render_mdast(
 }
 
 #[cfg(test)]
-mod test_paragraph {
+mod tests {
+    use super::*;
+
     use crate::ui::canvas::render_canvas;
     use crate::ui::style::{Style, THEME_DARK, UpdateStyle};
     use crate::ui::style::testing::{ResetBold, ResetItalic, SetBold, SetItalic};
@@ -989,12 +998,6 @@ mod test_paragraph {
             }
         );
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
 
     #[test]
     fn test_query() {
@@ -1003,5 +1006,12 @@ mod tests {
         assert_eq!(rp.query("/").unwrap(), expected);
         assert_eq!(rp.query("/offset").unwrap(), json!(1));
         assert_eq!(rp.query("/row").unwrap(), json!(2));
+    }
+
+    #[test]
+    fn test_list_empty_items() {
+        let base = THEME_DARK.base_style();
+        let res = render("1.\n1.\n1.\n", 10);
+        assert_eq!(res, format!("{base}1.        \n{base}2.        \n{base}3.        "));
     }
 }
