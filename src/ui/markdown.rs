@@ -672,6 +672,22 @@ mod tests {
         render_canvas(&mut result.rows[..])
     }
 
+    fn render_incremental(chunks: &[&str], width: usize) -> String {
+        let mut source = String::new();
+        let mut rows = Vec::new();
+        let mut resume = ResumePoint::default();
+
+        for chunk in chunks {
+            source.push_str(chunk);
+            let result = super::render_markdown(&THEME_DARK, width, &source[resume.offset..]);
+            rows.truncate(resume.row);
+            rows.extend(result.rows);
+            resume = resume.add(result.resume_point);
+        }
+
+        render_canvas(&mut rows[..])
+    }
+
     #[test]
     fn plain() {
         let base = THEME_DARK.base_style();
@@ -1013,5 +1029,20 @@ mod tests {
         let base = THEME_DARK.base_style();
         let res = render("1.\n1.\n1.\n", 10);
         assert_eq!(res, format!("{base}1.        \n{base}2.        \n{base}3.        "));
+    }
+
+    #[test]
+    fn incremental_ordered_list() {
+        let base = THEME_DARK.base_style();
+        let chunks = ["1. ", "a\n", "2. ", "b\n"];
+        assert_eq!(
+            render_incremental(&chunks, 10),
+            format!("{base}1. a      \n{base}2. b      "),
+        );
+        let chunks = ["1.", " a\n", "2.", " b\n"];
+        assert_eq!(
+            render_incremental(&chunks, 10),
+            format!("{base}1. a      \n{base}2. b      "),
+        );
     }
 }
