@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent};
 use fnv::FnvHashMap;
 use serde_json::{Value, json};
 
@@ -779,20 +779,19 @@ impl Component for History {
     }
 
     fn handle_input(&mut self, event: Event) -> Self::Event {
-        let KeyEvent { code, modifiers, .. } = match event {
+        let KeyEvent { code, .. } = match event {
             Event::Key(key) => key,
             _ => return,
         };
-        let alt = modifiers.contains(KeyModifiers::ALT);
-        match (code, alt) {
-            (KeyCode::Up, _) => self.scroll_up(1),
-            (KeyCode::Down, _) => self.scroll_down(1),
-            (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => self.scroll_up(self.height() / 2),
-            (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => {
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_up(1),
+            KeyCode::Down | KeyCode::Char('j') => self.scroll_down(1),
+            KeyCode::PageUp | KeyCode::Char('u') => self.scroll_up(self.height() / 2),
+            KeyCode::PageDown | KeyCode::Char('d') => {
                 self.scroll_down(self.height() / 2)
             }
-            (KeyCode::Home, _) => self.set_viewport_top_at(self.first_row(), 0),
-            (KeyCode::End, _) => self.set_viewport_bottom_at(self.head, self.num_rows()),
+            KeyCode::Home | KeyCode::Char('U') | KeyCode::Char('g') => self.set_viewport_top_at(self.first_row(), 0),
+            KeyCode::End | KeyCode::Char('D') | KeyCode::Char('G') => self.set_viewport_bottom_at(self.head, self.num_rows()),
             _ => {}
         }
     }
