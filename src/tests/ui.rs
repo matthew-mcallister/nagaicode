@@ -194,6 +194,21 @@ async fn test_app_provider_rm_resets_selected_model() {
     assert_eq!(app.selected_model().map(|(_, m)| m.id.as_str()), Some("gpt-5"));
 }
 
+#[tokio::test]
+async fn test_app_provider_rm_deletes_models() {
+    let mut app = App::new().unwrap();
+
+    let provider = Provider::create(app.conn(), "test", InterfaceId::Openai, "key", None).unwrap();
+    let other = Provider::create(app.conn(), "other", InterfaceId::Openai, "key", None).unwrap();
+    Model::create(app.conn(), provider.id, "gpt-4").unwrap();
+    Model::create(app.conn(), other.id, "gpt-5").unwrap();
+
+    app.process_command("/provider rm test").await.unwrap();
+
+    assert!(Model::get(app.conn(), provider.id, "gpt-4").unwrap().is_none());
+    assert!(Model::get(app.conn(), other.id, "gpt-5").unwrap().is_some());
+}
+
 /// Runs `!command` and waits for its output to reach the UI.
 async fn run_bang(app: &mut App, command: &str) {
     app.process_command(command).await.unwrap();

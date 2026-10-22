@@ -204,7 +204,6 @@ impl App {
         }
         self.settings.set_current_model(None)?;
         self.selected_model = None;
-        // TODO: Delete models from table
         Ok(())
     }
 
