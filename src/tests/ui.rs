@@ -1,6 +1,8 @@
+// TODO: All inputs should go through the mock terminal and not call
+// App::handle_input() or App::process_event() directly.
 use std::sync::Arc;
 
-use crossterm::event::{Event, KeyCode, KeyEvent};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use serde_json::json;
 
 use crate::app::{App, AppEvent};
@@ -58,6 +60,60 @@ async fn test_app_e2e() {
         .await;
 
     assert!(app.quit());
+}
+
+async fn press(app: &mut App, code: KeyCode) {
+    app.handle_input(Event::Key(KeyEvent::from(code))).await;
+}
+
+async fn type_text(app: &mut App, text: &str) {
+    for c in text.chars() {
+        press(app, KeyCode::Char(c)).await;
+    }
+}
+
+async fn submit(app: &mut App, text: &str) {
+    type_text(app, text).await;
+    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)))
+        .await;
+}
+
+fn editor_text(app: &App) -> String {
+    app.query("/chat/stacked/inner/input/input/inner/text")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .trim_end_matches('\n')
+        .to_owned()
+}
+
+#[tokio::test]
+async fn test_app_command_history() {
+    let mut app = App::new().unwrap();
+
+    submit(&mut app, "first").await;
+    submit(&mut app, "second").await;
+    type_text(&mut app, "third").await;
+
+    press(&mut app, KeyCode::Home).await;
+    press(&mut app, KeyCode::Up).await;
+    assert_eq!(editor_text(&app), "second");
+
+    press(&mut app, KeyCode::Up).await;
+    assert_eq!(editor_text(&app), "first");
+
+    press(&mut app, KeyCode::Up).await;
+    assert_eq!(editor_text(&app), "first");
+
+    press(&mut app, KeyCode::End).await;
+    press(&mut app, KeyCode::Down).await;
+    assert_eq!(editor_text(&app), "second");
+
+    press(&mut app, KeyCode::Down).await;
+    assert_eq!(editor_text(&app), "third");
+
+    press(&mut app, KeyCode::Down).await;
+    assert_eq!(editor_text(&app), "third");
 }
 
 /// Counts "Interrupted." help messages in the chat history.
