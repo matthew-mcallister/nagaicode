@@ -1,5 +1,3 @@
-use futures::future::join_all;
-
 use crate::app::AppEvent;
 use crate::error::AnyResult;
 use crate::item::Item;
@@ -65,14 +63,10 @@ impl Agent {
                 return Ok(());
             }
 
-            let executions: Vec<_> = tool_calls
-                .into_iter()
-                .map(|tool_call| {
-                    Box::pin(context.subtask(ExecuteToolCall::new(tool_call)))
-                })
-                .collect();
-            for result in join_all(executions).await {
-                result?;
+            // Originally these executed in parallel but some models seem to
+            // assume sequential execution
+            for tool_call in tool_calls {
+                context.subtask(ExecuteToolCall::new(tool_call)).await?;
             }
         }
     }
