@@ -1,6 +1,16 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    command_history_item (id) {
+        id -> Integer,
+        session_id -> Nullable<Integer>,
+        text -> Text,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     item (id) {
         id -> Integer,
         session_id -> Integer,
@@ -105,6 +115,7 @@ diesel::joinable!(response -> turn (turn_id));
 diesel::joinable!(turn -> session (session_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    command_history_item,
     item,
     model,
     provider,

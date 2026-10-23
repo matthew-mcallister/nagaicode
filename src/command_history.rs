@@ -1,6 +1,53 @@
+use chrono::NaiveDateTime;
+use diesel::prelude::*;
+use diesel::sqlite::SqliteConnection;
 use serde_json::json;
 
+use crate::error::AnyResult;
 use crate::query::{DataQuery, QueryError, QueryField};
+use crate::schema::command_history_item;
+
+#[derive(Debug, Clone, Queryable, Selectable)]
+#[diesel(table_name = command_history_item)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+pub struct CommandHistoryItem {
+    pub id: i32,
+    pub session_id: Option<i32>,
+    pub text: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Insertable)]
+#[diesel(table_name = command_history_item)]
+pub struct NewCommandHistoryItem<'a> {
+    pub session_id: Option<i32>,
+    pub text: &'a str,
+}
+
+impl CommandHistoryItem {
+    pub fn create(
+        conn: &mut SqliteConnection,
+        session_id: Option<i32>,
+        text: &str,
+    ) -> AnyResult<CommandHistoryItem> {
+        let new = NewCommandHistoryItem { session_id, text };
+        let item = diesel::insert_into(command_history_item::table)
+            .values(&new)
+            .returning(command_history_item::all_columns)
+            .get_result(conn)?;
+        Ok(item)
+    }
+
+    /// Returns the `n` most recent items, oldest first.
+    pub fn recent(conn: &mut SqliteConnection, n: i64) -> AnyResult<Vec<CommandHistoryItem>> {
+        let items = command_history_item::table
+            .order(command_history_item::id.desc())
+            .limit(n)
+            .load::<CommandHistoryItem>(conn)?;
+        Ok(items.into_iter().rev().collect())
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct CommandHistory {
@@ -99,6 +146,32 @@ impl DataQuery for CommandHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_command_history_item() {
+        let mut conn = crate::db::open_new().unwrap();
+
+        let first = CommandHistoryItem::create(&mut conn, None, "foo").unwrap();
+        assert_eq!(first.text, "foo");
+        assert_eq!(first.session_id, None);
+        CommandHistoryItem::create(&mut conn, Some(1), "bar").unwrap();
+        CommandHistoryItem::create(&mut conn, Some(1), "baz").unwrap();
+
+        let recent = CommandHistoryItem::recent(&mut conn, 2).unwrap();
+        assert_eq!(
+            recent.iter().map(|item| item.text.as_str()).collect::<Vec<_>>(),
+            ["bar", "baz"]
+        );
+        assert_eq!(recent[1].session_id, Some(1));
+
+        let all = CommandHistoryItem::recent(&mut conn, 10).unwrap();
+        assert_eq!(
+            all.iter().map(|item| item.text.as_str()).collect::<Vec<_>>(),
+            ["foo", "bar", "baz"]
+        );
+
+        assert!(CommandHistoryItem::recent(&mut conn, 0).unwrap().is_empty());
+    }
 
     #[test]
     fn test_push_skips_blank_and_repeated_commands() {
