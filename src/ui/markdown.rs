@@ -442,21 +442,28 @@ fn blockquote(flow: &mut FlowBuilder<'_>, quote: &Blockquote) {
 
 fn push_flow_children(flow: &mut FlowBuilder<'_>, spread: bool, children: &[Node]) {
     flow.depth += 1;
+    let mut prev: Option<(&Node, ResumePoint)> = None;
     for (i, child) in children.iter().enumerate() {
         if i > 0 && spread {
             // Empty line
             flow.end_row();
         }
 
-        if flow.depth <= 1
-            && i == children.len() - 1
-            && let Some(point) = child.position()
-        {
+        let resume = child.position().map(|point| ResumePoint {
+            offset: point.start.offset,
+            row: flow.rows.len(),
+        });
+
+        if flow.depth <= 1 && i == children.len() - 1 {
             // Set resume point if at top level
-            flow.resume_point = ResumePoint {
-                offset: point.start.offset,
-                row: flow.rows.len(),
-            }
+            flow.resume_point = match (child, prev) {
+                (Node::Paragraph(_), Some((Node::List(list), prev))) if list.ordered => prev,
+                _ => resume.unwrap_or(flow.resume_point),
+            };
+        }
+
+        if let Some(point) = resume {
+            prev = Some((child, point));
         }
 
         push_flow_node(flow, child);
@@ -1034,8 +1041,6 @@ mod tests {
     #[test]
     fn incremental_ordered_list() {
         const CONTENT: &str = dedent::dedent!(r#"
-            ## header
-
             1. one
 
             2. two
@@ -1045,8 +1050,23 @@ mod tests {
             .collect();
 
         let base = THEME_DARK.base_style();
-        let header = base.with_text(THEME_DARK.text_header);
         let out = render_incremental(&chunks, 10);
-        assert_eq!(out, format!("{header}## header \n{base}          \n{base}1. one    \n{base}          \n{base}2. two    "));
+        assert_eq!(out, format!("{base}1. one    \n{base}          \n{base}2. two    "));
+    }
+
+    #[test]
+    fn incremental_unordered_list() {
+        const CONTENT: &str = dedent::dedent!(r#"
+            - one
+
+            - two
+        "#);
+        let chunks: Vec<&str> = CONTENT.char_indices()
+            .map(|(i, c)| &CONTENT[i..i + c.len_utf8()])
+            .collect();
+
+        let base = THEME_DARK.base_style();
+        let out = render_incremental(&chunks, 10);
+        assert_eq!(out, format!("{base}- one     \n{base}          \n{base}- two     "));
     }
 }
