@@ -83,8 +83,7 @@ async fn test_app_prompt_agent() {
 
     // The prompt should be recorded in the app state.
     assert_eq!(
-        app.query("/chat/stacked/inner/input/command_history")
-            .unwrap(),
+        app.query("/command_history").unwrap(),
         json!(["hello"])
     );
 

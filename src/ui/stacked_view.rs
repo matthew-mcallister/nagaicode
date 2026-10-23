@@ -6,7 +6,7 @@ use crate::query::{DataQuery, QueryError, QueryField, ToJson};
 use crate::item::Item;
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
-use crate::ui::command_editor::CommandEditor;
+use crate::ui::command_editor::{self, CommandEditor};
 use crate::ui::UiContext;
 use crate::ui::history_view;
 use crate::ui::history_view::HistoryView;
@@ -120,6 +120,7 @@ pub enum Update<'a> {
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
     CommandOutput(&'a str),
+    SetInputText { text: &'a str, scroll_to_bottom: bool },
 }
 
 impl<'a> TryFrom<Update<'a>> for history_view::Update<'a> {
@@ -133,6 +134,20 @@ impl<'a> TryFrom<Update<'a>> for history_view::Update<'a> {
             Update::ErrorMessage(content) => Ok(history_view::Update::ErrorMessage(content)),
             Update::CommandPrompt(content) => Ok(history_view::Update::CommandPrompt(content)),
             Update::CommandOutput(content) => Ok(history_view::Update::CommandOutput(content)),
+            Update::SetInputText { .. } => Err(()),
+        }
+    }
+}
+
+impl<'a> TryFrom<Update<'a>> for command_editor::Update<'a> {
+    type Error = ();
+
+    fn try_from(update: Update<'a>) -> Result<Self, Self::Error> {
+        match update {
+            Update::SetInputText { text, scroll_to_bottom } => {
+                Ok(command_editor::Update::SetInputText { text, scroll_to_bottom })
+            }
+            _ => Err(()),
         }
     }
 }
@@ -223,7 +238,9 @@ impl Component for StackedView {
         if let Ok(child_update) = history_view::Update::try_from(update.clone()) {
             self.history.handle_update(child_update);
         }
-        self.input.handle_update(());
+        if let Ok(child_update) = command_editor::Update::try_from(update) {
+            self.input.handle_update(child_update);
+        }
         self.resize();
     }
 }

@@ -50,6 +50,7 @@ pub enum Update<'a> {
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
     CommandOutput(&'a str),
+    SetInputText { text: &'a str, scroll_to_bottom: bool },
 }
 
 impl<'a> TryFrom<Update<'a>> for stacked_view::Update<'a> {
@@ -63,6 +64,9 @@ impl<'a> TryFrom<Update<'a>> for stacked_view::Update<'a> {
             Update::ErrorMessage(content) => Ok(stacked_view::Update::ErrorMessage(content)),
             Update::CommandPrompt(content) => Ok(stacked_view::Update::CommandPrompt(content)),
             Update::CommandOutput(content) => Ok(stacked_view::Update::CommandOutput(content)),
+            Update::SetInputText { text, scroll_to_bottom } => {
+                Ok(stacked_view::Update::SetInputText { text, scroll_to_bottom })
+            }
         }
     }
 }

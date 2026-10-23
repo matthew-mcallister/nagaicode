@@ -2,13 +2,6 @@ use serde_json::json;
 
 use crate::query::{DataQuery, QueryError, QueryField};
 
-/// Command history scroll direction, used to set cursor position.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Direction {
-    Forward,
-    Backward,
-}
-
 #[derive(Debug, Default)]
 pub struct CommandHistory {
     /// Submitted commands, most recent last. Only records newly sent commands

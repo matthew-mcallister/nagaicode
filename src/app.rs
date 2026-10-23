@@ -22,6 +22,7 @@ use tokio::time::Instant;
 
 use crate::agent::Agent;
 use crate::command::Command;
+use crate::command_history::CommandHistory;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::item::Item;
@@ -121,6 +122,7 @@ pub struct App {
     // manual interrupt.
     current_task: Option<TaskHandle<()>>,
     cwd: Arc<Cwd>,
+    command_history: CommandHistory,
 }
 
 impl App {
@@ -160,6 +162,7 @@ impl App {
             tasks: FnvHashSet::default(),
             current_task: None,
             cwd,
+            command_history: CommandHistory::new(),
         })
     }
 
@@ -181,6 +184,14 @@ impl App {
     /// Returns the current working directory.
     pub fn cwd(&self) -> &Arc<Cwd> {
         &self.cwd
+    }
+
+    fn input_text(&self) -> String {
+        self.query("/chat/stacked/inner/input/input/inner/text")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_owned()
     }
 
     /// Switches the selected model and persists the choice across runs.
@@ -394,7 +405,6 @@ impl App {
     /// session and UI for a fresh start.
     async fn clear_session(&mut self) -> AnyResult<()> {
         self.cancel_task().await;
-        // Task bookkeeping updates arrive via events, which are dropped below.
         self.tasks.clear();
         (self.send, self.recv) = unbounded_channel();
         self.session = None;
@@ -551,7 +561,10 @@ impl App {
 
     pub(crate) async fn process_event(&mut self, event: AppEvent) {
         let res = match event {
-            AppEvent::SubmitPrompt(cmd) => self.process_command(&cmd).await,
+            AppEvent::SubmitPrompt(cmd) => {
+                self.command_history.push(cmd.as_str());
+                self.process_command(&cmd).await
+            }
             AppEvent::SubmitCommand(command) => {
                 match self.run_command(command).await {
                     Ok(output) => {
@@ -583,7 +596,26 @@ impl App {
                 }
                 Ok(())
             }
-            AppEvent::HistoryPrev | AppEvent::HistoryNext => Ok(()),
+            AppEvent::HistoryPrev => {
+                let current = self.input_text();
+                if let Some(text) = self.command_history.prev_command(|| current) {
+                    self.chat.handle_update(Update::SetInputText {
+                        text,
+                        scroll_to_bottom: false,
+                    });
+                }
+                Ok(())
+            }
+            AppEvent::HistoryNext => {
+                let current = self.input_text();
+                if let Some(text) = self.command_history.next_command(|| current) {
+                    self.chat.handle_update(Update::SetInputText {
+                        text,
+                        scroll_to_bottom: true,
+                    });
+                }
+                Ok(())
+            }
             AppEvent::Interrupt => {
                 self.cancel_task().await;
                 Ok(())
@@ -643,6 +675,9 @@ impl DataQuery for App {
                 "session": self.query("/session")?,
                 "current_task": self.query("/current_task")?,
                 "task_count": self.query("/task_count")?,
+                "command_history": self.query("/command_history")?,
+                "command_history_pos": self.query("/command_history_pos")?,
+                "buffered_command": self.query("/buffered_command")?,
             }))),
             "chat" => Ok(QueryField::DataQuery(&self.chat)),
             "selected_model" => match self.selected_model.as_ref() {
@@ -658,6 +693,15 @@ impl DataQuery for App {
                 self.current_task.as_ref().map(|t| t.tid())
             ))),
             "task_count" => Ok(QueryField::Value(json!(self.tasks.len()))),
+            "command_history" => Ok(QueryField::Value(
+                self.command_history.query("/command_history")?,
+            )),
+            "command_history_pos" => Ok(QueryField::Value(
+                self.command_history.query("/command_history_pos")?,
+            )),
+            "buffered_command" => Ok(QueryField::Value(
+                self.command_history.query("/buffered_command")?,
+            )),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }

@@ -381,6 +381,9 @@ async fn test_app_query() {
             "session": null,
             "current_task": null,
             "task_count": 0,
+            "command_history": [],
+            "command_history_pos": 0,
+            "buffered_command": "",
         })
     );
 

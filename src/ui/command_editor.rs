@@ -2,7 +2,6 @@ use crossterm::event::Event;
 use serde_json::json;
 
 use crate::app::AppEvent;
-use crate::command_history::CommandHistory;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::ui::canvas::Canvas;
 use crate::ui::input_box::InputBox;
@@ -16,7 +15,6 @@ use crate::ui::Component;
 pub struct CommandEditor {
     input: Padded<InputBox>,
     scroll_bar: ScrollBar,
-    command_history: CommandHistory,
 }
 
 impl CommandEditor {
@@ -30,7 +28,6 @@ impl CommandEditor {
                 Some(theme.bg_input_box),
             ),
             scroll_bar: ScrollBar::new(theme),
-            command_history: CommandHistory::new(),
         };
         this.scroll_bar.set_width(1);
         this.sync_scroll_bar();
@@ -56,8 +53,13 @@ impl CommandEditor {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Update<'a> {
+    SetInputText { text: &'a str, scroll_to_bottom: bool },
+}
+
 impl Component for CommandEditor {
-    type Update<'a> = ();
+    type Update<'a> = Update<'a>;
     type Event = Option<AppEvent>;
 
     fn draw(&self, canvas: Canvas) {
@@ -95,43 +97,21 @@ impl Component for CommandEditor {
 
     fn handle_input(&mut self, event: Event) -> Self::Event {
         let response = self.input.handle_input(event);
-        let response = match response {
-            Some(AppEvent::SubmitPrompt(text)) => {
-                if text.trim_end_matches('\n').is_empty() {
-                    return None;
-                }
-                self.command_history.push(text.as_str());
-                Some(AppEvent::SubmitPrompt(text))
-            }
-            Some(AppEvent::HistoryPrev) => {
-                if let Some(text) = self
-                    .command_history
-                    .prev_command(|| self.input.inner().get_text())
-                {
-                    self.input.inner_mut().set_text(text);
-                }
-                None
-            }
-            Some(AppEvent::HistoryNext) => {
-                if let Some(text) = self
-                    .command_history
-                    .next_command(|| self.input.inner().get_text())
-                {
-                    self.input.inner_mut().set_text(text);
-                    self.input.inner_mut().go_to_end();
-                }
-                None
-            }
-            Some(AppEvent::Interrupt) => Some(AppEvent::Interrupt),
-            Some(AppEvent::SubmitCommand(command)) => Some(AppEvent::SubmitCommand(command)),
-            _ => None,
-        };
         self.sync_scroll_bar();
         response
     }
 
-    fn handle_update<'a>(&mut self, _update: Self::Update<'a>) {
+    fn handle_update<'a>(&mut self, update: Self::Update<'a>) {
+        match update {
+            Update::SetInputText { text, scroll_to_bottom } => {
+                self.input.inner_mut().set_text(text);
+                if scroll_to_bottom {
+                    self.input.inner_mut().go_to_end();
+                }
+            }
+        }
         self.scroll_bar.handle_update(());
+        self.sync_scroll_bar();
     }
 }
 
@@ -141,21 +121,9 @@ impl DataQuery for CommandEditor {
             "" => Ok(QueryField::Value(json!({
                 "input": self.query("/input")?,
                 "scroll_bar": self.query("/scroll_bar")?,
-                "command_history": self.query("/command_history")?,
-                "command_history_pos": self.query("/command_history_pos")?,
-                "buffered_command": self.query("/buffered_command")?,
             }))),
             "input" => Ok(QueryField::DataQuery(&self.input)),
             "scroll_bar" => Ok(QueryField::DataQuery(&self.scroll_bar)),
-            "command_history" => Ok(QueryField::Value(
-                self.command_history.query("/command_history")?,
-            )),
-            "command_history_pos" => Ok(QueryField::Value(
-                self.command_history.query("/command_history_pos")?,
-            )),
-            "buffered_command" => Ok(QueryField::Value(
-                self.command_history.query("/buffered_command")?,
-            )),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -271,15 +239,9 @@ mod tests {
         let expected = json!({
             "input": editor.input.query("/").unwrap(),
             "scroll_bar": editor.scroll_bar.query("/").unwrap(),
-            "command_history": [],
-            "command_history_pos": 0,
-            "buffered_command": "",
         });
         assert_eq!(editor.query("/").unwrap(), expected);
         assert_eq!(editor.query("/input").unwrap(), editor.input.query("/").unwrap());
         assert_eq!(editor.query("/scroll_bar").unwrap(), editor.scroll_bar.query("/").unwrap());
-        assert_eq!(editor.query("/command_history").unwrap(), json!([]));
-        assert_eq!(editor.query("/command_history_pos").unwrap(), json!(0));
-        assert_eq!(editor.query("/buffered_command").unwrap(), json!(""));
     }
 }
