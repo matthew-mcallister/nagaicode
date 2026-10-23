@@ -1033,16 +1033,20 @@ mod tests {
 
     #[test]
     fn incremental_ordered_list() {
+        const CONTENT: &str = dedent::dedent!(r#"
+            ## header
+
+            1. one
+
+            2. two
+        "#);
+        let chunks: Vec<&str> = CONTENT.char_indices()
+            .map(|(i, c)| &CONTENT[i..i + c.len_utf8()])
+            .collect();
+
         let base = THEME_DARK.base_style();
-        let chunks = ["1. ", "a\n", "2. ", "b\n"];
-        assert_eq!(
-            render_incremental(&chunks, 10),
-            format!("{base}1. a      \n{base}2. b      "),
-        );
-        let chunks = ["1.", " a\n", "2.", " b\n"];
-        assert_eq!(
-            render_incremental(&chunks, 10),
-            format!("{base}1. a      \n{base}2. b      "),
-        );
+        let header = base.with_text(THEME_DARK.text_header);
+        let out = render_incremental(&chunks, 10);
+        assert_eq!(out, format!("{header}## header \n{base}          \n{base}1. one    \n{base}          \n{base}2. two    "));
     }
 }
