@@ -2,6 +2,7 @@ pub mod agent;
 pub mod app;
 pub mod arena;
 pub mod command;
+pub mod command_history;
 pub mod config;
 pub mod cwd;
 pub mod db;
