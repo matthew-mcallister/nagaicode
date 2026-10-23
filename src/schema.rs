@@ -18,7 +18,7 @@ diesel::table! {
         response_id -> Nullable<Integer>,
         provider_id -> Nullable<Integer>,
         #[sql_name = "type"]
-        ty -> Text,
+        type_ -> Text,
         upstream_id -> Nullable<Text>,
         upstream_type -> Nullable<Text>,
         upstream_call_id -> Nullable<Text>,
@@ -75,15 +75,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    setting (key) {
-        key -> Text,
-        value -> Text,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
     session (id) {
         id -> Integer,
         name -> Text,
@@ -93,10 +84,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    setting (key) {
+        key -> Text,
+        value -> Text,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     turn (id) {
         id -> Integer,
         #[sql_name = "type"]
-        ty -> Text,
+        type_ -> Text,
         session_id -> Integer,
         provider_id -> Nullable<Integer>,
         provider_name -> Nullable<Text>,

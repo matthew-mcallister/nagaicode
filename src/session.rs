@@ -131,6 +131,7 @@ impl DataQuery for Session {
 pub struct Turn {
     pub id: i32,
     /// Maps to TurnType
+    #[diesel(column_name = type_)]
     pub ty: String,
     pub session_id: i32,
     /// Agent turn fields
@@ -145,6 +146,7 @@ pub struct Turn {
 #[diesel(table_name = turn)]
 pub struct NewTurn<'a> {
     pub session_id: i32,
+    #[diesel(column_name = type_)]
     pub ty: TurnType,
     pub provider_id: Option<i32>,
     pub provider_name: Option<&'a str>,

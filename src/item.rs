@@ -85,6 +85,7 @@ pub struct DbItem {
     pub response_id: Option<i32>,
     pub provider_id: Option<i32>,
     /// Maps to ItemType, may be converted from upstream_type
+    #[diesel(column_name = type_)]
     pub ty: String,
     pub upstream_id: Option<String>,
     /// Raw type from API
@@ -117,6 +118,7 @@ pub struct NewDbItem<'a> {
     pub turn_id: Option<i32>,
     pub response_id: Option<i32>,
     pub provider_id: Option<i32>,
+    #[diesel(column_name = type_)]
     pub ty: Option<ItemType>,
     pub upstream_id: Option<&'a str>,
     pub upstream_type: Option<&'a str>,
@@ -339,7 +341,7 @@ impl Item {
         use crate::schema::item::dsl;
         let rows = dsl::item
             .filter(dsl::response_id.eq(response_id))
-            .filter(dsl::ty.eq(ItemType::ToolCall.to_string()))
+            .filter(dsl::type_.eq(ItemType::ToolCall.to_string()))
             .order(dsl::seqno.asc())
             .load::<DbItem>(conn)?;
         Ok(Self::decode_rows(rows))
@@ -640,7 +642,7 @@ mod tests {
         ).unwrap();
         let ty = item::table
             .filter(item::id.eq(item.id))
-            .select(item::ty)
+            .select(item::type_)
             .first::<ItemType>(&mut conn)
             .unwrap();
         assert_eq!(ty, ItemType::UserText);
