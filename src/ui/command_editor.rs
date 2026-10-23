@@ -2,6 +2,7 @@ use crossterm::event::Event;
 use serde_json::json;
 
 use crate::app::AppEvent;
+use crate::command_history::CommandHistory;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::ui::canvas::Canvas;
 use crate::ui::input_box::InputBox;
@@ -15,14 +16,7 @@ use crate::ui::Component;
 pub struct CommandEditor {
     input: Padded<InputBox>,
     scroll_bar: ScrollBar,
-    /// Submitted commands, most recent last. Only records newly sent commands
-    /// when different from the previously sent command.
-    command_history: Vec<String>,
-    /// Command history cursor. The current/buffered command is represented as
-    /// `command_history.len()`.
-    command_history_pos: usize,
-    /// Current unsent command from the input editor.
-    buffered_command: String,
+    command_history: CommandHistory,
 }
 
 impl CommandEditor {
@@ -36,9 +30,7 @@ impl CommandEditor {
                 Some(theme.bg_input_box),
             ),
             scroll_bar: ScrollBar::new(theme),
-            command_history: Vec::new(),
-            command_history_pos: 0,
-            buffered_command: String::new(),
+            command_history: CommandHistory::new(),
         };
         this.scroll_bar.set_width(1);
         this.sync_scroll_bar();
@@ -108,38 +100,25 @@ impl Component for CommandEditor {
                 if text.trim_end_matches('\n').is_empty() {
                     return None;
                 }
-                if self.command_history.last() != Some(&text) {
-                    self.command_history.push(text.clone());
-                }
-                self.command_history_pos = self.command_history.len();
-                self.buffered_command.clear();
+                self.command_history.push(text.as_str());
                 Some(AppEvent::SubmitPrompt(text))
             }
             Some(AppEvent::HistoryPrev) => {
-                if self.command_history_pos > 0 {
-                    let len = self.command_history.len();
-                    if self.command_history_pos == len {
-                        self.buffered_command = self.input.inner().get_text();
-                    }
-                    self.command_history_pos -= 1;
-                    let text = self.command_history[self.command_history_pos].clone();
-                    self.input.inner_mut().set_text(&text);
+                if let Some(text) = self
+                    .command_history
+                    .prev_command(|| self.input.inner().get_text())
+                {
+                    self.input.inner_mut().set_text(text);
                 }
                 None
             }
             Some(AppEvent::HistoryNext) => {
-                let len = self.command_history.len();
-                if self.command_history_pos < len {
-                    self.command_history_pos += 1;
-                    let input = self.input.inner_mut();
-                    if self.command_history_pos == len {
-                        // Restore unsent command from buffer
-                        input.set_text(&self.buffered_command);
-                        input.go_to_end();
-                    } else {
-                        input.set_text(&self.command_history[self.command_history_pos]);
-                        input.go_to_end();
-                    }
+                if let Some(text) = self
+                    .command_history
+                    .next_command(|| self.input.inner().get_text())
+                {
+                    self.input.inner_mut().set_text(text);
+                    self.input.inner_mut().go_to_end();
                 }
                 None
             }
@@ -168,9 +147,15 @@ impl DataQuery for CommandEditor {
             }))),
             "input" => Ok(QueryField::DataQuery(&self.input)),
             "scroll_bar" => Ok(QueryField::DataQuery(&self.scroll_bar)),
-            "command_history" => Ok(QueryField::Value(json!(self.command_history))),
-            "command_history_pos" => Ok(QueryField::Value(json!(self.command_history_pos))),
-            "buffered_command" => Ok(QueryField::Value(json!(self.buffered_command))),
+            "command_history" => Ok(QueryField::Value(
+                self.command_history.query("/command_history")?,
+            )),
+            "command_history_pos" => Ok(QueryField::Value(
+                self.command_history.query("/command_history_pos")?,
+            )),
+            "buffered_command" => Ok(QueryField::Value(
+                self.command_history.query("/buffered_command")?,
+            )),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
