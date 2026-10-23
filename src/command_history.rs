@@ -7,6 +7,9 @@ use crate::error::AnyResult;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::schema::command_history_item;
 
+/// Maximum number of history items loaded at startup.
+const HISTORY_LIMIT: i64 = 500;
+
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = command_history_item)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
@@ -66,17 +69,32 @@ impl CommandHistory {
         Self::default()
     }
 
+    /// Loads the most recent command history from the database.
+    pub fn load(conn: &mut SqliteConnection) -> AnyResult<Self> {
+        let command_history: Vec<String> = CommandHistoryItem::recent(conn, HISTORY_LIMIT)?
+            .into_iter()
+            .map(|item| item.text)
+            .collect();
+        Ok(Self {
+            command_history_pos: command_history.len(),
+            command_history,
+            buffered_command: String::new(),
+        })
+    }
+
     /// Records a submitted command, unless it is blank or a repeat of the
     /// previous command.
-    pub fn push(&mut self, command: impl AsRef<str> + Into<String>) {
+    pub fn push(&mut self, command: impl AsRef<str> + Into<String>) -> bool {
         if command.as_ref().trim_end_matches('\n').is_empty() {
-            return;
+            return false;
         }
-        if self.command_history.last().map(String::as_str) != Some(command.as_ref()) {
+        let push = self.command_history.last().map(String::as_str) != Some(command.as_ref());
+        if push {
             self.command_history.push(command.into());
         }
         self.command_history_pos = self.command_history.len();
         self.buffered_command.clear();
+        push
     }
 
     /// Moves the cursor to the previous command and returns its text.

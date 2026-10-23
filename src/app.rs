@@ -22,7 +22,7 @@ use tokio::time::Instant;
 
 use crate::agent::Agent;
 use crate::command::Command;
-use crate::command_history::CommandHistory;
+use crate::command_history::{CommandHistory, CommandHistoryItem};
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::item::Item;
@@ -144,6 +144,7 @@ impl App {
             .current_model()
             .and_then(|r| r.resolve(&mut conn).ok())
             .flatten();
+        let command_history = CommandHistory::load(&mut conn)?;
         Ok(Self {
             terminal,
             chat,
@@ -162,7 +163,7 @@ impl App {
             tasks: FnvHashSet::default(),
             current_task: None,
             cwd,
-            command_history: CommandHistory::new(),
+            command_history,
         })
     }
 
@@ -539,6 +540,11 @@ impl App {
             return Ok(());
         }
 
+        if self.command_history.push(command) {
+            let session_id = self.session.as_ref().map(|session| session.id);
+            CommandHistoryItem::create(&mut self.conn, session_id, command)?;
+        }
+
         let slash_command = command.starts_with('/');
         let bang_command = command.starts_with('!');
         if slash_command || bang_command {
@@ -561,10 +567,7 @@ impl App {
 
     pub(crate) async fn process_event(&mut self, event: AppEvent) {
         let res = match event {
-            AppEvent::SubmitPrompt(cmd) => {
-                self.command_history.push(cmd.as_str());
-                self.process_command(&cmd).await
-            }
+            AppEvent::SubmitPrompt(cmd) => self.process_command(&cmd).await,
             AppEvent::SubmitCommand(command) => {
                 match self.run_command(command).await {
                     Ok(output) => {

@@ -6,6 +6,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use serde_json::json;
 
 use crate::app::{App, AppEvent};
+use crate::command_history::CommandHistoryItem;
 use crate::interface::InterfaceId;
 use crate::model::Model;
 use crate::provider::Provider;
@@ -114,6 +115,13 @@ async fn test_app_command_history() {
 
     press(&mut app, KeyCode::Down).await;
     assert_eq!(editor_text(&app), "third");
+
+    let mut conn = crate::db::open(app.db_url()).unwrap();
+    let recent = CommandHistoryItem::recent(&mut conn, 500).unwrap();
+    assert_eq!(
+        recent.iter().map(|item| item.text.as_str()).collect::<Vec<_>>(),
+        ["first", "second"]
+    );
 }
 
 /// Counts "Interrupted." help messages in the chat history.
