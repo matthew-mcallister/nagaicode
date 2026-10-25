@@ -110,6 +110,7 @@ pub struct App {
     db_url: String,
     settings: Settings,
     session: Option<Session>,
+    rewind_item_id: Option<i32>,
     tool_registry: Arc<ToolRegistry>,
     // Channel for async events
     send: UnboundedSender<AppEvent>,
@@ -156,6 +157,7 @@ impl App {
             db_url,
             settings,
             session: None,
+            rewind_item_id: None,
             tool_registry,
             send,
             recv,
@@ -437,6 +439,19 @@ impl App {
         }
         Box::pin(self.process_pending_events()).await;
         Ok(())
+    }
+
+    pub fn rewind(&mut self) -> AnyResult<()> {
+        let Some(session) = &self.session else {
+            return Ok(());
+        };
+        let session_id = session.id;
+        self.rewind_item_id = Item::max_id(&mut self.conn, session_id, self.rewind_item_id)?;
+        Ok(())
+    }
+
+    pub fn restore(&mut self) {
+        self.rewind_item_id = None;
     }
 
     /// Processes any events sent by the active task that are still pending.

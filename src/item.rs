@@ -268,6 +268,23 @@ impl Item {
         Ok(result)
     }
 
+    pub fn max_id(
+        conn: &mut SqliteConnection,
+        session_id: i32,
+        below: Option<i32>,
+    ) -> AnyResult<Option<i32>> {
+        let mut query = item::table
+            .filter(item::session_id.eq(session_id))
+            .into_boxed();
+        if let Some(below) = below {
+            query = query.filter(item::id.lt(below));
+        }
+        let result = query
+            .select(diesel::dsl::max(item::id))
+            .first::<Option<i32>>(conn)?;
+        Ok(result)
+    }
+
     /// Decodes a database row into an item. Malformed rows are logged and
     /// decode to `None`; they should be ignored.
     pub fn from_row(row: &DbItem) -> Option<Item> {

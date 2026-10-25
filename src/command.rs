@@ -51,6 +51,8 @@ pub enum SessionCommand {
     Ls,
     New,
     Switch(i32),
+    Rewind,
+    Restore,
 }
 
 #[derive(Clone, Debug)]
@@ -327,6 +329,8 @@ fn parse_session(args: &[&str]) -> Result<Command, AnyError> {
           /session ls
           /session new
           /session switch <id>
+          /session rewind
+          /session restore
     ");
     let mut parser = Parser::new(USAGE, &args, &[]);
     match parser.expect()? {
@@ -346,6 +350,14 @@ fn parse_session(args: &[&str]) -> Result<Command, AnyError> {
                 usage: USAGE,
             })?;
             Ok(Command::Session(SessionCommand::Switch(id)))
+        }
+        "rewind" => {
+            parser.expect_empty()?;
+            Ok(Command::Session(SessionCommand::Rewind))
+        }
+        "restore" => {
+            parser.expect_empty()?;
+            Ok(Command::Session(SessionCommand::Restore))
         }
         command => Err(unknown_command(USAGE, command)),
     }
@@ -467,6 +479,14 @@ pub async fn run_session_command(
         }
         SessionCommand::Switch(id) => {
             app.switch_session(id).await?;
+            Ok(String::new())
+        }
+        SessionCommand::Rewind => {
+            app.rewind()?;
+            Ok(String::new())
+        }
+        SessionCommand::Restore => {
+            app.restore();
             Ok(String::new())
         }
     }
