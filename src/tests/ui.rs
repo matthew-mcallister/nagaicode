@@ -8,6 +8,7 @@ use serde_json::json;
 use crate::app::{App, AppEvent};
 use crate::command_history::CommandHistoryItem;
 use crate::interface::InterfaceId;
+use crate::item::{Item, ItemContent};
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::query::DataQuery;
@@ -75,8 +76,142 @@ async fn type_text(app: &mut App, text: &str) {
 
 async fn submit(app: &mut App, text: &str) {
     type_text(app, text).await;
-    app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)))
-        .await;
+    if text.starts_with('/') || text.starts_with('!') {
+        press(app, KeyCode::Enter).await;
+    } else {
+        let mut event = KeyEvent::from(KeyCode::Enter);
+        event.modifiers |= KeyModifiers::ALT;
+        app.handle_input(Event::Key(event)).await;
+    }
+}
+
+async fn submit_await(app: &mut App, text: &str) {
+    submit(app, text).await;
+    app.await_task().await;
+    app.process_pending_events().await;
+}
+
+async fn mock_inference(app: &mut App) {
+    use reqwest::StatusCode;
+    use reqwest::header::HeaderMap;
+    use reqwest_eventsource::Event as SseEvent;
+
+    use crate::model::Model;
+    use crate::provider::Provider;
+    use crate::request::test_client::{Response, ResponseData};
+    use crate::testing::QueueStream;
+
+    const BASE_URL: &str = "https://api.openai.com/v1";
+    const PROVIDER_NAME: &str = "deepseek";
+    const MODEL_ID: &str = "deepseek-flash";
+
+    fn message(data: impl Into<String>) -> SseEvent {
+        SseEvent::Message(eventsource_stream::Event {
+            event: "message".to_owned(),
+            data: data.into(),
+            id: String::new(),
+            retry: None,
+        })
+    }
+
+    fn inference_response(n: usize) -> ResponseData {
+        let text = format!("response {n}");
+        let events = vec![
+            Ok(SseEvent::Open),
+            Ok(message(
+                json!({
+                    "type": "response.created",
+                    "response": {"id": format!("resp-{n}"), "status": "in_progress"},
+                })
+                .to_string(),
+            )),
+            Ok(message(
+                json!({
+                    "type": "response.output_item.added",
+                    "output_index": 0,
+                    "item": {
+                        "id": format!("msg-{n}"),
+                        "type": "message",
+                        "status": "in_progress",
+                        "role": "assistant",
+                        "content": [],
+                    },
+                })
+                .to_string(),
+            )),
+            Ok(message(
+                json!({
+                    "type": "response.output_text.delta",
+                    "item_id": format!("msg-{n}"),
+                    "output_index": 0,
+                    "delta": text,
+                })
+                .to_string(),
+            )),
+            Ok(message(
+                json!({
+                    "type": "response.output_item.done",
+                    "output_index": 0,
+                    "item": {
+                        "id": format!("msg-{n}"),
+                        "type": "message",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}],
+                    },
+                })
+                .to_string(),
+            )),
+            Ok(message(
+                json!({
+                    "type": "response.completed",
+                    "response": {"id": format!("resp-{n}"), "status": "completed"},
+                })
+                .to_string(),
+            )),
+            Ok(message("[DONE]")),
+        ];
+        ResponseData::Sse(QueueStream::from(events))
+    }
+
+    app.client_mut().add_response(
+        &format!("{BASE_URL}/models"),
+        ResponseData::Http(Ok(Response {
+            body: json!({"data": [{"id": MODEL_ID}]}).to_string(),
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+        })),
+    );
+    app.client_mut().add_responses(
+        &format!("{BASE_URL}/responses"),
+        (1..=1000).map(inference_response),
+    );
+
+    app.process_command(&format!(
+        "/provider new -name {PROVIDER_NAME} -interface openai -api-key sk-123"
+    ))
+    .await
+    .unwrap();
+
+    for _ in 0..100 {
+        let found = {
+            let conn = app.conn();
+            match Provider::get_by_name(conn, PROVIDER_NAME).unwrap() {
+                Some(provider) => Model::get(conn, provider.id, MODEL_ID).unwrap().is_some(),
+                None => false,
+            }
+        };
+        if found {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+
+    app.process_command(&format!("/model switch {PROVIDER_NAME} {MODEL_ID}"))
+        .await
+        .unwrap();
+
+    app.new_session().await.unwrap();
 }
 
 fn editor_text(app: &App) -> String {
@@ -175,7 +310,7 @@ async fn test_app_task_complete() {
     assert_eq!(app.query("current_task").unwrap(), json!(0));
     assert_eq!(app.query("task_count").unwrap(), json!(1));
     dummy.complete();
-    app.await_task().await.expect("await dummy task");
+    app.await_task().await;
     app.process_pending_events().await;
     assert_eq!(app.query("current_task").unwrap(), json!(null));
     assert_eq!(app.query("task_count").unwrap(), json!(0));
@@ -276,7 +411,7 @@ async fn test_app_provider_rm_deletes_models() {
 /// Runs `!command` and waits for its output to reach the UI.
 async fn run_bang(app: &mut App, command: &str) {
     app.process_command(command).await.unwrap();
-    app.await_task().await.unwrap();
+    app.await_task().await;
     app.process_pending_events().await;
 }
 
@@ -612,4 +747,52 @@ async fn test_app_session_switch_missing() {
     let mut canvas = app.make_canvas();
     app.draw(&mut canvas);
     assert_eq!(render_canvas(&mut canvas), EXPECTED_INITIAL_FRAME);
+}
+
+#[tokio::test]
+async fn test_rewind() {
+    fn history_values(app: &App) -> Vec<String> {
+        app.query("/chat/stacked/inner/history/history/items")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["content"]["value"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    let mut app = App::new().unwrap();
+    mock_inference(&mut app).await;
+
+    submit_await(&mut app, "prompt 1").await;
+    submit_await(&mut app, "prompt 2").await;
+    submit_await(&mut app, "prompt 3").await;
+    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", "prompt 3", "response 3"]);
+
+    submit_await(&mut app, "/session rewind").await;
+    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2"]);
+
+    submit_await(&mut app, "/session rewind").await;
+    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1"]);
+
+    // Undoes both rewinds
+    submit_await(&mut app, "/session restore").await;
+    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", "prompt 3", "response 3"]);
+
+    submit_await(&mut app, "/session rewind").await;
+    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2"]);
+
+    submit_await(&mut app, "prompt 4").await;
+    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", "prompt 4", "response 4"]);
+
+    let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+    let items = Item::list_by_session(app.conn(), session_id).unwrap();
+    let prompts = items
+        .iter()
+        .filter_map(|item| match &item.content {
+            ItemContent::UserText(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(prompts, ["prompt 1", "prompt 2", "prompt 4"]);
 }

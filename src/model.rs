@@ -133,16 +133,18 @@ impl DataQuery for Model {
     }
 }
 
-pub async fn revalidate_models(conn: &mut SqliteConnection) -> AnyResult<()> {
+pub async fn revalidate_models(
+    conn: &mut SqliteConnection,
+    client: &DefaultClient,
+) -> AnyResult<()> {
     // XXX: This function is racey (e.g. provider is deleted while models are
     // fetching) but risk is pretty low
     // FIXME: No cache key so we revalidate every time at startup. Need to add
     // last fetch time to Settings and invalidate any time provider changes.
 
     let providers = Provider::all(conn)?;
-    let client = DefaultClient::default();
     let interfaces = providers.iter()
-        .map(|p| p.create_interface(&client))
+        .map(|p| p.create_interface(client))
         .collect::<AnyResult<Vec<_>>>()?;
     let fetches: Vec<_> = interfaces.iter().map(|i| i.get_models()).collect();
     let results: Vec<AnyResult<Vec<InterfaceModel>>> = join_all(fetches).await;
@@ -168,11 +170,17 @@ pub async fn revalidate_models(conn: &mut SqliteConnection) -> AnyResult<()> {
 }
 
 /// Background task that refreshes cached provider model lists.
-pub struct RevalidateModelsTask;
+pub struct RevalidateModelsTask {
+    client: DefaultClient,
+}
 
 impl RevalidateModelsTask {
+    pub fn new(client: DefaultClient) -> Self {
+        Self { client }
+    }
+
     async fn process(self, context: &mut TaskContext) -> AnyResult<()> {
-        revalidate_models(context.connection()?).await
+        revalidate_models(context.connection()?, &self.client).await
     }
 }
 

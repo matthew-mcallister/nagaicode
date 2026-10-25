@@ -42,8 +42,8 @@ async fn test_app_prompt_agent() {
         "sk-test",
         Some("https://example.test/v1"),
     )
-    .expect("create provider");
-    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    .unwrap();
+    let model = Model::create(app.conn(), provider.id, "gpt-4").unwrap();
     app.switch_model(provider.clone(), model).unwrap();
 
     let url = "https://example.test/v1/responses";
@@ -67,7 +67,7 @@ async fn test_app_prompt_agent() {
     app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
 
     // Await the spawned agent, then fold its events into the UI.
-    app.await_task().await.expect("await agent task");
+    app.await_task().await;
     app.process_pending_events().await;
 
     // The agent should have made a single inference request.
@@ -178,8 +178,8 @@ async fn test_system_prompt() {
         "sk-test",
         Some("https://example.test/v1"),
     )
-    .expect("create provider");
-    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    .unwrap();
+    let model = Model::create(app.conn(), provider.id, "gpt-4").unwrap();
     app.switch_model(provider, model).unwrap();
 
     let agents_md = app.cwd().path().join("AGENTS.md");
@@ -203,7 +203,7 @@ async fn test_system_prompt() {
             .await;
     }
     app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
-    app.await_task().await.expect("await agent task");
+    app.await_task().await;
     app.process_pending_events().await;
 
     let requests = app.client_mut().get_requests();
@@ -241,8 +241,8 @@ async fn test_agent_stream_error() {
         "sk-test",
         Some("https://example.test/v1"),
     )
-    .expect("create provider");
-    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    .unwrap();
+    let model = Model::create(app.conn(), provider.id, "gpt-4").unwrap();
     app.switch_model(provider, model).unwrap();
 
     let url = "https://example.test/v1/responses";
@@ -264,7 +264,7 @@ async fn test_agent_stream_error() {
             .await;
     }
     app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
-    app.await_task().await.expect("await agent task");
+    app.await_task().await;
     app.process_pending_events().await;
 
     // The error should be reported in the chat history.
@@ -307,8 +307,8 @@ async fn test_agent_out_of_order_items() {
         "sk-test",
         Some("https://example.test/v1"),
     )
-    .expect("create provider");
-    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    .unwrap();
+    let model = Model::create(app.conn(), provider.id, "gpt-4").unwrap();
     app.switch_model(provider, model).unwrap();
 
     let url = "https://example.test/v1/responses";
@@ -334,7 +334,7 @@ async fn test_agent_out_of_order_items() {
             .await;
     }
     app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
-    app.await_task().await.expect("await agent task");
+    app.await_task().await;
     app.process_pending_events().await;
 
     let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
@@ -379,8 +379,8 @@ async fn test_agent_history() {
         InterfaceId::Openai,
         "sk-test",
         Some("https://example.test/v1"),
-    ).expect("create provider");
-    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    ).unwrap();
+    let model = Model::create(app.conn(), provider.id, "gpt-4").unwrap();
     app.switch_model(provider, model).unwrap();
 
     let url = "https://example.test/v1/responses";
@@ -408,7 +408,7 @@ async fn test_agent_history() {
             .await;
     }
     app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
-    app.await_task().await.expect("await first agent");
+    app.await_task().await;
     app.process_pending_events().await;
 
     // The first assistant turn should have recorded one reasoning item and
@@ -453,7 +453,7 @@ async fn test_agent_history() {
             .await;
     }
     app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
-    app.await_task().await.expect("await second task");
+    app.await_task().await;
     app.process_pending_events().await;
 
     let requests = app.client_mut().get_requests();
@@ -484,8 +484,8 @@ async fn test_agent_tool_call_loop() {
         "sk-test",
         Some("https://example.test/v1"),
     )
-    .expect("create provider");
-    let model = Model::create(app.conn(), provider.id, "gpt-4").expect("create model");
+    .unwrap();
+    let model = Model::create(app.conn(), provider.id, "gpt-4").unwrap();
     app.switch_model(provider, model).unwrap();
 
     let url = "https://example.test/v1/responses";
@@ -522,7 +522,7 @@ async fn test_agent_tool_call_loop() {
         app.handle_input(Event::Key(KeyEvent::from(KeyCode::Char(c)))).await;
     }
     app.handle_input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))).await;
-    app.await_task().await.expect("await agent task");
+    app.await_task().await;
     app.process_pending_events().await;
 
     // The agent should have made two inference requests within a single turn.

@@ -324,7 +324,7 @@ impl App {
 
     /// Spawns a background task to revalidate stale model lists.
     pub fn spawn_revalidate_models(&mut self) {
-        self.spawn_background(RevalidateModelsTask);
+        self.spawn_background(RevalidateModelsTask::new(self.client.clone()));
     }
 
     async fn run_event_loop(&mut self) -> AnyResult<()> {
@@ -495,11 +495,10 @@ impl App {
     }
 
     /// Awaits completion of the active task, if any.
-    pub async fn await_task(&mut self) -> AnyResult<()> {
+    pub async fn await_task(&mut self) {
         if let Some(task) = self.current_task.take() {
             self.finish_task(task).await;
         }
-        Ok(())
     }
 
     /// Spawns a dummy task tracked as the current task, for testing.
