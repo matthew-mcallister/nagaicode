@@ -697,6 +697,66 @@ impl History {
         }
     }
 
+    /// Removes the last history item.
+    pub fn pop(&mut self) {
+        if let Some(item) = self.last_item() {
+            self.remove_last_item(item);
+        }
+    }
+
+    /// Removes all items up to (and including) the item with matching ID.
+    pub fn pop_to(&mut self, item_id: i32) {
+        let Some(target) = self.by_item_id.get(&item_id).copied() else {
+            return;
+        };
+        loop {
+            let Some(item) = self.last_item() else {
+                break;
+            };
+            self.remove_last_item(item);
+            if item == target {
+                break;
+            }
+        }
+    }
+
+    fn remove_last_item(&mut self, item_id: Id<HistoryItem>) {
+        debug_assert_eq!(Some(item_id), self.last_item());
+
+        let first_row = self.item[item_id].first_row;
+        let last_row = self.item[item_id].last_row;
+        let num_rows = self.item[item_id].num_rows;
+        let db_item_id = self.item[item_id].item_id;
+
+        let prev = self.rows[first_row].prev;
+        let new_num_rows = self.num_rows() - num_rows;
+
+        let bottom_contained = self.rows[self.viewport.bottom].item == item_id;
+        let at_bottom = self.viewport.bottom == self.head;
+
+        if let Some(id) = db_item_id {
+            self.by_item_id.remove(&id);
+        }
+
+        remove_rows(&mut self.rows, prev, last_row);
+        self.rows[self.head].prev = prev;
+        self.item.remove(item_id);
+
+        if bottom_contained {
+            self.viewport.prev_bottom_item = self.item_head;
+            self.viewport.bottom_item_row = new_num_rows;
+            self.set_viewport_bottom_at(self.head, new_num_rows);
+        } else {
+            if at_bottom {
+                self.viewport.bottom_row = new_num_rows;
+                self.viewport.bottom_item_row = new_num_rows;
+            }
+            let bottom = self.viewport.bottom;
+            let bottom_row = self.viewport.bottom_row;
+            self.set_viewport_bottom_at(bottom, bottom_row);
+        }
+    }
+
     fn scroll_up(&mut self, rows: usize) {
         if let Some(top) = self.row_offset(self.viewport.top, -(rows as isize)) {
             self.set_viewport_top_at(top, self.viewport.top_row - rows);
@@ -1114,6 +1174,68 @@ mod tests {
         assert_eq!(h.num_rows(), 32);
         assert_eq!(h.viewport.top_row, 11);
         assert_eq!(h.viewport.bottom_row, 15);
+    }
+
+    #[test]
+    fn test_pop() {
+        let mut h = history(80, 4);
+        assert_eq!(h.num_items(), 0);
+
+        add_item(&mut h, 1, 1, &message(9));
+        add_item(&mut h, 2, 2, &message(9));
+        add_item(&mut h, 3, 3, &message(9));
+        assert_eq!(h.num_items(), 3);
+        assert_eq!(h.num_rows(), 30);
+
+        h.set_viewport_top_at(h.item[h.item_ids()[0]].first_row, 0);
+        assert_eq!(h.viewport.top_row, 0);
+        assert_eq!(h.viewport.bottom_row, 4);
+
+        h.pop();
+        assert_eq!(h.num_items(), 2);
+        assert_eq!(h.num_rows(), 20);
+        assert_eq!(h.viewport.top_row, 0);
+        assert_eq!(h.viewport.bottom_row, 4);
+        assert_eq!(h.viewport.bottom_item_row, 0);
+
+        h.set_viewport_top_at(h.item[h.item_ids()[1]].first_row, 10);
+        assert_eq!(h.viewport.top_row, 10);
+        assert_eq!(h.viewport.bottom_row, 14);
+
+        h.pop();
+        assert_eq!(h.num_items(), 1);
+        assert_eq!(h.num_rows(), 10);
+        assert_eq!(h.viewport.top_row, 6);
+        assert_eq!(h.viewport.bottom_row, 10);
+        assert_eq!(h.viewport.bottom_item_row, 10);
+
+        h.pop();
+        assert_eq!(h.num_items(), 0);
+        assert_eq!(h.num_rows(), 0);
+    }
+
+    #[test]
+    fn test_pop_to() {
+        let mut h = history(80, 4);
+        add_item(&mut h, 1, 1, "one");
+        add_item(&mut h, 2, 2, "two");
+        add_item(&mut h, 3, 3, "three");
+        add_item(&mut h, 4, 4, "four");
+        assert_eq!(h.num_items(), 4);
+        assert_eq!(h.num_rows(), 8);
+
+        h.pop_to(2);
+        assert_eq!(h.num_items(), 1);
+        assert_eq!(h.num_rows(), 2);
+        assert_eq!(item_contents(&h), ["one"]);
+
+        h.pop_to(42);
+        assert_eq!(h.num_items(), 1);
+        assert_eq!(h.num_rows(), 2);
+
+        h.pop_to(1);
+        assert_eq!(h.num_items(), 0);
+        assert_eq!(h.num_rows(), 0);
     }
 
     #[test]
