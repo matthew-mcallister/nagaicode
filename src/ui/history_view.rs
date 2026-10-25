@@ -61,6 +61,7 @@ pub enum Update<'a> {
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
     CommandOutput(&'a str),
+    Rewind { item_id: i32 },
 }
 
 impl<'a> TryFrom<Update<'a>> for history::Update<'a> {
@@ -74,6 +75,7 @@ impl<'a> TryFrom<Update<'a>> for history::Update<'a> {
             Update::ErrorMessage(content) => Ok(history::Update::ErrorMessage(content)),
             Update::CommandPrompt(content) => Ok(history::Update::CommandPrompt(content)),
             Update::CommandOutput(content) => Ok(history::Update::CommandOutput(content)),
+            Update::Rewind { item_id } => Ok(history::Update::Rewind { item_id }),
         }
     }
 }

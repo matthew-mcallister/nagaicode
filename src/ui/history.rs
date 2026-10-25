@@ -786,6 +786,7 @@ impl History {
             Update::CommandOutput(content) => {
                 self.add_content(Box::new(CommandOutputRenderItem::new(content)))
             }
+            Update::Rewind { item_id } => self.pop_to(item_id),
         }
     }
 }
@@ -798,6 +799,7 @@ pub enum Update<'a> {
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
     CommandOutput(&'a str),
+    Rewind { item_id: i32 },
 }
 
 impl Component for History {

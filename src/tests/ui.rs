@@ -68,6 +68,12 @@ async fn press(app: &mut App, code: KeyCode) {
     app.handle_input(Event::Key(KeyEvent::from(code))).await;
 }
 
+async fn ctrl_c(app: &mut App) {
+    let mut event = KeyEvent::from(KeyCode::Char('c'));
+    event.modifiers |= KeyModifiers::CONTROL;
+    app.handle_input(Event::Key(event)).await;
+}
+
 async fn type_text(app: &mut App, text: &str) {
     for c in text.chars() {
         press(app, KeyCode::Char(c)).await;
@@ -776,9 +782,11 @@ async fn test_rewind() {
 
     submit_await(&mut app, "/session rewind").await;
     assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", REWIND_MESSAGE]);
+    ctrl_c(&mut app).await;
 
     submit_await(&mut app, "/session rewind").await;
     assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", REWIND_MESSAGE]);
+    ctrl_c(&mut app).await;
 
     // Undoes both rewinds
     submit_await(&mut app, "/session restore").await;
@@ -786,6 +794,7 @@ async fn test_rewind() {
 
     submit_await(&mut app, "/session rewind").await;
     assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", REWIND_MESSAGE]);
+    ctrl_c(&mut app).await;
 
     submit_await(&mut app, "prompt 4").await;
     assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", "prompt 4", "response 4"]);

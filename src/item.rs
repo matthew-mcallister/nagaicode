@@ -268,13 +268,14 @@ impl Item {
         Ok(result)
     }
 
-    pub fn max_id(
+    pub fn max_prompt_id(
         conn: &mut SqliteConnection,
         session_id: i32,
         below: Option<i32>,
     ) -> AnyResult<Option<i32>> {
         let mut query = item::table
             .filter(item::session_id.eq(session_id))
+            .filter(item::type_.eq(ItemType::UserText))
             .into_boxed();
         if let Some(below) = below {
             query = query.filter(item::id.lt(below));

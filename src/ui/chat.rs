@@ -51,6 +51,7 @@ pub enum Update<'a> {
     CommandPrompt(&'a str),
     CommandOutput(&'a str),
     SetInputText { text: &'a str, scroll_to_bottom: bool },
+    Rewind { item_id: i32 },
 }
 
 impl<'a> TryFrom<Update<'a>> for stacked_view::Update<'a> {
@@ -67,6 +68,7 @@ impl<'a> TryFrom<Update<'a>> for stacked_view::Update<'a> {
             Update::SetInputText { text, scroll_to_bottom } => {
                 Ok(stacked_view::Update::SetInputText { text, scroll_to_bottom })
             }
+            Update::Rewind { item_id } => Ok(stacked_view::Update::Rewind { item_id }),
         }
     }
 }

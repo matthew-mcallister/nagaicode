@@ -26,6 +26,7 @@ use crate::command_history::{CommandHistory, CommandHistoryItem};
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::item::Item;
+use crate::item::ItemContent;
 use crate::model::Model;
 use crate::model::RevalidateModelsTask;
 use crate::provider::Provider;
@@ -54,6 +55,9 @@ const WELCOME: &str = dedent!(
 
     Type /help for a list of commands."
 );
+
+const REWIND_MESSAGE: &str =
+    "Reverted to previous prompt. Next prompt will overwrite history. To undo, enter:\n\n/session restore";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
@@ -411,6 +415,7 @@ impl App {
         self.tasks.clear();
         (self.send, self.recv) = unbounded_channel();
         self.session = None;
+        self.rewind_item_id = None;
         let (w, h) = self.terminal.size()?;
         let ui = UiContext::new(Arc::clone(&self.tool_registry));
         self.chat = Chat::new(&ui, w, h, self.theme);
@@ -446,7 +451,17 @@ impl App {
             return Ok(());
         };
         let session_id = session.id;
-        self.rewind_item_id = Item::max_id(&mut self.conn, session_id, self.rewind_item_id)?;
+        let item_id = Item::max_prompt_id(&mut self.conn, session_id, self.rewind_item_id)?;
+        let Some(item_id) = item_id else { return Ok(()); };
+        self.rewind_item_id = Some(item_id);
+        let Some(item) = Item::get(&mut self.conn, item_id)? else { return Ok(()); };
+        let ItemContent::UserText(text) = &item.content else { panic!("wrong item type"); };
+        self.chat.handle_update(Update::Rewind { item_id });
+        self.chat.handle_update(Update::SetInputText {
+            text,
+            scroll_to_bottom: true,
+        });
+        self.chat.handle_update(Update::HelpMessage(REWIND_MESSAGE));
         Ok(())
     }
 

@@ -121,6 +121,7 @@ pub enum Update<'a> {
     CommandPrompt(&'a str),
     CommandOutput(&'a str),
     SetInputText { text: &'a str, scroll_to_bottom: bool },
+    Rewind { item_id: i32 },
 }
 
 impl<'a> TryFrom<Update<'a>> for history_view::Update<'a> {
@@ -135,6 +136,7 @@ impl<'a> TryFrom<Update<'a>> for history_view::Update<'a> {
             Update::CommandPrompt(content) => Ok(history_view::Update::CommandPrompt(content)),
             Update::CommandOutput(content) => Ok(history_view::Update::CommandOutput(content)),
             Update::SetInputText { .. } => Err(()),
+            Update::Rewind { item_id } => Ok(history_view::Update::Rewind { item_id }),
         }
     }
 }
