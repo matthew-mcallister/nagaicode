@@ -751,6 +751,11 @@ async fn test_app_session_switch_missing() {
 
 #[tokio::test]
 async fn test_rewind() {
+    const REWIND_MESSAGE: &str =
+        "Reverted to previous prompt. Next prompt will overwrite history. To undo, enter:\n\
+        \n\
+        /session restore";
+
     fn history_values(app: &App) -> Vec<String> {
         app.query("/chat/stacked/inner/history/history/items")
             .unwrap()
@@ -770,17 +775,17 @@ async fn test_rewind() {
     assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", "prompt 3", "response 3"]);
 
     submit_await(&mut app, "/session rewind").await;
-    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2"]);
+    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", REWIND_MESSAGE]);
 
     submit_await(&mut app, "/session rewind").await;
-    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1"]);
+    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", REWIND_MESSAGE]);
 
     // Undoes both rewinds
     submit_await(&mut app, "/session restore").await;
     assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", "prompt 3", "response 3"]);
 
     submit_await(&mut app, "/session rewind").await;
-    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2"]);
+    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", REWIND_MESSAGE]);
 
     submit_await(&mut app, "prompt 4").await;
     assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", "prompt 4", "response 4"]);
