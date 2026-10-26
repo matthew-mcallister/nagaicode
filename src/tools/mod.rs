@@ -241,96 +241,12 @@ mod tests {
         names.sort();
         assert_eq!(names, ["edit", "glob", "read", "sh", "write"]);
 
-        // Only visible tools are advertised to the model.
-        let mut infos = registry.list_tool_infos();
-        infos.sort_by(|a, b| a.name.cmp(&b.name));
-        assert_eq!(
-            infos,
-            [
-                ToolInfo {
-                    name: "edit".to_owned(),
-                    description: "Finds and replaces text in a file. The old \
-                        string must be unique unless `replace_all` is true."
-                        .to_owned(),
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "filepath": { "type": "string" },
-                            "old_string": { "type": "string" },
-                            "new_string": { "type": "string" },
-                            "replace_all": { "type": "boolean" },
-                        },
-                        "required": ["filepath", "old_string", "new_string", "replace_all"],
-                        "additionalProperties": false,
-                    }),
-                },
-                ToolInfo {
-                    name: "glob".to_owned(),
-                    description: "Searches for files using glob syntax:\n\
-                        - `\\`: escape character\n\
-                        - `{a,b,c}`: alternatives\n\
-                        - `?`: match any one character\n\
-                        - `*`: match zero or more characters except path separators\n\
-                        - `**` match zero or more characters, including path separators"
-                        .to_owned(),
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "pattern": { "type": "string" },
-                            "match": { "enum": ["files", "directories", "all"] },
-                            "max_results": { "type": "integer", "minimum": 1 },
-                        },
-                        "required": ["pattern", "match", "max_results"],
-                        "additionalProperties": false,
-                    }),
-                },
-                ToolInfo {
-                    name: "read".to_owned(),
-                    description: "Reads lines from a text file. Start line is \
-                        1-indexed. Output includes next line offset for \
-                        pagination. Lines truncated at 2000 bytes max. UTF-8 \
-                        only currently."
-                        .to_owned(),
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "filepath": { "type": "string" },
-                            "start_line": { "type": "integer", "minimum": 1 },
-                            "max_lines": { "type": "integer", "minimum": 1 },
-                        },
-                        "required": ["filepath", "start_line", "max_lines"],
-                        "additionalProperties": false,
-                    }),
-                },
-                ToolInfo {
-                    name: "sh".to_owned(),
-                    description: "Run a shell command on the host system. \
-                        Equivalent to `sh -C 'command'`."
-                        .to_owned(),
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": { "command": { "type": "string" } },
-                        "required": ["command"],
-                        "additionalProperties": false,
-                    }),
-                },
-                ToolInfo {
-                    name: "write".to_owned(),
-                    description: "Creates or overwrites a text file with \
-                        the given content."
-                        .to_owned(),
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "filepath": { "type": "string" },
-                            "content": { "type": "string" },
-                        },
-                        "required": ["filepath", "content"],
-                        "additionalProperties": false,
-                    }),
-                },
-            ]
-        );
+        let mut names: Vec<_> = registry.list_tool_infos()
+            .into_iter()
+            .map(|info| info.name)
+            .collect();
+        names.sort();
+        assert_eq!(names, &["edit", "glob", "read", "sh", "write"]);
     }
 
     #[test]

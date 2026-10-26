@@ -32,7 +32,7 @@ impl GlobTool {
                 "type": "object",
                 "properties": {
                     "pattern": { "type": "string" },
-                    "match": { "enum": ["files", "directories", "all"] },
+                    "match": { "type": "string", "enum": ["files", "directories", "all"] },
                     "max_results": { "type": "integer", "minimum": 1 },
                 },
                 "required": ["pattern", "match", "max_results"],
