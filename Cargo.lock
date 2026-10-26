@@ -1152,7 +1152,7 @@ dependencies = [
 [[package]]
 name = "nglob"
 version = "0.99.0"
-source = "git+https://github.com/matthew-mcallister/nglob.git?tag=v0.99.0#e416886dcb67071bc4e6668f323252f0f0ad51f4"
+source = "git+https://github.com/matthew-mcallister/nglob.git?tag=v0.99.1#7bad56230d07f274620d3438f33d0252107c1daf"
 dependencies = [
  "bitflags 2.13.2",
  "fnv",
