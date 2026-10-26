@@ -60,7 +60,7 @@ macro_rules! string_render_item {
 }
 
 string_render_item!(HelpRenderItem, "help");
-string_render_item!(RewindMessageRenderItem, "rewind_message");
+string_render_item!(RewindRenderItem, "rewind_message");
 string_render_item!(ErrorRenderItem, "error");
 string_render_item!(UserRenderItem, "user");
 string_render_item!(ThoughtRenderItem, "thought");
@@ -79,14 +79,14 @@ impl RenderItem for HelpRenderItem {
     }
 }
 
-impl RenderItem for RewindMessageRenderItem {
+impl RenderItem for RewindRenderItem {
     fn render(
         &self,
         theme: &Theme,
         width: usize,
         _resume: ResumePoint,
     ) -> (Vec<StyledString>, ResumePoint) {
-        (render_help(theme, width, &self.0), Default::default())
+        (render_rewind_message(theme, width, &self.0), Default::default())
     }
 }
 
@@ -192,6 +192,26 @@ pub fn render_help(
                 let mut s = StyledString::new(style, width + 4);
                 s.push("▐ ", 2);
                 s.set_text(theme.text_quote);
+                s.push(&row.to_padded_string(width - 4), width - 4);
+                s.push("  ", 2);
+                s
+            })
+        })
+        .collect()
+}
+
+pub fn render_rewind_message(
+    theme: &Theme,
+    width: usize,
+    content: &str,
+) -> Vec<StyledString> {
+    let style = Style::new(theme.text_subtle, theme.bg_base);
+    content.lines().flat_map(|line| {
+        wrap_line(width - 4, line)
+            .into_iter()
+            .map(|row| {
+                let mut s = StyledString::new(style, width + 4);
+                s.push("  ", 2);
                 s.push(&row.to_padded_string(width - 4), width - 4);
                 s.push("  ", 2);
                 s
@@ -346,6 +366,22 @@ mod tests {
         assert_eq!(render("hello", 14), format!("{help_style}▐ {italic}hello       "));
         assert_eq!(render("foo\nbar", 12), format!("{help_style}▐ {italic}foo       \n{help_style}▐ {italic}bar       "));
         assert_eq!(render("hello world", 12), format!("{help_style}▐ {italic}hello     \n{help_style}▐ {italic}world     "));
+        assert_eq!(render("", 8), "");
+    }
+
+    #[test]
+    fn test_render_rewind_message() {
+        let theme = &THEME_DARK;
+        let style = Style::new(theme.text_subtle, theme.bg_base);
+
+        fn render(content: &str, width: usize) -> String {
+            let mut lines = super::render_rewind_message(&THEME_DARK, width, content);
+            render_canvas(&mut lines[..])
+        }
+
+        assert_eq!(render("hello", 14), format!("{style}  hello       "));
+        assert_eq!(render("foo\nbar", 12), format!("{style}  foo       \n{style}  bar       "));
+        assert_eq!(render("hello world", 12), format!("{style}  hello     \n{style}  world     "));
         assert_eq!(render("", 8), "");
     }
 

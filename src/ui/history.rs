@@ -16,7 +16,7 @@ use crate::ui::canvas::Canvas;
 use crate::ui::UiContext;
 use crate::ui::render_item::{
     CommandOutputRenderItem, CommandPromptRenderItem, ErrorRenderItem, HelpRenderItem,
-    RenderItem, RewindMessageRenderItem, get_item_content,
+    RenderItem, RewindRenderItem, get_item_content,
 };
 use crate::ui::markdown::ResumePoint;
 use crate::ui::style::Theme;
@@ -791,7 +791,7 @@ impl History {
             Update::ItemUpdated { item } => self.on_item_updated(item),
             Update::HelpMessage(content) => self.add_content(Box::new(HelpRenderItem::new(content))),
             Update::RewindMessage(content) => {
-                self.add_content(Box::new(RewindMessageRenderItem::new(content)))
+                self.add_content(Box::new(RewindRenderItem::new(content)))
             }
             Update::ErrorMessage(content) => self.add_content(Box::new(ErrorRenderItem::new(content))),
             Update::CommandPrompt(content) => {
