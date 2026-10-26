@@ -56,8 +56,7 @@ const WELCOME: &str = dedent!(
     Type /help for a list of commands."
 );
 
-const REWIND_MESSAGE: &str =
-    "Reverted to previous prompt. Next prompt will overwrite history. To undo, enter:\n\n/session restore";
+const REWIND_MESSAGE: &str = "Reverted last prompt. To restore, type '/session restore'";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEvent {
@@ -461,14 +460,14 @@ impl App {
         let item_id = Item::max_prompt_id(&mut self.conn, session_id, self.rewind_item_id)?;
         let Some(item_id) = item_id else { return Ok(()); };
         self.rewind_item_id = Some(item_id);
-        let Some(item) = Item::get(&mut self.conn, item_id)? else { return Ok(()); };
+        let Some(item) = Item::get(&mut self.conn, item_id)? else { panic!("item missing"); };
         let ItemContent::UserText(text) = &item.content else { panic!("wrong item type"); };
         self.chat.handle_update(Update::Rewind { item_id });
         self.chat.handle_update(Update::SetInputText {
             text,
             scroll_to_bottom: true,
         });
-        self.chat.handle_update(Update::HelpMessage(REWIND_MESSAGE));
+        self.chat.handle_update(Update::RewindMessage(REWIND_MESSAGE));
         Ok(())
     }
 

@@ -16,7 +16,7 @@ use crate::ui::canvas::Canvas;
 use crate::ui::UiContext;
 use crate::ui::render_item::{
     CommandOutputRenderItem, CommandPromptRenderItem, ErrorRenderItem, HelpRenderItem,
-    RenderItem, get_item_content,
+    RenderItem, RewindMessageRenderItem, get_item_content,
 };
 use crate::ui::markdown::ResumePoint;
 use crate::ui::style::Theme;
@@ -588,12 +588,23 @@ impl History {
         }
     }
 
+    fn clear_rewind_message(&mut self) {
+        if let Some(last) = self.last_item() {
+            // TODO: Probably shouldn't depend on DataQuery here
+            if self.item[last].content.query("/type").unwrap() == json!("rewind_message") {
+                self.pop();
+            }
+        }
+    }
+
     fn add_item(
         &mut self,
         content: Box<dyn RenderItem>,
         item_id: Option<i32>,
         seqno: Option<i64>,
     ) {
+        self.clear_rewind_message();
+
         let prev = if let Some(seqno) = seqno {
             self.find_insertion_point(seqno)
         } else {
@@ -779,6 +790,9 @@ impl History {
             Update::ItemCreated { item } => self.on_item_created(item),
             Update::ItemUpdated { item } => self.on_item_updated(item),
             Update::HelpMessage(content) => self.add_content(Box::new(HelpRenderItem::new(content))),
+            Update::RewindMessage(content) => {
+                self.add_content(Box::new(RewindMessageRenderItem::new(content)))
+            }
             Update::ErrorMessage(content) => self.add_content(Box::new(ErrorRenderItem::new(content))),
             Update::CommandPrompt(content) => {
                 self.add_content(Box::new(CommandPromptRenderItem::new(content)))
@@ -796,6 +810,7 @@ pub enum Update<'a> {
     ItemCreated { item: &'a Item },
     ItemUpdated { item: &'a Item },
     HelpMessage(&'a str),
+    RewindMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
     CommandOutput(&'a str),

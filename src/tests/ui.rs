@@ -757,10 +757,7 @@ async fn test_app_session_switch_missing() {
 
 #[tokio::test]
 async fn test_rewind() {
-    const REWIND_MESSAGE: &str =
-        "Reverted to previous prompt. Next prompt will overwrite history. To undo, enter:\n\
-        \n\
-        /session restore";
+    const REWIND_MESSAGE: &str = "Reverted last prompt. To restore, type '/session restore'";
 
     fn history_values(app: &App) -> Vec<String> {
         app.query("/chat/stacked/inner/history/history/items")

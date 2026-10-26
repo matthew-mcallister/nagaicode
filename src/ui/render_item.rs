@@ -60,6 +60,7 @@ macro_rules! string_render_item {
 }
 
 string_render_item!(HelpRenderItem, "help");
+string_render_item!(RewindMessageRenderItem, "rewind_message");
 string_render_item!(ErrorRenderItem, "error");
 string_render_item!(UserRenderItem, "user");
 string_render_item!(ThoughtRenderItem, "thought");
@@ -68,6 +69,17 @@ string_render_item!(CommandPromptRenderItem, "command_prompt");
 string_render_item!(CommandOutputRenderItem, "command_output");
 
 impl RenderItem for HelpRenderItem {
+    fn render(
+        &self,
+        theme: &Theme,
+        width: usize,
+        _resume: ResumePoint,
+    ) -> (Vec<StyledString>, ResumePoint) {
+        (render_help(theme, width, &self.0), Default::default())
+    }
+}
+
+impl RenderItem for RewindMessageRenderItem {
     fn render(
         &self,
         theme: &Theme,
