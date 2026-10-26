@@ -355,6 +355,8 @@ impl App {
 
     /// Runs the main event loop.
     pub async fn run(&mut self) -> AnyResult<()> {
+        self.spawn_revalidate_models();
+
         self.terminal.enable_raw_mode()?;
         execute!(
             self.terminal.stdout(),
