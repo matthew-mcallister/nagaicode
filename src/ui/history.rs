@@ -512,6 +512,8 @@ impl History {
         if width == self.width {
             return;
         }
+        let old_row = self.viewport.top_row;
+        let old_height = self.num_rows();
         self.width = width;
 
         let saved: Vec<HistoryItem> = self.item.drain().collect();
@@ -557,7 +559,24 @@ impl History {
                 self.by_item_id.insert(item_id, id);
             }
         }
-        self.set_viewport_bottom_at(self.head, self.num_rows());
+
+        let new_height = self.num_rows();
+        if new_height == 0 { return; }
+        if old_height == 0 {
+            self.set_viewport_top_at(self.first_row(), 0);
+            return;
+        }
+
+        self.viewport.prev_bottom_item = self.item_head;
+        self.viewport.bottom_item_row = new_height;
+
+        let new_row = (old_row * new_height) / old_height;
+        if new_row >= new_height {
+            self.set_viewport_top_at(self.head, new_height);
+        } else {
+            let bottom = self.row_offset(self.first_row(), new_row as isize).unwrap();
+            self.set_viewport_top_at(bottom, new_row);
+        }
     }
 
     fn add_content(&mut self, content: Box<dyn RenderItem>) {
@@ -1191,6 +1210,28 @@ mod tests {
         assert_eq!(h.num_rows(), 32);
         assert_eq!(h.viewport.top_row, 11);
         assert_eq!(h.viewport.bottom_row, 15);
+    }
+
+    #[test]
+    fn test_set_width() {
+        // After padding, can fit four instances of "1234 " per line
+        // So nine lines + 1 row of trailing padding
+        let mut h = history(24, 2);
+        h.add_content(Box::new(ResponseRenderItem::new("1234 ".repeat(36))));
+        assert_eq!(h.num_rows(), 10);
+
+        h.set_viewport_top(h.row_offset(h.first_row(), 4).unwrap());
+        assert_eq!(h.viewport.top_row, 4);
+        assert_eq!(h.viewport.bottom_row, 6);
+
+        h.set_width(14);
+        assert_eq!(h.num_rows(), 20);
+        assert_eq!(h.viewport.top_row, 8);
+        assert_eq!(h.viewport.bottom_row, 10);
+
+        h.set_width(24);
+        assert_eq!(h.viewport.top_row, 4);
+        assert_eq!(h.viewport.bottom_row, 6);
     }
 
     #[test]

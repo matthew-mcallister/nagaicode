@@ -547,6 +547,8 @@ impl App {
     /// Spawns an agent to handle the submitted prompt.
     async fn submit_prompt(&mut self, prompt: &str) -> AnyResult<()> {
         // Delete rewound items
+        // XXX: As long as we're doing hard deletes then should delete Turns
+        // and Responses as well
         if let Some(rewind_item_id) = self.rewind_item_id.take() {
             if let Some(session_id) = self.session.as_ref().map(|session| session.id) {
                 Item::delete_from(&mut self.conn, session_id, rewind_item_id)?;
