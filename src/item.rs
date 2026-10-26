@@ -430,6 +430,20 @@ impl Item {
         Ok(Self::from_row(&row).unwrap())
     }
 
+    pub fn delete_from(
+        conn: &mut SqliteConnection,
+        session_id: i32,
+        from_id: i32,
+    ) -> AnyResult<usize> {
+        use crate::schema::item::dsl;
+        let count = diesel::delete(
+            dsl::item
+                .filter(dsl::session_id.eq(session_id))
+                .filter(dsl::id.ge(from_id)),
+        ).execute(conn)?;
+        Ok(count)
+    }
+
     /// Updates and commits output of a tool call.
     ///
     /// Panics if the item is not a tool call.
