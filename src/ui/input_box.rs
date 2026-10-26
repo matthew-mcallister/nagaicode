@@ -1012,6 +1012,7 @@ impl InputBox {
                 let start = self.grapheme_start();
                 let end = self.last_grapheme();
                 if start != end {
+                    self.buffer.clear();
                     self.buffer_append(start, end);
                     self.splice(start, end, "");
                 } else {
