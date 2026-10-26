@@ -446,6 +446,13 @@ impl App {
         Ok(())
     }
 
+    pub(crate) async fn restore(&mut self) -> AnyResult<()> {
+        let Some(session_id) = self.session.as_ref().map(|session| session.id) else {
+            return Ok(());
+        };
+        self.switch_session(session_id).await
+    }
+
     pub fn rewind(&mut self) -> AnyResult<()> {
         let Some(session) = &self.session else {
             return Ok(());
@@ -463,10 +470,6 @@ impl App {
         });
         self.chat.handle_update(Update::HelpMessage(REWIND_MESSAGE));
         Ok(())
-    }
-
-    pub fn restore(&mut self) {
-        self.rewind_item_id = None;
     }
 
     /// Processes any events sent by the active task that are still pending.

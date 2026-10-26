@@ -486,7 +486,7 @@ pub async fn run_session_command(
             Ok(String::new())
         }
         SessionCommand::Restore => {
-            app.restore();
+            app.restore().await?;
             Ok(String::new())
         }
     }

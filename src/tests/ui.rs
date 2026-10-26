@@ -790,14 +790,14 @@ async fn test_rewind() {
 
     // Undoes both rewinds
     submit_await(&mut app, "/session restore").await;
-    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", "prompt 3", "response 3"]);
+    assert_eq!(&history_values(&app)[..], ["prompt 1", "response 1", "prompt 2", "response 2", "prompt 3", "response 3"]);
 
     submit_await(&mut app, "/session rewind").await;
-    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", REWIND_MESSAGE]);
+    assert_eq!(&history_values(&app)[..], ["prompt 1", "response 1", "prompt 2", "response 2", REWIND_MESSAGE]);
     ctrl_c(&mut app).await;
 
     submit_await(&mut app, "prompt 4").await;
-    assert_eq!(&history_values(&app)[1..], ["prompt 1", "response 1", "prompt 2", "response 2", "prompt 4", "response 4"]);
+    assert_eq!(&history_values(&app)[..], ["prompt 1", "response 1", "prompt 2", "response 2", "prompt 4", "response 4"]);
 
     let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
     let items = Item::list_by_session(app.conn(), session_id).unwrap();
