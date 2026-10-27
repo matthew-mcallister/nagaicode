@@ -15,6 +15,7 @@ use crate::error::{AnyError, AnyResult};
 use crate::interface::InterfaceId;
 use crate::model::Model;
 use crate::provider::Provider;
+use crate::query::DataQuery;
 use crate::schema::provider::dsl;
 use crate::session::Session;
 use crate::task::{Task, TaskContext};
@@ -25,7 +26,13 @@ pub enum Command {
     Provider(ProviderCommand),
     Model(ModelCommand),
     Session(SessionCommand),
+    Debug(DebugCommand),
     Quit,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DebugCommand {
+    Query(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -180,6 +187,7 @@ fn parse_args(args: Vec<String>) -> Result<Command, AnyError> {
         "p" | "provider" => parse_provider(parser.args),
         "m" | "model" => parse_model(parser.args),
         "s" | "session" => parse_session(parser.args),
+        "debug" => parse_debug(parser.args),
         "q" | "quit" => parse_quit(parser.args),
         "h" | "help" => Err(show_usage(USAGE)),
         command => Err(unknown_command(USAGE, command)),
@@ -363,6 +371,31 @@ fn parse_session(args: &[&str]) -> Result<Command, AnyError> {
     }
 }
 
+fn parse_debug(args: &[&str]) -> Result<Command, AnyError> {
+    const USAGE: &str = dedent!("
+        Usage:
+
+          /debug query '<query>'
+    ");
+    let mut parser = Parser::new(USAGE, args, &[]);
+    match parser.expect()? {
+        "query" => parse_debug_query(parser.args),
+        command => Err(unknown_command(USAGE, command)),
+    }
+}
+
+fn parse_debug_query(args: &[&str]) -> Result<Command, AnyError> {
+    const USAGE: &str = dedent!("
+        Usage:
+
+          /debug query '<query>'
+    ");
+    let mut parser = Parser::new(USAGE, args, &[]);
+    let query = parser.expect()?;
+    parser.expect_empty()?;
+    Ok(Command::Debug(DebugCommand::Query(query.into())))
+}
+
 pub fn parse_command(text: &str) -> Result<Command, AnyError> {
     let args = shellwords::split(text)?;
     parse_args(args)
@@ -445,6 +478,15 @@ pub fn run_model_command(
                 .ok_or_else(|| anyhow!("No model '{provider}:{model}'"))?;
             app.switch_model(p, m)?;
             Ok(format!("Using '{provider}:{model}'"))
+        }
+    }
+}
+
+pub fn run_debug_command(app: &App, command: DebugCommand) -> Result<String, AnyError> {
+    match command {
+        DebugCommand::Query(query) => {
+            let value = app.query(&query).map_err(|e| anyhow!("{e}"))?;
+            Ok(format!("{query}\n{value:#}"))
         }
     }
 }

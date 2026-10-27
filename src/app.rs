@@ -390,6 +390,7 @@ impl App {
             Command::Provider(cmd) => crate::command::run_provider_command(self, cmd),
             Command::Model(cmd) => crate::command::run_model_command(self, cmd),
             Command::Session(cmd) => crate::command::run_session_command(self, cmd).await,
+            Command::Debug(cmd) => crate::command::run_debug_command(self, cmd),
             Command::Quit => {
                 self.quit = true;
                 Ok(String::new())
