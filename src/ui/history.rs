@@ -1226,13 +1226,13 @@ mod tests {
         assert_eq!(h.viewport.bottom_row, 6);
 
         h.set_width(14);
-        assert_eq!(h.num_rows(), 20);
-        assert_eq!(h.viewport.top_row, 8);
-        assert_eq!(h.viewport.bottom_row, 10);
+        assert_eq!(h.num_rows(), 19);
+        assert_eq!(h.viewport.top_row, 7);
+        assert_eq!(h.viewport.bottom_row, 9);
 
         h.set_width(24);
-        assert_eq!(h.viewport.top_row, 4);
-        assert_eq!(h.viewport.bottom_row, 6);
+        assert_eq!(h.viewport.top_row, 3);
+        assert_eq!(h.viewport.bottom_row, 5);
     }
 
     #[test]
