@@ -516,6 +516,7 @@ impl History {
         let old_height = self.num_rows();
         self.width = width;
 
+        self.item.remove(self.item_head);
         let saved: Vec<HistoryItem> = self.item.drain().collect();
 
         self.item.clear();
