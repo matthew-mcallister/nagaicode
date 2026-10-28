@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
@@ -14,7 +15,7 @@ use crossterm::terminal::{
 use diesel::SqliteConnection;
 use dedent::dedent;
 use fnv::FnvHashSet;
-use futures::{StreamExt, pin_mut};
+use futures::{FutureExt, StreamExt, pin_mut};
 use serde_json::json;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -103,6 +104,7 @@ enum Poll {
 
 pub struct App {
     terminal: DefaultTerminal,
+    terminal_captured: bool,
     chat: Chat,
     selected_model: Option<(Provider, Model)>,
     quit: bool,
@@ -151,6 +153,7 @@ impl App {
         let command_history = CommandHistory::load(&mut conn)?;
         Ok(Self {
             terminal,
+            terminal_captured: false,
             chat,
             selected_model,
             quit: false,
@@ -353,23 +356,34 @@ impl App {
         Ok(())
     }
 
+    fn capture_terminal(&mut self) -> AnyResult<()> {
+        if !self.terminal_captured {
+            self.terminal.enable_raw_mode()?;
+            execute!(
+                self.terminal.stdout(),
+                EnterAlternateScreen,
+                DisableLineWrap
+            )?;
+            self.terminal_captured = true;
+        }
+        Ok(())
+    }
+
+    fn release_terminal(&mut self) -> AnyResult<()> {
+        if self.terminal_captured {
+            execute!(self.terminal.stdout(), EnableLineWrap, LeaveAlternateScreen)?;
+            self.terminal.disable_raw_mode()?;
+            self.terminal_captured = false;
+        }
+        Ok(())
+    }
+
     /// Runs the main event loop.
     pub async fn run(&mut self) -> AnyResult<()> {
         self.spawn_revalidate_models();
-
-        self.terminal.enable_raw_mode()?;
-        execute!(
-            self.terminal.stdout(),
-            EnterAlternateScreen,
-            DisableLineWrap
-        )?;
-
+        self.capture_terminal()?;
         self.run_event_loop().await?;
-
-        // FIXME: This teardown code should run after uncaught errors and panics
-        execute!(self.terminal.stdout(), EnableLineWrap, LeaveAlternateScreen)?;
-        self.terminal.disable_raw_mode()?;
-
+        self.release_terminal()?;
         Ok(())
     }
 
@@ -711,6 +725,12 @@ impl App {
     }
 }
 
+impl Drop for App {
+    fn drop(&mut self) {
+        let _ = self.release_terminal();
+    }
+}
+
 impl DataQuery for App {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
@@ -755,5 +775,22 @@ impl DataQuery for App {
 
 /// Runs the app.
 pub async fn run() -> AnyResult<()> {
-    App::new()?.run().await
+    let mut app = App::new()?;
+    let result = AssertUnwindSafe(app.run()).catch_unwind().await;
+    drop(app);
+
+    // Handle panic
+    result.unwrap_or_else(|payload| {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned());
+        Err(match message {
+            Some(message) => anyhow!(message),
+            None => anyhow!(
+                "unknown error occurred. check log files. you may find \
+                more details if you redirect stderr to a file."
+            ),
+        })
+    })
 }
