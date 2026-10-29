@@ -1,7 +1,7 @@
 // FIXME: need to cap prefix size/set a lower bound on width to prevent
 // underflow and broken layout
 // FIXME: probably should escape the actual escape char if it appears in source
-use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Text};
+use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Table, TableCell, Text};
 use serde_json::json;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -332,9 +332,12 @@ fn push_rows(fb: &mut FlowBuilder<'_>, rows: &[Row]) {
     }
 }
 
+fn push_styled(flow: &mut FlowBuilder<'_>, styled: &StyledString) {
+    flow.row.push_styled(styled);
+    flow.end_row();
+}
+
 /// Renders phrasing content (the inline children of a paragraph or heading).
-/// The returned iterator is owned, so `children` need only live for the
-/// duration of this call.
 fn push_phrasing(flow: &mut FlowBuilder<'_>, children: &[Node]) {
     let mut phrasing = PhrasingBuilder::new(flow.theme, flow.prefix.cur_style());
     phrasing.push_all(children);
@@ -489,10 +492,6 @@ fn definition(flow: &mut FlowBuilder<'_>, definition: &Definition) {
     push_rows(flow, &rows);
 }
 
-/// Renders a list. Unordered lists prefix the first row of each item with
-/// "- ", ordered lists with a left-aligned number. Continuation rows are
-/// indented to align with the item content. When the list is spread, a blank
-/// line separates the children.
 fn list(flow: &mut FlowBuilder<'_>, list: &List) {
     // The number prefix is padded so all items share a common width
     let prefix_width = if list.ordered {
@@ -544,8 +543,8 @@ const OVERSIZED_COL_MIN_WIDTH: usize = 20;
 const COL_MAX_WIDTH: usize = 60;
 
 // Calculates width of each column in a table
-fn column_width(container_width: usize, widths: &mut [usize]) {
-    let wc = container_width;
+fn column_width(content_width: usize, widths: &mut [usize]) {
+    let wc = content_width;
     for w in widths.iter_mut() {
         *w = (*w).min(COL_MAX_WIDTH);
     }
@@ -562,17 +561,17 @@ fn column_width(container_width: usize, widths: &mut [usize]) {
         // Greedily shrink the widest columns until we fit
         let mut sorted = widths.to_vec();
         sorted.sort_by(|a, b| b.cmp(a));
-        let mut level = widths[0];
+        let mut level = sorted[0];
         let mut run = 0;
-        let mut extra = 0;
+        let extra;
         let mut i = 0;
         let mut avail = total - wc;
         loop {
-            while widths.get(i) == Some(&level) {
+            while sorted.get(i) == Some(&level) {
                 i += 1;
                 run += 1;
             }
-            let next_level = widths.get(i).copied().unwrap_or(OVERSIZED_COL_MIN_WIDTH);
+            let next_level = sorted.get(i).copied().unwrap_or(OVERSIZED_COL_MIN_WIDTH);
             let delta = level - next_level;
             let (rows, rem) = (avail / run, avail % run);
             if rows >= delta {
@@ -594,6 +593,104 @@ fn column_width(container_width: usize, widths: &mut [usize]) {
             *w = new_max + carry;
             extra -= carry;
         }
+    }
+}
+
+#[derive(Debug)]
+struct TableBuilder<'t, 'n> {
+    // input
+    theme: &'t Theme,
+    base_style: Style,
+    node: &'n Table,
+    col_widths: Vec<usize>,
+    // state
+    row_num: usize,
+    rendered: Vec<StyledString>,
+    canvas_row: usize,
+    canvas_col: usize,
+}
+
+impl<'t, 'n> TableBuilder<'t, 'n> {
+    fn new(
+        theme: &'t Theme,
+        base_style: Style,
+        node: &'n Table,
+        col_widths: Vec<usize>,
+    ) -> Self {
+        Self {
+            theme,
+            base_style,
+            node,
+            col_widths,
+            row_num: Default::default(),
+            rendered: Default::default(),
+            canvas_row: Default::default(),
+            canvas_col: Default::default(),
+        }
+    }
+
+    // Wrap content to column width, compute row height, push rows w/ leading
+    // and trailing horizontal padding.
+    fn push_row(&mut self, cells: &[PhrasingBuilder<'t>]) {
+        todo!("use FlowBuilder to convert each cell to rows")
+    }
+
+    // Push vertical line (|\n|\n|\n...)
+    fn push_vertical(&mut self) {
+        todo!()
+    }
+
+    // Push "+---+---+..." (or "+===+===+..." if row_num == 0)
+    fn push_horizontal(&mut self) {
+        todo!()
+    }
+}
+
+fn push_table(flow: &mut FlowBuilder<'_>, node: &Table) {
+    assert!(!node.children.is_empty(), "empty table");
+    let Node::TableRow(ref row) = node.children[0] else { panic!() };
+    let num_rows = node.children.len();
+    let num_columns = row.children.len();
+
+    let (theme, base_style) = (flow.theme, flow.prefix.cur_style());
+    let cells: Vec<Vec<_>> = node.children.iter().map(|row| {
+        let Node::TableRow(row) = row else { panic!() };
+        row.children.iter().map(|cell| {
+            let Node::TableCell(cell) = cell else { panic!() };
+            let mut phrasing = PhrasingBuilder::new(theme, base_style);
+            phrasing.push_all(&cell.children);
+            phrasing
+        }).collect()
+    }).collect();
+
+    // 2 cols padding left/right edges + 3 cols padding between each column
+    let padding = 4 + 3 * (num_columns - 1);
+    let content_width = flow.remaining_width() - padding;
+    let mut col_widths: Vec<_> = (0..num_columns)
+        .map(|col|
+            (0..num_rows)
+                .map(|row| cells[row][col].plain_text.width())
+                .max()
+                .unwrap()
+        )
+        .collect();
+    column_width(content_width, &mut col_widths);
+
+    let mut builder = TableBuilder::new(
+        flow.theme,
+        flow.prefix.cur_style(),
+        node,
+        col_widths,
+    );
+
+    builder.push_horizontal();
+    for row in cells {
+        builder.push_row(&row);
+    }
+
+    for row in builder.rendered {
+        // TODO: Wrap overlong lines
+        push_styled(flow, &row);
     }
 }
 
@@ -1132,12 +1229,14 @@ mod tests {
     fn table() {
         let style = THEME_DARK.base_style();
         assert_eq!(
-            render("| H1 | H2 |\n| --- | --- |\n| foo | baz |", 20),
+            render("| H1 | H2 |\n| --- | --- |\n| foo | baz |\n| bar | bum |", 20),
             format!("\
                 {style}+-----+-----+\n\
                 {style}| H1  | H2  |\n\
-                {style}+-----+-----+\n\
+                {style}+=====+=====+\n\
                 {style}| foo | baz |\n\
+                {style}+-----+-----+\n\
+                {style}| bar | bum |\n\
                 {style}+-----+-----+\
             "),
         );
