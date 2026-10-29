@@ -539,6 +539,64 @@ fn list(flow: &mut FlowBuilder<'_>, list: &List) {
     }
 }
 
+// Minimum width of any column that is shrunk to help fit the table
+const OVERSIZED_COL_MIN_WIDTH: usize = 20;
+const COL_MAX_WIDTH: usize = 60;
+
+// Calculates width of each column in a table
+fn column_width(container_width: usize, widths: &mut [usize]) {
+    let wc = container_width;
+    for w in widths.iter_mut() {
+        *w = (*w).min(COL_MAX_WIDTH);
+    }
+    let total: usize = widths.iter().copied().sum();
+    if total <= wc { return; }
+
+    let excess: usize = widths.iter()
+        .map(|w| w.saturating_sub(OVERSIZED_COL_MIN_WIDTH))
+        .sum();
+    let (new_max, mut extra) = if total - wc >= excess {
+        // Table is too oversized, make all columns as small as possible
+        (OVERSIZED_COL_MIN_WIDTH, 0)
+    } else {
+        // Greedily shrink the widest columns until we fit
+        let mut sorted = widths.to_vec();
+        sorted.sort_by(|a, b| b.cmp(a));
+        let mut level = widths[0];
+        let mut run = 0;
+        let mut extra = 0;
+        let mut i = 0;
+        let mut avail = total - wc;
+        loop {
+            while widths.get(i) == Some(&level) {
+                i += 1;
+                run += 1;
+            }
+            let next_level = widths.get(i).copied().unwrap_or(OVERSIZED_COL_MIN_WIDTH);
+            let delta = level - next_level;
+            let (rows, rem) = (avail / run, avail % run);
+            if rows >= delta {
+                avail -= delta * run;
+                level = next_level;
+                continue;
+            }
+            let carry = (rem > 0) as usize;
+            level -= rows + carry;
+            extra = run - rem;
+            break;
+        }
+        (level, extra)
+    };
+
+    for w in widths.iter_mut() {
+        let carry = extra.min(1);
+        if *w > new_max {
+            *w = new_max + carry;
+            extra -= carry;
+        }
+    }
+}
+
 fn push_flow_node(flow: &mut FlowBuilder<'_>, node: &Node) {
     match node {
         Node::Root(root) => push_flow_children(flow, true, &root.children),
@@ -640,15 +698,14 @@ pub fn render_markdown(
             constructs: markdown::Constructs {
                 gfm_footnote_definition: true,
                 gfm_label_start_footnote: true,
+                gfm_table: true,
                 math_flow: true,
                 math_text: true,
                 ..Default::default()
             },
             ..Default::default()
         },
-    )
-    .expect("invalid markdown");
-
+    ).expect("invalid markdown");
     render_mdast(theme, width, &node)
 }
 
@@ -1068,5 +1125,33 @@ mod tests {
         let base = THEME_DARK.base_style();
         let out = render_incremental(&chunks, 10);
         assert_eq!(out, format!("{base}- one     \n{base}          \n{base}- two     "));
+    }
+
+    #[test]
+    #[ignore] // tmp
+    fn table() {
+        let style = THEME_DARK.base_style();
+        assert_eq!(
+            render("| H1 | H2 |\n| --- | --- |\n| foo | baz |", 20),
+            format!("\
+                {style}+-----+-----+\n\
+                {style}| H1  | H2  |\n\
+                {style}+-----+-----+\n\
+                {style}| foo | baz |\n\
+                {style}+-----+-----+\
+            "),
+        );
+    }
+
+    #[test]
+    fn table_column_width() {
+        fn dims<const N: usize>(outer: usize, mut widths: [usize; N]) -> [usize; N] {
+            column_width(outer, &mut widths[..]);
+            widths
+        }
+
+        assert_eq!(dims(100, [25, 25, 25, 25, 25]), [20, 20, 20, 20, 20]);
+        assert_eq!(dims(100, [50, 25, 25, 25, 25]), [20, 20, 20, 20, 20]);
+        assert_eq!(dims(100, [25, 25, 25, 25, 3]), [25, 24, 24, 24, 3]);
     }
 }
