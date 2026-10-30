@@ -714,7 +714,7 @@ fn push_table(flow: &mut FlowBuilder<'_>, node: &Table) {
 
     // 2 cols padding left/right edges + 3 cols padding between each column
     let padding = 4 + 3 * (num_columns - 1);
-    let content_width = flow.remaining_width() - padding;
+    let content_width = flow.remaining_width().saturating_sub(padding);
     let mut col_widths: Vec<_> = (0..num_columns)
         .map(|col|
             (0..num_rows)
