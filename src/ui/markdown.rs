@@ -674,6 +674,7 @@ impl<'t> TableBuilder<'t> {
     // Push vertical line (|\n|\n|\n...)
     fn push_vertical(&mut self) {
         let row = &mut self.rendered[self.canvas_row];
+        row.set_style(self.base_style);
         row.pad_to_width(self.canvas_col);
         row.push("|", 1);
         self.canvas_col += 1;
@@ -1289,6 +1290,23 @@ mod tests {
     }
 
     #[test]
+    fn table_cell_style_does_not_bleed() {
+        let base = THEME_DARK.base_style();
+        let italic = SetItalic;
+        let reset_italic = ResetItalic;
+        assert_eq!(
+            render("| *a* | b |\n| --- | --- |\n| c | d |", 20),
+            format!("\
+                {base}+---+---+           \n\
+                {base}| {italic}a{reset_italic} | b |           \n\
+                {base}+===+===+           \n\
+                {base}| c | d |           \n\
+                {base}+---+---+           \
+            "),
+        );
+    }
+
+    #[test]
     fn table_column_width() {
         fn width<const N: usize>(outer: usize, mut widths: [usize; N]) -> [usize; N] {
             column_width(outer, &mut widths[..]);
@@ -1298,5 +1316,6 @@ mod tests {
         assert_eq!(width(100, [25, 25, 25, 25, 25]), [20, 20, 20, 20, 20]);
         assert_eq!(width(100, [50, 25, 25, 25, 25]), [20, 20, 20, 20, 20]);
         assert_eq!(width(100, [25, 25, 25, 25, 3]), [25, 24, 24, 24, 3]);
+        assert_eq!(width(100, [10; 11]), [10; 11]);
     }
 }
