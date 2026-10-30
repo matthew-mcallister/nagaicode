@@ -206,7 +206,6 @@ fn find_break_points(line: &str) -> VecDeque<Breakpoint> {
 /// - Words too long to fit on one line will be broken where they overflow
 /// - The final row ends with a zero-width newline grapheme
 pub fn wrap_line(max_width: usize, line: &str) -> Vec<Row> {
-    assert!(max_width >= TAB_WIDTH);
     let break_points = find_break_points(line);
     let mut seg = Analysis::new(max_width, TAB_WIDTH, break_points);
     seg.max_width = max_width;

@@ -1,7 +1,7 @@
 // FIXME: need to cap prefix size/set a lower bound on width to prevent
 // underflow and broken layout
 // FIXME: probably should escape the actual escape char if it appears in source
-use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Table, TableCell, Text};
+use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Table, Text};
 use serde_json::json;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -341,12 +341,11 @@ fn push_styled(flow: &mut FlowBuilder<'_>, styled: &StyledString) {
 fn push_phrasing(flow: &mut FlowBuilder<'_>, children: &[Node]) {
     let mut phrasing = PhrasingBuilder::new(flow.theme, flow.prefix.cur_style());
     phrasing.push_all(children);
-    let PhrasingBuilder {
-        plain_text,
-        markers,
-        ..
-    } = phrasing;
+    push_phrasing_inner(flow, &phrasing);
+}
 
+fn push_phrasing_inner(flow: &mut FlowBuilder<'_>, phrasing: &PhrasingBuilder<'_>) {
+    let PhrasingBuilder { plain_text, markers, .. } = phrasing;
     let mut cur_style = flow.prefix.cur_style();
     let mut marker_idx = 0usize;
     let mut offset = 0usize;
@@ -597,11 +596,10 @@ fn column_width(content_width: usize, widths: &mut [usize]) {
 }
 
 #[derive(Debug)]
-struct TableBuilder<'t, 'n> {
+struct TableBuilder<'t> {
     // input
     theme: &'t Theme,
     base_style: Style,
-    node: &'n Table,
     col_widths: Vec<usize>,
     // state
     row_num: usize,
@@ -610,17 +608,15 @@ struct TableBuilder<'t, 'n> {
     canvas_col: usize,
 }
 
-impl<'t, 'n> TableBuilder<'t, 'n> {
+impl<'t> TableBuilder<'t> {
     fn new(
         theme: &'t Theme,
         base_style: Style,
-        node: &'n Table,
         col_widths: Vec<usize>,
     ) -> Self {
         Self {
             theme,
             base_style,
-            node,
             col_widths,
             row_num: Default::default(),
             rendered: Default::default(),
@@ -629,20 +625,72 @@ impl<'t, 'n> TableBuilder<'t, 'n> {
         }
     }
 
+    fn width(&self) -> usize {
+        4 + self.col_widths.iter().sum::<usize>()
+            + 3 * self.col_widths.len().saturating_sub(1)
+    }
+
     // Wrap content to column width, compute row height, push rows w/ leading
     // and trailing horizontal padding.
     fn push_row(&mut self, cells: &[PhrasingBuilder<'t>]) {
-        todo!("use FlowBuilder to convert each cell to rows")
+        let cell_rows: Vec<Vec<StyledString>> = cells
+            .iter()
+            .zip(&self.col_widths)
+            .map(|(cell, &width)| {
+                let mut flow = FlowBuilder::new(self.theme, width);
+                flow.prefix.set_style(self.base_style);
+                flow.apply_prefix();
+                push_phrasing_inner(&mut flow, &cell);
+                flow.finish().rows
+            })
+            .collect();
+        let height = cell_rows.iter().map(Vec::len).max().unwrap_or(1);
+
+        for line in 0..height {
+            let width = self.width();
+            self.canvas_row = self.rendered.len();
+            self.rendered.push(StyledString::new(self.base_style, 2 * width));
+            self.canvas_col = 0;
+
+            self.push_vertical();
+
+            for (col, rows) in cell_rows.iter().enumerate() {
+                self.rendered[self.canvas_row].push(" ", 1);
+                self.canvas_col += 1;
+
+                if let Some(row) = rows.get(line) {
+                    self.rendered[self.canvas_row].push_styled(row);
+                }
+                self.canvas_col += self.col_widths[col] + 1;
+
+                self.push_vertical();
+            }
+        }
+
+        self.row_num += 1;
+        self.push_horizontal();
     }
 
     // Push vertical line (|\n|\n|\n...)
     fn push_vertical(&mut self) {
-        todo!()
+        let row = &mut self.rendered[self.canvas_row];
+        row.pad_to_width(self.canvas_col);
+        row.push("|", 1);
+        self.canvas_col += 1;
     }
 
-    // Push "+---+---+..." (or "+===+===+..." if row_num == 0)
+    // Push "+---+---+..." (or "+===+===+..." if row_num == 1)
     fn push_horizontal(&mut self) {
-        todo!()
+        let width = self.width();
+        let fill = if self.row_num == 1 { "=" } else { "-" };
+        let mut row = StyledString::new(self.base_style, 2 * width);
+        row.push("+", 1);
+        for &col_width in &self.col_widths {
+            let n = col_width + 2;
+            row.push(&fill.repeat(n), n);
+            row.push("+", 1);
+        }
+        self.rendered.push(row);
     }
 }
 
@@ -679,7 +727,6 @@ fn push_table(flow: &mut FlowBuilder<'_>, node: &Table) {
     let mut builder = TableBuilder::new(
         flow.theme,
         flow.prefix.cur_style(),
-        node,
         col_widths,
     );
 
@@ -698,8 +745,8 @@ fn push_flow_node(flow: &mut FlowBuilder<'_>, node: &Node) {
     match node {
         Node::Root(root) => push_flow_children(flow, true, &root.children),
 
-        Node::Table(_)
-        | Node::TableRow(_)
+        Node::Table(table) => push_table(flow, table),
+        Node::TableRow(_)
         | Node::TableCell(_) => {}, // TODO!
 
         Node::Paragraph(paragraph) => push_phrasing(flow, &paragraph.children),
@@ -1225,32 +1272,31 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // tmp
     fn table() {
         let style = THEME_DARK.base_style();
         assert_eq!(
             render("| H1 | H2 |\n| --- | --- |\n| foo | baz |\n| bar | bum |", 20),
             format!("\
-                {style}+-----+-----+\n\
-                {style}| H1  | H2  |\n\
-                {style}+=====+=====+\n\
-                {style}| foo | baz |\n\
-                {style}+-----+-----+\n\
-                {style}| bar | bum |\n\
-                {style}+-----+-----+\
+                {style}+-----+-----+       \n\
+                {style}| H1  | H2  |       \n\
+                {style}+=====+=====+       \n\
+                {style}| foo | baz |       \n\
+                {style}+-----+-----+       \n\
+                {style}| bar | bum |       \n\
+                {style}+-----+-----+       \
             "),
         );
     }
 
     #[test]
     fn table_column_width() {
-        fn dims<const N: usize>(outer: usize, mut widths: [usize; N]) -> [usize; N] {
+        fn width<const N: usize>(outer: usize, mut widths: [usize; N]) -> [usize; N] {
             column_width(outer, &mut widths[..]);
             widths
         }
 
-        assert_eq!(dims(100, [25, 25, 25, 25, 25]), [20, 20, 20, 20, 20]);
-        assert_eq!(dims(100, [50, 25, 25, 25, 25]), [20, 20, 20, 20, 20]);
-        assert_eq!(dims(100, [25, 25, 25, 25, 3]), [25, 24, 24, 24, 3]);
+        assert_eq!(width(100, [25, 25, 25, 25, 25]), [20, 20, 20, 20, 20]);
+        assert_eq!(width(100, [50, 25, 25, 25, 25]), [20, 20, 20, 20, 20]);
+        assert_eq!(width(100, [25, 25, 25, 25, 3]), [25, 24, 24, 24, 3]);
     }
 }
