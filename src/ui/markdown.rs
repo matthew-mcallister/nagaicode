@@ -1307,6 +1307,37 @@ mod tests {
     }
 
     #[test]
+    fn table_overflow_wraps() {
+        let style = THEME_DARK.base_style();
+        assert_eq!(
+            render("| head11 | header2 |\n| --- | --- |\n| cell11 | celltwo |", 20),
+            format!("\
+                {style}+--------+---------+\n\
+                {style}| head11 | header2 |\n\
+                {style}+========+=========+\n\
+                {style}| cell11 | celltwo |\n\
+                {style}+--------+---------+\
+            "),
+        );
+        // XXX: Would prefer if history was horizontally scrollable
+        assert_eq!(
+            render("| head11 | header2 |\n| --- | --- |\n| cell11 | celltwo |", 10),
+            format!("\
+                {style}+--------+\n\
+                {style}---------+\n\
+                {style}| head11 |\n\
+                {style} header2 |\n\
+                {style}+========+\n\
+                {style}=========+\n\
+                {style}| cell11 |\n\
+                {style} celltwo |\n\
+                {style}+--------+\n\
+                {style}---------+\
+            "),
+        );
+    }
+
+    #[test]
     fn table_column_width() {
         fn width<const N: usize>(outer: usize, mut widths: [usize; N]) -> [usize; N] {
             column_width(outer, &mut widths[..]);
