@@ -1,10 +1,12 @@
 use crossterm::Command;
 use crossterm::style::{Print, SetStyle};
+use unicode_width::UnicodeWidthStr;
 
 use crate::ui::style::{
     cross_platform_command, Color, CommandWriter, CrossPlatformCommand, Style, TextStyle,
     UpdateStyle,
 };
+use crate::ui::markup_string::MarkupString;
 use crate::ui::text::SPACES;
 
 /// Saved state for backtracking
@@ -20,7 +22,7 @@ pub struct SavePoint {
 
 /// String wrapper which tracks current style and lazily writes control
 /// statements when needed. Also tracks column information since we need that
-/// anyways
+/// anyways.
 #[derive(Clone, Debug)]
 pub struct StyledString {
     inner: String,
@@ -117,12 +119,20 @@ impl StyledString {
         self.prev_style = None;
     }
 
+    pub fn push_str(&mut self, s: &str) {
+        self.push(s, s.width());
+    }
+
     pub fn push_styled(&mut self, other: &StyledString) {
         self.set_style(other.initial_style);
         self.push(&other.inner, other.width);
         self.cur_style = other.cur_style;
         self.prev_style = other.prev_style;
         self.style_frozen = other.style_frozen;
+    }
+
+    pub fn push_markup(&mut self, s: &MarkupString) {
+        self.push_styled(&s.to_ansi(self.cur_style));
     }
 
     pub fn save(&mut self) -> SavePoint {

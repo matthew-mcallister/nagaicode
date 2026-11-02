@@ -77,7 +77,7 @@ impl<'a> PhrasingBuilder<'a> {
         collapse_whitespace(&mut self.plain_text, s);
     }
 
-    /// Removes newlines, expands tabs, but preserves otherwise whitespace.
+    /// Removes newlines, expands tabs, but otherwise preserves whitespace.
     fn push_inline_code(&mut self, s: &str) {
         let mut col = self.plain_text.width();
         for c in s.chars() {

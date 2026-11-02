@@ -13,6 +13,7 @@ pub mod input_box;
 pub mod history;
 pub mod history_view;
 pub mod markdown;
+pub mod markup_string;
 pub mod padded;
 pub mod render_item;
 pub mod scroll_bar;
