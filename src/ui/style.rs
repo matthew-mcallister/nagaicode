@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crossterm::Command;
 use crossterm::style::{
     Attribute, Attributes, Color as CrosstermColor, ContentStyle, SetAttribute, SetBackgroundColor,
@@ -195,53 +193,115 @@ impl std::fmt::Display for Style {
     }
 }
 
+pub trait CommandWriter: Sized {
+    type Error;
+    
+    fn write(&mut self, cmd: &impl Command) -> Result<(), Self::Error>;
+}
+
+impl<'a, W> CommandWriter for &'a mut W
+    where W: CommandWriter
+{
+    type Error = W::Error;
+    
+    fn write(&mut self, cmd: &impl Command) -> Result<(), Self::Error> {
+        <W as CommandWriter>::write(*self, cmd)
+    }
+}
+
+#[derive(Debug)]
+pub struct AnsiCommandWriter<'a, W: std::fmt::Write>(pub &'a mut W);
+
+impl<'a, W: std::fmt::Write> CommandWriter for AnsiCommandWriter<'a, W> {
+    type Error = std::fmt::Error;
+    
+    fn write(&mut self, cmd: &impl Command) -> std::fmt::Result {
+        cmd.write_ansi(self.0)
+    }
+}
+
+/// Wrapper around write_ansi/execute_winapi.
+#[derive(Clone, Copy, Debug, Default)]
+#[cfg(windows)]
+pub struct WinapiCommandWriter;
+
+impl CommandWriter for WinapiCommandWriter {
+    type Error = std::io::Error;
+    
+    fn write(&mut self, cmd: &impl Command) -> std::io::Result<()> {
+        cmd.execute_winapi()
+    }
+}
+
+/// Cross-platform version of [`crossterm::Command`]`.
+pub trait CrossPlatformCommand {
+    fn write<W: CommandWriter>(&self, w: W) -> Result<(), W::Error>;
+}
+
+macro_rules! cross_platform_command {
+    ($ty:ty) => {
+        impl crossterm::Command for $ty {
+            fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+                use crate::ui::style::CommandWriter;
+                crate::ui::style::AnsiCommandWriter(f).write(self)
+            }
+
+            fn execute_winapi(&self) -> std::io::Result<()> {
+                use crate::ui::style::CommandWriter;
+                crate::ui::style::WinapiCommandWriter.write(self)
+            }
+        }
+    }
+}
+
+pub(crate) use cross_platform_command;
+
 /// Tuple `(old, new)`, replaces terminal text style
 #[derive(Clone, Copy, Debug)]
 pub struct UpdateStyle(pub Style, pub Style);
 
-impl Command for UpdateStyle {
-    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+impl CrossPlatformCommand for UpdateStyle {
+    fn write<W: CommandWriter>(&self, mut w: W) -> Result<(), W::Error> {
         let UpdateStyle(old_style, new_style) = self;
 
         let (old, new) = (old_style.text, new_style.text);
         if old.fg_color != new.fg_color {
-            SetForegroundColor(new.fg_color.into()).write_ansi(f)?;
+            w.write(&SetForegroundColor(new.fg_color.into()))?;
         }
         if old.bold != new.bold {
-            SetAttribute(if new.bold {
+            w.write(&SetAttribute(if new.bold {
                 Attribute::Bold
             } else {
                 Attribute::NormalIntensity
-            })
-            .write_ansi(f)?;
+            }))?;
         }
         if old.italic != new.italic {
-            SetAttribute(if new.italic {
+            w.write(&SetAttribute(if new.italic {
                 Attribute::Italic
             } else {
                 Attribute::NoItalic
-            })
-            .write_ansi(f)?;
+            }))?;
         }
         if old.underline != new.underline {
-            SetAttribute(if new.underline {
+            w.write(&SetAttribute(if new.underline {
                 Attribute::Underlined
             } else {
                 Attribute::NoUnderline
-            })
-            .write_ansi(f)?;
+            }))?;
         }
         if old_style.bg_color != new_style.bg_color {
-            SetBackgroundColor(new_style.bg_color.into()).write_ansi(f)?;
+            w.write(&SetBackgroundColor(new_style.bg_color.into()))?;
         }
 
         Ok(())
     }
 }
 
+cross_platform_command!(UpdateStyle);
+
 impl std::fmt::Display for UpdateStyle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.write_ansi(f)
+        self.write(AnsiCommandWriter(f))
     }
 }
 
@@ -320,66 +380,75 @@ pub struct StyleSettings {
 /// Styling helpers for tests
 #[cfg(test)]
 pub mod testing {
-    use crossterm::Command;
     use crossterm::style::{Attribute, SetAttribute};
+
+    use super::*;
 
     #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
     pub struct SetItalic;
 
-    impl Command for SetItalic {
-        fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-            SetAttribute(Attribute::Italic).write_ansi(f)
+    impl CrossPlatformCommand for SetItalic {
+        fn write<W: CommandWriter>(&self, mut w: W) -> Result<(), W::Error> {
+            w.write(&SetAttribute(Attribute::Italic))
         }
     }
 
+    cross_platform_command!(SetItalic);
+
     impl std::fmt::Display for SetItalic {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            self.write_ansi(f)
+            self.write(AnsiCommandWriter(f))
         }
     }
 
     #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
     pub struct ResetItalic;
 
-    impl Command for ResetItalic {
-        fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-            SetAttribute(Attribute::NoItalic).write_ansi(f)
+    impl CrossPlatformCommand for ResetItalic {
+        fn write<W: CommandWriter>(&self, mut w: W) -> Result<(), W::Error> {
+            w.write(&SetAttribute(Attribute::NoItalic))
         }
     }
 
+    cross_platform_command!(ResetItalic);
+
     impl std::fmt::Display for ResetItalic {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            self.write_ansi(f)
+            self.write(AnsiCommandWriter(f))
         }
     }
 
     #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
     pub struct SetBold;
 
-    impl Command for SetBold {
-        fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-            SetAttribute(Attribute::Bold).write_ansi(f)
+    impl CrossPlatformCommand for SetBold {
+        fn write<W: CommandWriter>(&self, mut w: W) -> Result<(), W::Error> {
+            w.write(&SetAttribute(Attribute::Bold))
         }
     }
 
+    cross_platform_command!(SetBold);
+
     impl std::fmt::Display for SetBold {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            self.write_ansi(f)
+            self.write(AnsiCommandWriter(f))
         }
     }
 
     #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
     pub struct ResetBold;
 
-    impl Command for ResetBold {
-        fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-            SetAttribute(Attribute::NormalIntensity).write_ansi(f)
+    impl CrossPlatformCommand for ResetBold {
+        fn write<W: CommandWriter>(&self, mut w: W) -> Result<(), W::Error> {
+            w.write(&SetAttribute(Attribute::NormalIntensity))
         }
     }
 
+    cross_platform_command!(ResetBold);
+
     impl std::fmt::Display for ResetBold {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            self.write_ansi(f)
+            self.write(AnsiCommandWriter(f))
         }
     }
 }

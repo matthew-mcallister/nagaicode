@@ -1,7 +1,10 @@
 use crossterm::Command;
 use crossterm::style::{Print, SetStyle};
 
-use crate::ui::style::{Color, Style, TextStyle, UpdateStyle};
+use crate::ui::style::{
+    cross_platform_command, Color, CommandWriter, CrossPlatformCommand, Style, TextStyle,
+    UpdateStyle,
+};
 use crate::ui::text::SPACES;
 
 /// Saved state for backtracking
@@ -156,13 +159,15 @@ impl StyledString {
     }
 }
 
-impl Command for StyledString {
-    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-        SetStyle(self.initial_style.into()).write_ansi(f)?;
-        Print(&self.inner[..]).write_ansi(f)?;
+impl CrossPlatformCommand for StyledString {
+    fn write<W: CommandWriter>(&self, mut w: W) -> Result<(), W::Error> {
+        w.write(&SetStyle(self.initial_style.into()))?;
+        w.write(&Print(&self.inner[..]))?;
         Ok(())
     }
 }
+
+cross_platform_command!(StyledString);
 
 impl std::fmt::Display for StyledString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
