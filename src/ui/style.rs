@@ -195,7 +195,7 @@ impl std::fmt::Display for Style {
 
 pub trait CommandWriter: Sized {
     type Error;
-    
+
     fn write(&mut self, cmd: &impl Command) -> Result<(), Self::Error>;
 }
 
@@ -203,7 +203,7 @@ impl<'a, W> CommandWriter for &'a mut W
     where W: CommandWriter
 {
     type Error = W::Error;
-    
+
     fn write(&mut self, cmd: &impl Command) -> Result<(), Self::Error> {
         <W as CommandWriter>::write(*self, cmd)
     }
@@ -214,7 +214,7 @@ pub struct AnsiCommandWriter<'a, W: std::fmt::Write>(pub &'a mut W);
 
 impl<'a, W: std::fmt::Write> CommandWriter for AnsiCommandWriter<'a, W> {
     type Error = std::fmt::Error;
-    
+
     fn write(&mut self, cmd: &impl Command) -> std::fmt::Result {
         cmd.write_ansi(self.0)
     }
@@ -225,9 +225,10 @@ impl<'a, W: std::fmt::Write> CommandWriter for AnsiCommandWriter<'a, W> {
 #[cfg(windows)]
 pub struct WinapiCommandWriter;
 
+#[cfg(windows)]
 impl CommandWriter for WinapiCommandWriter {
     type Error = std::io::Error;
-    
+
     fn write(&mut self, cmd: &impl Command) -> std::io::Result<()> {
         cmd.execute_winapi()
     }
@@ -246,6 +247,7 @@ macro_rules! cross_platform_command {
                 crate::ui::style::AnsiCommandWriter(f).write(self)
             }
 
+            #[cfg(windows)]
             fn execute_winapi(&self) -> std::io::Result<()> {
                 use crate::ui::style::CommandWriter;
                 crate::ui::style::WinapiCommandWriter.write(self)
@@ -331,18 +333,18 @@ impl Theme {
 
 // Stock Tailwind CSS colors
 const WHITE: Color = Color::White;
-const GREY_50: Color = rgb(250, 250, 249);
-const GREY_100: Color = rgb(245, 245, 244);
-const GREY_200: Color = rgb(231, 229, 228);
-const GREY_300: Color = rgb(214, 211, 209);
+#[allow(dead_code)] const GREY_50: Color = rgb(250, 250, 249);
+#[allow(dead_code)] const GREY_100: Color = rgb(245, 245, 244);
+#[allow(dead_code)] const GREY_200: Color = rgb(231, 229, 228);
+#[allow(dead_code)] const GREY_300: Color = rgb(214, 211, 209);
 const GREY_400: Color = rgb(168, 162, 158);
-const GREY_500: Color = rgb(120, 113, 108);
+#[allow(dead_code)] const GREY_500: Color = rgb(120, 113, 108);
 const GREY_600: Color = rgb(87, 83, 78);
-const GREY_700: Color = rgb(68, 64, 60);
+#[allow(dead_code)] const GREY_700: Color = rgb(68, 64, 60);
 const GREY_800: Color = rgb(41, 37, 36);
 const GREY_900: Color = rgb(28, 25, 23);
 const GREY_950: Color = rgb(12, 10, 9);
-const BLACK: Color = Color::Black;
+#[allow(dead_code)] const BLACK: Color = Color::Black;
 
 const YELLOW_200: Color = rgb(254, 240, 138);
 
@@ -351,7 +353,7 @@ const RED_400: Color = rgb(248, 113, 113);
 const SKY_400: Color = rgb(56, 189, 248);
 
 const EMERALD_400: Color = rgb(52, 211, 153);
-const EMERALD_600: Color = rgb(5, 150, 105);
+#[allow(dead_code)] const EMERALD_600: Color = rgb(5, 150, 105);
 
 /// Only available theme for now
 pub const THEME_DARK: Theme = Theme {
