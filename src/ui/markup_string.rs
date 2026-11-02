@@ -55,6 +55,22 @@ impl State {
         }
     }
 
+    pub fn with_bold(self) -> Self {
+        Self { bold: Some(true), ..self }
+    }
+
+    pub fn with_italic(self) -> Self {
+        Self { italic: Some(true), ..self }
+    }
+
+    pub fn with_underline(self) -> Self {
+        Self { underline: Some(true), ..self }
+    }
+
+    pub fn with_strikethrough(self) -> Self {
+        Self { strikethrough: Some(true), ..self }
+    }
+
     pub fn to_style(self, base: Style) -> Style {
         Style {
             text: TextStyle {
@@ -145,7 +161,7 @@ impl MarkupString {
         }
     }
 
-    fn set_state(&mut self, state: State) {
+    pub fn set_state(&mut self, state: State) {
         self.state = state;
         self.markers.push(Marker {
             offset: self.plain_text.len(),

@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::ui::markup_string::MarkupString;
-use crate::ui::style::{Style, TextStyle, Theme};
+use crate::ui::style::{Style, Theme};
 use crate::ui::styled_string::{SavePoint, StyledString};
 use crate::ui::text::{Row, SPACES, TAB_WIDTH, wrap_line_naive};
 
@@ -52,7 +52,6 @@ struct PhrasingBuilder<'a> {
     base_style: Style,
     rows: Vec<MarkupString>,
     cur: MarkupString,
-    cur_style: Style,
 }
 
 impl<'a> PhrasingBuilder<'a> {
@@ -62,7 +61,6 @@ impl<'a> PhrasingBuilder<'a> {
             base_style,
             rows: Vec::new(),
             cur: MarkupString::new(),
-            cur_style: base_style,
         }
     }
 
@@ -99,24 +97,13 @@ impl<'a> PhrasingBuilder<'a> {
     }
 
     fn push_break(&mut self) {
+        let state = self.cur.state();
         let mut row = MarkupString::new();
-        if self.cur_style != self.base_style {
-            row.set_style(self.cur_style);
+        if state.to_style(self.base_style) != self.base_style {
+            row.set_state(state);
         }
         let cur = std::mem::replace(&mut self.cur, row);
         self.rows.push(cur);
-    }
-
-    fn set_text(&mut self, style: TextStyle) {
-        let style = self.cur_style.with_text(style);
-        self.set_style(style);
-    }
-
-    fn set_style(&mut self, style: Style) {
-        if style != self.cur_style {
-            self.cur.set_style(style);
-            self.cur_style = style;
-        }
     }
 
     fn push_node(&mut self, node: &Node) {
@@ -127,28 +114,28 @@ impl<'a> PhrasingBuilder<'a> {
 
             // Styling
             Node::InlineCode(inner) => {
-                let prev = self.cur_style;
-                self.set_text(self.theme.text_code);
+                let prev = self.cur.state();
+                self.cur.set_text(self.theme.text_code);
                 self.push_inline_code(&inner.value);
-                self.set_style(prev);
+                self.cur.set_state(prev);
             }
             Node::Emphasis(inner) => {
-                let prev = self.cur_style;
-                self.set_style(prev.italicized());
+                let prev = self.cur.state();
+                self.cur.set_state(prev.with_italic());
                 self.push_all(&inner.children);
-                self.set_style(prev);
+                self.cur.set_state(prev);
             }
             Node::Strong(inner) => {
-                let prev = self.cur_style;
-                self.set_style(prev.bolded());
+                let prev = self.cur.state();
+                self.cur.set_state(prev.with_bold());
                 self.push_all(&inner.children);
-                self.set_style(prev);
+                self.cur.set_state(prev);
             }
             Node::Delete(inner) => {
-                let prev = self.cur_style;
-                self.set_style(prev.struck_out());
+                let prev = self.cur.state();
+                self.cur.set_state(prev.with_strikethrough());
                 self.push_all(&inner.children);
-                self.set_style(prev);
+                self.cur.set_state(prev);
             }
 
             // Nodes that can't be rendered faithfully in the terminal; we
@@ -192,10 +179,10 @@ impl<'a> PhrasingBuilder<'a> {
                 self.push_text("]");
             }
             Node::InlineMath(math) => {
-                let prev = self.cur_style;
-                self.set_text(self.theme.text_math);
+                let prev = self.cur.state();
+                self.cur.set_text(self.theme.text_math);
                 self.push_inline_code(&math.value);
-                self.set_style(prev);
+                self.cur.set_state(prev);
             }
             Node::FootnoteReference(footnote) => {
                 self.push_text("[^");
