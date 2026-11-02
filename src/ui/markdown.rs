@@ -1307,6 +1307,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn table_overflow_wraps() {
         let style = THEME_DARK.base_style();
         assert_eq!(

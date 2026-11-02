@@ -100,7 +100,7 @@ impl MarkupString {
         }
     }
 
-    pub fn push_text(&mut self, s: &str) {
+    pub fn push_str(&mut self, s: &str) {
         let start = self.plain_text.len();
         self.plain_text.push_str(s);
         self.width += self.plain_text[start..].width();
@@ -173,11 +173,11 @@ impl MarkupString {
             // Re-apply current style at start of each row
             s.set_state(state.into());
 
-            let mut plain_text = String::new();
             for g in &row.graphemes {
                 // Newline added by wrap_line, not part of the source text
                 if g.data == "\n" { continue; }
-                plain_text.push_str(&g.data);
+                s.push_str(&g.data);
+                offset += g.data.len();
 
                 let prev_state = state;
                 while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
@@ -185,8 +185,6 @@ impl MarkupString {
                     marker_idx += 1;
                 }
                 if prev_state != state { s.set_state(state.into()) }
-
-                offset += g.data.len();
             }
 
             s
@@ -207,17 +205,47 @@ impl MarkupString {
 
     pub fn to_ansi(&self, base: Style) -> StyledString {
         let mut s = StyledString::new(base, 2 * self.plain_text.capacity());
-        let mut style = base;
         let mut offset = 0;
         for marker in self.markers.iter() {
-            style = marker.state.to_style(base);
             if marker.offset != offset {
                 s.push_str(&self.plain_text[offset..marker.offset]);
                 offset = marker.offset;
             }
+            s.set_style(marker.state.to_style(base));
         }
-        s.set_style(style);
         s.push_str(&self.plain_text[offset..]);
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::style::{THEME_DARK, UpdateStyle};
+
+    #[test]
+    fn test_wrap() {
+        let base = THEME_DARK.base_style();
+        let code = Style::new(THEME_DARK.text_code, THEME_DARK.bg_base);
+        let to_code = UpdateStyle(base, code);
+        let to_base = UpdateStyle(code, base);
+
+        let mut markup = MarkupString::new();
+        markup.push_str("12345");
+        markup.set_style(code);
+        markup.push_str("6789012345");
+        markup.set_style(base);
+        markup.push_str("67890");
+
+        let mut out = StyledString::new(base, 64);
+        for (i, row) in markup.wrap_naive(10).iter().enumerate() {
+            if i > 0 { out.push("\n", 0); }
+            out.push_markup(row);
+        }
+
+        assert_eq!(
+            format!("{out}"),
+            format!("{base}12345{to_code}67890\n12345{to_base}67890"),
+        );
     }
 }
