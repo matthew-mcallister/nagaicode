@@ -115,6 +115,14 @@ impl MarkupString {
         self.state
     }
 
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    pub fn plain_text(&self) -> &str {
+        &self.plain_text
+    }
+
     /// Append another styled string to this string.
     ///
     /// To inherit the current string's style, call [`apply_base_style`] first.

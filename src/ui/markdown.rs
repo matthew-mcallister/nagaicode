@@ -3,12 +3,12 @@
 // FIXME: probably should escape the actual escape char if it appears in source
 use markdown::mdast::{Blockquote, Definition, FootnoteDefinition, Heading, InlineCode, List, Node, Table, Text};
 use serde_json::json;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::query::{DataQuery, QueryError, QueryField};
+use crate::ui::markup_string::MarkupString;
 use crate::ui::style::{Style, TextStyle, Theme};
 use crate::ui::styled_string::{SavePoint, StyledString};
-use crate::ui::text::{Row, SPACES, TAB_WIDTH, wrap_line, wrap_line_naive};
+use crate::ui::text::{Row, SPACES, TAB_WIDTH, wrap_line_naive};
 
 /// Replaces runs of whitespace with a single space character. Preserves
 /// leading and trailing whitespace.
@@ -17,9 +17,9 @@ use crate::ui::text::{Row, SPACES, TAB_WIDTH, wrap_line, wrap_line_naive};
 /// diacritic, e.g. " \u{0301}", but no one renders this correctly, making
 /// usage so rare that it is not worth supporting. Poor design decision by the
 /// Unicode Consortium.
-fn collapse_whitespace(out: &mut String, s: &str) {
+fn collapse_whitespace(out: &mut MarkupString, s: &str) {
     if s.starts_with(char::is_whitespace) {
-        out.push(' ');
+        out.push_char(' ');
     }
 
     let mut words = s.split_whitespace();
@@ -27,12 +27,12 @@ fn collapse_whitespace(out: &mut String, s: &str) {
     out.push_str(t);
 
     for t in words {
-        out.push(' ');
+        out.push_char(' ');
         out.push_str(t);
     }
 
     if s.ends_with(char::is_whitespace) {
-        out.push(' ');
+        out.push_char(' ');
     }
 }
 
@@ -46,20 +46,12 @@ fn push_spaces(out: &mut StyledString, count: usize) {
     }
 }
 
-/// Out-of-line style marker.
-#[derive(Debug)]
-struct Marker {
-    /// Byte offset to insert control sequence in plain_text
-    offset: usize,
-    /// Style to apply
-    style: Style,
-}
-
 #[derive(Debug)]
 struct PhrasingBuilder<'a> {
     theme: &'a Theme,
-    plain_text: String,
-    markers: Vec<Marker>,
+    base_style: Style,
+    rows: Vec<MarkupString>,
+    cur: MarkupString,
     cur_style: Style,
 }
 
@@ -67,36 +59,35 @@ impl<'a> PhrasingBuilder<'a> {
     fn new(theme: &'a Theme, base_style: Style) -> Self {
         Self {
             theme,
-            plain_text: String::new(),
-            markers: Vec::new(),
+            base_style,
+            rows: Vec::new(),
+            cur: MarkupString::new(),
             cur_style: base_style,
         }
     }
 
+    fn rows(&self) -> impl Iterator<Item = &MarkupString> {
+        self.rows.iter().chain(std::iter::once(&self.cur))
+    }
+
+    fn width(&self) -> usize {
+        self.rows().map(MarkupString::width).max().unwrap_or(0)
+    }
+
     fn push_text(&mut self, s: &str) {
-        collapse_whitespace(&mut self.plain_text, s);
+        collapse_whitespace(&mut self.cur, s);
     }
 
     /// Removes newlines, expands tabs, but otherwise preserves whitespace.
     fn push_inline_code(&mut self, s: &str) {
-        let mut col = self.plain_text.width();
         for c in s.chars() {
             match c {
-                '\n' | '\r' => {
-                    self.plain_text.push(' ');
-                    col += 1;
-                }
+                '\n' | '\r' => self.cur.push_char(' '),
                 '\t' => {
-                    let n = TAB_WIDTH - col % TAB_WIDTH;
-                    self.plain_text.push_str(&SPACES[..n]);
-                    col += n;
+                    let n = TAB_WIDTH - self.cur.width() % TAB_WIDTH;
+                    self.cur.push_str(&SPACES[..n]);
                 }
-                _ => {
-                    self.plain_text.push(c);
-                    if let Some(w) = UnicodeWidthChar::width(c) {
-                        col += w;
-                    }
-                }
+                _ => self.cur.push_char(c),
             }
         }
     }
@@ -107,6 +98,15 @@ impl<'a> PhrasingBuilder<'a> {
         }
     }
 
+    fn push_break(&mut self) {
+        let mut row = MarkupString::new();
+        if self.cur_style != self.base_style {
+            row.set_style(self.cur_style);
+        }
+        let cur = std::mem::replace(&mut self.cur, row);
+        self.rows.push(cur);
+    }
+
     fn set_text(&mut self, style: TextStyle) {
         let style = self.cur_style.with_text(style);
         self.set_style(style);
@@ -114,10 +114,7 @@ impl<'a> PhrasingBuilder<'a> {
 
     fn set_style(&mut self, style: Style) {
         if style != self.cur_style {
-            self.markers.push(Marker {
-                offset: self.plain_text.len(),
-                style,
-            });
+            self.cur.set_style(style);
             self.cur_style = style;
         }
     }
@@ -126,7 +123,7 @@ impl<'a> PhrasingBuilder<'a> {
         match node {
             // Plain text
             Node::Text(text) => self.push_text(&text.value),
-            Node::Break(_) => self.plain_text.push('\n'),
+            Node::Break(_) => self.push_break(),
 
             // Styling
             Node::InlineCode(inner) => {
@@ -345,43 +342,12 @@ fn push_phrasing(flow: &mut FlowBuilder<'_>, children: &[Node]) {
 }
 
 fn push_phrasing_inner(flow: &mut FlowBuilder<'_>, phrasing: &PhrasingBuilder<'_>) {
-    let PhrasingBuilder { plain_text, markers, .. } = phrasing;
-    let mut cur_style = flow.prefix.cur_style();
-    let mut marker_idx = 0usize;
-    let mut offset = 0usize;
-
-    for line in plain_text.split('\n') {
-        let rows = wrap_line(flow.remaining_width(), line);
-
-        for row in rows {
-            while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
-                cur_style = markers[marker_idx].style;
-                marker_idx += 1;
-            }
-            // Re-apply current style at start of each row
-            flow.row.set_style(cur_style);
-
-            for g in &row.graphemes {
-                // Newline added by wrap_line, not part of the source text
-                if g.data == "\n" {
-                    continue;
-                }
-
-                while marker_idx < markers.len() && markers[marker_idx].offset <= offset {
-                    cur_style = markers[marker_idx].style;
-                    marker_idx += 1;
-                }
-                flow.row.set_style(cur_style);
-
-                flow.row.push(g.formatted(), g.width as usize);
-                offset += g.data.len();
-            }
-
+    let width = flow.remaining_width();
+    for row in phrasing.rows() {
+        for wrapped in row.wrap(width) {
+            flow.row.push_markup(&wrapped);
             flow.end_row();
         }
-
-        // Skip the newline separating this line from the next
-        offset += 1;
     }
 }
 
@@ -596,9 +562,8 @@ fn column_width(content_width: usize, widths: &mut [usize]) {
 }
 
 #[derive(Debug)]
-struct TableBuilder<'t> {
+struct TableBuilder {
     // input
-    theme: &'t Theme,
     base_style: Style,
     col_widths: Vec<usize>,
     // state
@@ -608,14 +573,12 @@ struct TableBuilder<'t> {
     canvas_col: usize,
 }
 
-impl<'t> TableBuilder<'t> {
+impl TableBuilder {
     fn new(
-        theme: &'t Theme,
         base_style: Style,
         col_widths: Vec<usize>,
     ) -> Self {
         Self {
-            theme,
             base_style,
             col_widths,
             row_num: Default::default(),
@@ -632,16 +595,14 @@ impl<'t> TableBuilder<'t> {
 
     // Wrap content to column width, compute row height, push rows w/ leading
     // and trailing horizontal padding.
-    fn push_row(&mut self, cells: &[PhrasingBuilder<'t>]) {
-        let cell_rows: Vec<Vec<StyledString>> = cells
+    fn push_row<'t>(&mut self, cells: &[PhrasingBuilder<'t>]) {
+        let cell_rows: Vec<Vec<MarkupString>> = cells
             .iter()
             .zip(&self.col_widths)
             .map(|(cell, &width)| {
-                let mut flow = FlowBuilder::new(self.theme, width);
-                flow.prefix.set_style(self.base_style);
-                flow.apply_prefix();
-                push_phrasing_inner(&mut flow, &cell);
-                flow.finish().rows
+                cell.rows()
+                    .flat_map(|row| row.wrap(width))
+                    .collect()
             })
             .collect();
         let height = cell_rows.iter().map(Vec::len).max().unwrap_or(1);
@@ -659,7 +620,7 @@ impl<'t> TableBuilder<'t> {
                 self.canvas_col += 1;
 
                 if let Some(row) = rows.get(line) {
-                    self.rendered[self.canvas_row].push_styled(row);
+                    self.rendered[self.canvas_row].push_markup(row);
                 }
                 self.canvas_col += self.col_widths[col] + 1;
 
@@ -718,7 +679,7 @@ fn push_table(flow: &mut FlowBuilder<'_>, node: &Table) {
     let mut col_widths: Vec<_> = (0..num_columns)
         .map(|col|
             (0..num_rows)
-                .map(|row| cells[row][col].plain_text.width())
+                .map(|row| cells[row][col].width())
                 .max()
                 .unwrap()
         )
@@ -726,8 +687,7 @@ fn push_table(flow: &mut FlowBuilder<'_>, node: &Table) {
     column_width(content_width, &mut col_widths);
 
     let mut builder = TableBuilder::new(
-        flow.theme,
-        flow.prefix.cur_style(),
+        base_style,
         col_widths,
     );
 
@@ -907,7 +867,8 @@ mod tests {
     fn bold() {
         let base = THEME_DARK.base_style();
         let bold = SetBold;
-        assert_eq!(render("**hi**", 20), format!("{base}{bold}hi                  "));
+        let reset_bold = ResetBold;
+        assert_eq!(render("**hi**", 20), format!("{base}{bold}hi{reset_bold}                  "));
     }
 
     #[test]
@@ -937,9 +898,11 @@ mod tests {
         let bold = SetBold;
         let reset_bold = ResetBold;
         let italic = SetItalic;
+        let reset_italic = ResetItalic;
+        let from_code = UpdateStyle(code, base);
         assert_eq!(
             render("**bold** *italic*\\\n`code`", 20),
-            format!("{base}{bold}bold{reset_bold} {italic}italic         \n{code}code                "),
+            format!("{base}{bold}bold{reset_bold} {italic}italic{reset_italic}         \n{code}code{from_code}                "),
         );
     }
 
@@ -1086,11 +1049,12 @@ mod tests {
     fn heading() {
         let header = THEME_DARK.base_style().bolded();
         let italic = SetItalic;
+        let reset_italic = ResetItalic;
         assert_eq!(render("# Hello", 20), format!("{header}# Hello             "));
         assert_eq!(render("#### Deep", 20), format!("{header}#### Deep           "));
         assert_eq!(
             render("## Hello *world*", 20),
-            format!("{header}## Hello {italic}world      "),
+            format!("{header}## Hello {italic}world{reset_italic}      "),
         );
     }
 
@@ -1107,13 +1071,14 @@ mod tests {
     fn unordered_list() {
         let base = THEME_DARK.base_style();
         let italic = SetItalic;
+        let reset_italic = ResetItalic;
         assert_eq!(render("- a", 16), format!("{base}- a             "));
         assert_eq!(render("- a\n- b", 16), format!("{base}- a             \n{base}- b             "));
         assert_eq!(
             render("- a\n\n- b", 16),
             format!("{base}- a             \n{base}                \n{base}- b             "),
         );
-        assert_eq!(render("- *hi*", 16), format!("{base}- {italic}hi            "));
+        assert_eq!(render("- *hi*", 16), format!("{base}- {italic}hi{reset_italic}            "));
         assert_eq!(render("- hello world foo", 8), format!("{base}- hello \n{base}  world \n{base}  foo   "));
     }
 

@@ -132,7 +132,11 @@ impl StyledString {
     }
 
     pub fn push_markup(&mut self, s: &MarkupString) {
-        self.push_styled(&s.to_ansi(self.cur_style));
+        if self.style_frozen {
+            self.push(s.plain_text(), s.width());
+        } else {
+            self.push_styled(&s.to_ansi(self.cur_style));
+        }
     }
 
     pub fn save(&mut self) -> SavePoint {
