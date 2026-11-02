@@ -243,14 +243,12 @@ macro_rules! cross_platform_command {
     ($ty:ty) => {
         impl crossterm::Command for $ty {
             fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-                use crate::ui::style::CommandWriter;
-                crate::ui::style::AnsiCommandWriter(f).write(self)
+                self.write(crate::ui::style::AnsiCommandWriter(f))
             }
 
             #[cfg(windows)]
             fn execute_winapi(&self) -> std::io::Result<()> {
-                use crate::ui::style::CommandWriter;
-                crate::ui::style::WinapiCommandWriter.write(self)
+                self.write(crate::ui::style::WinapiCommandWriter)
             }
         }
     }
