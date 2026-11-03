@@ -2173,10 +2173,10 @@ That on himself such murd'rous shame commits.
         input.set_text("a/b c");
         assert!(!input.is_special_command());
 
-        // Ctrl+Enter and Ctrl/Alt+J always insert a newline.
+        // Shift+Enter and Ctrl/Alt+J always insert a newline.
         input.set_text("multi");
         input.go_to_end();
-        input.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        input.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
         assert_eq!(input.get_text(), "multi\n\n");
         input.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
         assert_eq!(input.get_text(), "multi\n\n\n");
