@@ -8,7 +8,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ui::style::{Color, Style, TextStyle};
 use crate::ui::styled_string::StyledString;
-use crate::ui::text::{wrap_line, wrap_line_naive};
+use crate::ui::text::{SPACES, wrap_line, wrap_line_naive};
 
 // TODO: Style should be replaced with this
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -175,6 +175,14 @@ impl MarkupString {
 
     pub fn set_style(&mut self, style: Style) {
         self.set_state(style.into());
+    }
+
+    pub fn pad_to_width(&mut self, width: usize) {
+        if self.width >= width { return; }
+        while self.width < width {
+            let n = (width - self.width).min(SPACES.len());
+            self.push_str(&SPACES[..n]);
+        }
     }
 
     fn wrap_inner(&self, max_width: usize, naive: bool) -> Vec<Self> {

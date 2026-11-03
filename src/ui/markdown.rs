@@ -316,11 +316,6 @@ fn push_rows(fb: &mut FlowBuilder<'_>, rows: &[Row]) {
     }
 }
 
-fn push_styled(flow: &mut FlowBuilder<'_>, styled: &StyledString) {
-    flow.row.push_styled(styled);
-    flow.end_row();
-}
-
 /// Renders phrasing content (the inline children of a paragraph or heading).
 fn push_phrasing(flow: &mut FlowBuilder<'_>, children: &[Node]) {
     let mut phrasing = PhrasingBuilder::new(flow.theme, flow.prefix.cur_style());
@@ -551,22 +546,17 @@ fn column_width(content_width: usize, widths: &mut [usize]) {
 #[derive(Debug)]
 struct TableBuilder {
     // input
-    base_style: Style,
     col_widths: Vec<usize>,
     // state
     row_num: usize,
-    rendered: Vec<StyledString>,
+    rendered: Vec<MarkupString>,
     canvas_row: usize,
     canvas_col: usize,
 }
 
 impl TableBuilder {
-    fn new(
-        base_style: Style,
-        col_widths: Vec<usize>,
-    ) -> Self {
+    fn new(col_widths: Vec<usize>) -> Self {
         Self {
-            base_style,
             col_widths,
             row_num: Default::default(),
             rendered: Default::default(),
@@ -597,17 +587,17 @@ impl TableBuilder {
         for line in 0..height {
             let width = self.width();
             self.canvas_row = self.rendered.len();
-            self.rendered.push(StyledString::new(self.base_style, 2 * width));
+            self.rendered.push(MarkupString::with_capacity(width, 2 * self.col_widths.len()));
             self.canvas_col = 0;
 
             self.push_vertical();
 
             for (col, rows) in cell_rows.iter().enumerate() {
-                self.rendered[self.canvas_row].push(" ", 1);
+                self.rendered[self.canvas_row].push_char(' ');
                 self.canvas_col += 1;
 
                 if let Some(row) = rows.get(line) {
-                    self.rendered[self.canvas_row].push_markup(row);
+                    self.rendered[self.canvas_row].push(row);
                 }
                 self.canvas_col += self.col_widths[col] + 1;
 
@@ -622,9 +612,8 @@ impl TableBuilder {
     // Push vertical line (|\n|\n|\n...)
     fn push_vertical(&mut self) {
         let row = &mut self.rendered[self.canvas_row];
-        row.set_style(self.base_style);
         row.pad_to_width(self.canvas_col);
-        row.push("|", 1);
+        row.push_char('|');
         self.canvas_col += 1;
     }
 
@@ -632,12 +621,12 @@ impl TableBuilder {
     fn push_horizontal(&mut self) {
         let width = self.width();
         let fill = if self.row_num == 1 { "=" } else { "-" };
-        let mut row = StyledString::new(self.base_style, 2 * width);
-        row.push("+", 1);
+        let mut row = MarkupString::with_capacity(width, 0);
+        row.push_char('+');
         for &col_width in &self.col_widths {
             let n = col_width + 2;
-            row.push(&fill.repeat(n), n);
-            row.push("+", 1);
+            row.push_str(&fill.repeat(n));
+            row.push_char('+');
         }
         self.rendered.push(row);
     }
@@ -679,19 +668,19 @@ fn push_table(flow: &mut FlowBuilder<'_>, node: &Table) {
         .collect();
     column_width(content_width, &mut col_widths);
 
-    let mut builder = TableBuilder::new(
-        base_style,
-        col_widths,
-    );
+    let mut builder = TableBuilder::new(col_widths);
 
     builder.push_horizontal();
     for row in cells {
         builder.push_row(&row);
     }
 
-    for row in builder.rendered {
-        // TODO: Wrap overlong lines
-        push_styled(flow, &row);
+    let width = flow.remaining_width();
+    for row in &builder.rendered {
+        for wrapped in row.wrap_naive(width) {
+            flow.row.push_markup(&wrapped);
+            flow.end_row();
+        }
     }
 }
 
@@ -1289,7 +1278,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn table_overflow_wraps() {
         let style = THEME_DARK.base_style();
         assert_eq!(
