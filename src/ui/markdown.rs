@@ -844,6 +844,13 @@ mod tests {
         render_canvas(&mut rows[..])
     }
 
+    fn render_fully_incremental(s: &str, width: usize) -> String {
+        let chunks: Vec<&str> = s.char_indices()
+            .map(|(i, c)| &s[i..i + c.len_utf8()])
+            .collect();
+        render_incremental(&chunks, width)
+    }
+
     #[test]
     fn plain() {
         let base = THEME_DARK.base_style();
@@ -1242,6 +1249,23 @@ mod tests {
     }
 
     #[test]
+    fn table_incremental() {
+        let style = THEME_DARK.base_style();
+        assert_eq!(
+            render_fully_incremental("| H1 | H2 |\n| --- | --- |\n| foo | baz |\n| bar | bum |", 20),
+            format!("\
+                {style}+-----+-----+       \n\
+                {style}| H1  | H2  |       \n\
+                {style}+=====+=====+       \n\
+                {style}| foo | baz |       \n\
+                {style}+-----+-----+       \n\
+                {style}| bar | bum |       \n\
+                {style}+-----+-----+       \
+            "),
+        );
+    }
+
+    #[test]
     fn table_cell_style_does_not_bleed() {
         let base = THEME_DARK.base_style();
         let italic = SetItalic;
@@ -1301,5 +1325,24 @@ mod tests {
         assert_eq!(width(100, [50, 25, 25, 25, 25]), [20, 20, 20, 20, 20]);
         assert_eq!(width(100, [25, 25, 25, 25, 3]), [25, 24, 24, 24, 3]);
         assert_eq!(width(100, [10; 11]), [10; 11]);
+    }
+
+    #[test]
+    fn incomplete_table() {
+        let style = THEME_DARK.base_style();
+        assert_eq!(
+            render("\
+                |   | B | b |\n\
+                |---|---|---|\n\
+                | B\
+            ", 13),
+            format!("\
+                {style}+---+---+---+\n\
+                {style}|   | B | b |\n\
+                {style}+---+---+---+\n\
+                {style}| B |   |   |\n\
+                {style}+---+---+---+\
+            "),
+        );
     }
 }
