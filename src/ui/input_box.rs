@@ -1028,29 +1028,29 @@ impl InputBox {
             (KeyCode::Char('u'), _, _, true) => self.move_up(self.max_height()),
             (KeyCode::Char('d'), _, _, true) => self.move_down(self.max_height()),
             // Other combinations
+            | (KeyCode::Enter, true, _, _)
+            | (KeyCode::Enter, _, _, true)
+            => {
+                if self.is_special_command() {
+                    self.paste("\n");
+                } else {
+                    response = Some(self.submit());
+                }
+            }
             | (KeyCode::Char('j'), true, _, _)
             | (KeyCode::Char('j'), _, _, true)
-            | (KeyCode::Enter, true, _, _)
-            | (KeyCode::Enter, _, true, _) => self.paste("\n"),
+            | (KeyCode::Enter, _, _, _) => {
+                if self.is_special_command() {
+                    response = Some(self.submit());
+                } else {
+                    self.paste("\n");
+                }
+            }
             // Ignoring modifiers
             (KeyCode::Char(c), _, _, _) => {
                 let mut s = CompactString::with_capacity(1);
                 s.push(c);
                 self.paste(&s);
-            }
-            (KeyCode::Enter, _, _, true) => {
-                if self.is_special_command() {
-                    self.paste("\n");
-                } else {
-                    response = Some(self.submit());
-                }
-            }
-            (KeyCode::Enter, _, _, _) => {
-                if self.is_special_command() {
-                    response = Some(self.submit());
-                } else {
-                    self.paste("\n");
-                }
             }
             // XXX: Maybe should expand to spaces when input via keyboard
             (KeyCode::Tab, _, _, _) => self.paste("\t"),
