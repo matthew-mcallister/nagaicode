@@ -18,6 +18,7 @@ use crate::provider::Provider;
 use crate::query::DataQuery;
 use crate::schema::provider::dsl;
 use crate::session::Session;
+use crate::shell;
 use crate::task::{Task, TaskContext};
 use crate::ui::text::truncate_line;
 
@@ -549,13 +550,11 @@ impl BangCommand {
     async fn process(self, context: &mut TaskContext) -> AnyResult<()> {
         context.send(AppEvent::CommandPrompt(format!("$ {}", self.command)));
         let cwd = Arc::clone(context.cwd());
-        let output = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(&self.command)
+        let output = shell::command(&self.command)
             .current_dir(&**cwd)
             .output()
             .await
-            .map_err(|e| anyhow!("failed to run 'sh': {e}"))?;
+            .map_err(|e| anyhow!("failed to run '{}': {e}", shell::program()))?;
         let return_code = output.status.code().unwrap_or(-1);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);

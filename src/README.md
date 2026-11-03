@@ -13,6 +13,7 @@
   - `src/system_prompt.rs`: system prompt builder
   - `src/item.rs`: item table
   - `src/testing.rs`: unit test helpers
+  - `src/shell.rs`: host shell
   - `src/tools/`:
     - `src/tools/mod.rs`: tool registry and task definition
   - `src/interface/`

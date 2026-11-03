@@ -42,7 +42,7 @@ mod tests {
     use crate::db;
     use crate::item::{ItemContent, ToolCallContent, ToolOutput};
     use crate::query::DataQuery;
-    use crate::testing::{session_turn, tool_call};
+    use crate::testing::{normalize, session_turn, tool_call};
 
     #[tokio::test]
     async fn test_execute_tool_call() {
@@ -52,14 +52,15 @@ mod tests {
 
         // Tools run on a live shell.
         let sh = |command| json!({ "command": command });
-        let stdout_call = tool_call(&mut conn, &turn, "sh", "call1", sh("printf 'hi'"), None);
-        let stderr_call = tool_call(&mut conn, &turn, "sh", "call2", sh("printf 'bye' >&2"), None);
+        let stdout_call = tool_call(&mut conn, &turn, "sh", "call1", sh("echo hi"), None);
+        let failing_call =
+            tool_call(&mut conn, &turn, "sh", "call2", sh("no_such_command_xyz"), None);
         // Failed calls record their error as output.
         let bad_args_call = tool_call(&mut conn, &turn, "sh", "call3", json!({ "command": 123 }), None);
         let unknown_call = tool_call(&mut conn, &turn, "no_such_tool", "call4", json!({}), None);
 
         let mut context = app.context();
-        for item in [stdout_call, stderr_call, bad_args_call, unknown_call] {
+        for item in [stdout_call, failing_call, bad_args_call, unknown_call] {
             ExecuteToolCall::new(item).run(&mut context).await.unwrap();
         }
 
@@ -68,26 +69,32 @@ mod tests {
             .iter()
             .map(|item| item.query("/content/output").unwrap())
             .collect();
+
+        assert_eq!(outputs[0]["status"], json!("completed"));
+        assert_eq!(outputs[0]["content"]["stderr"], json!(""));
+        assert_eq!(outputs[0]["content"]["return_code"], json!(0));
         assert_eq!(
-            outputs,
-            [
-                json!({
-                    "status": "completed",
-                    "content": { "stdout": "hi", "stderr": "", "return_code": 0 },
-                }),
-                json!({
-                    "status": "completed",
-                    "content": { "stdout": "", "stderr": "bye", "return_code": 0 },
-                }),
-                json!({
-                    "status": "failed",
-                    "content": "invalid arguments for 'sh': expected {\"command\": \"...\"}",
-                }),
-                json!({
-                    "status": "failed",
-                    "content": "no such tool 'no_such_tool'",
-                }),
-            ]
+            normalize(outputs[0]["content"]["stdout"].as_str().unwrap()),
+            "hi\n"
+        );
+
+        assert_eq!(outputs[1]["status"], json!("completed"));
+        assert_ne!(outputs[1]["content"]["return_code"], json!(0));
+        assert!(!outputs[1]["content"]["stderr"].as_str().unwrap().is_empty());
+
+        assert_eq!(
+            outputs[2],
+            json!({
+                "status": "failed",
+                "content": "invalid arguments for 'sh': expected {\"command\": \"...\"}",
+            })
+        );
+        assert_eq!(
+            outputs[3],
+            json!({
+                "status": "failed",
+                "content": "no such tool 'no_such_tool'",
+            })
         );
 
         let events = app.drain_events();

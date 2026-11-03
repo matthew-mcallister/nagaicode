@@ -9,6 +9,7 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
+use crate::shell;
 use crate::tools::{InterfaceToolOutput, Tool};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::RenderItem;
@@ -22,6 +23,13 @@ pub struct ShTool {
     cwd: Arc<Cwd>,
     input_schema: Value,
 }
+
+#[cfg(not(windows))]
+const DESCRIPTION: &str =
+    "Run a shell command on the host system. Equivalent to `sh -c 'command'`.";
+#[cfg(windows)]
+const DESCRIPTION: &str =
+    "Run a shell command on the host system. Equivalent to `powershell -C 'command'`.";
 
 impl ShTool {
     /// Creates a tool that runs shell commands within `cwd`.
@@ -59,15 +67,8 @@ impl Tool for ShTool {
         "sh"
     }
 
-    #[cfg(not(windows))]
     fn description(&self) -> &str {
-        "Run a shell command on the host system. Equivalent to `sh -c 'command'`."
-    }
-
-    // XXX: Could support alternative shells if there's a good use case
-    #[cfg(windows)]
-    fn description(&self) -> &str {
-        "Run a shell command on the host system. Equivalent to `powershell -C 'command'`."
+        DESCRIPTION
     }
 
     fn input_schema(&self) -> &Value {
@@ -80,23 +81,11 @@ impl Tool for ShTool {
                 .get("command")
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow!("invalid arguments for 'sh': expected {{\"command\": \"...\"}}"))?;
-            #[cfg(not(windows))]
-            let mut base = {
-                let mut cmd = tokio::process::Command::new("sh");
-                cmd.arg("-c");
-                cmd
-            };
-            #[cfg(windows)]
-            let mut base = {
-                let mut cmd = tokio::process::Command::new("powershell");
-                cmd.arg("-C");
-                cmd
-            };
-            let output = base.arg(cmd)
+            let output = shell::command(cmd)
                 .current_dir(&**self.cwd)
                 .output()
                 .await
-                .map_err(|e| anyhow!("failed to run 'sh': {e}"))?;
+                .map_err(|e| anyhow!("failed to run '{}': {e}", shell::program()))?;
             let return_code = output.status.code().unwrap_or(-1);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -259,6 +248,7 @@ mod tests {
     use super::*;
     use crate::query::QueryError;
     use crate::cwd::cwd;
+    use crate::testing::normalize;
     use crate::ui::canvas::render_canvas;
     use crate::ui::style::THEME_DARK;
 
@@ -351,7 +341,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(not(windows))]
     async fn test_sh_tool() {
         let dir = Arc::new(cwd());
         let tool = ShTool::new(dir.clone());
@@ -370,23 +359,20 @@ mod tests {
         assert!(tool.call(&json!({})).await.is_err());
         assert!(tool.call(&json!({"command": 123})).await.is_err());
 
-        let out = tool.call(&json!({"command": "printf 'hello'"})).await.unwrap();
-        assert_eq!(
-            out,
-            json!({"stdout": "hello", "stderr": "", "return_code": 0})
-        );
+        let out = tool.call(&json!({"command": "echo hello"})).await.unwrap();
+        assert_eq!(out["stderr"], json!(""));
+        assert_eq!(out["return_code"], json!(0));
+        assert_eq!(normalize(out["stdout"].as_str().unwrap()), "hello\n");
 
-        let err = tool.call(&json!({"command": "printf 'err' >&2; exit 1"})).await.unwrap();
-        assert_eq!(err["stderr"], json!("err"));
-        assert_eq!(err["return_code"], json!(1));
+        let out = tool.call(&json!({"command": "no_such_command_xyz"})).await.unwrap();
+        assert_ne!(out["return_code"], json!(0));
+        assert!(!out["stderr"].as_str().unwrap().is_empty());
 
         // Commands run within the tool's cwd.
-        let out = tool.call(&json!({"command": "pwd"})).await.unwrap();
-        let pwd = out["stdout"].as_str().unwrap().trim();
-        let expected = std::fs::canonicalize(dir.path()).unwrap();
-        assert_eq!(pwd, expected.to_string_lossy().as_ref());
+        let out = tool.call(&json!({"command": "echo hi > out.txt"})).await.unwrap();
+        assert_eq!(out["return_code"], json!(0));
+        assert!(dir.path().join("out.txt").exists());
 
-        // Interface content is built from stdout, stderr, and return code.
         let input = json!({});
         let output = json!({"stdout": "hi", "stderr": "", "return_code": 0});
         let result = tool.render_to_interface(&input, &output).unwrap();
@@ -396,22 +382,6 @@ mod tests {
                 ToolOutputContent::Text { text: Cow::Owned("stdout:\nhi".into()) },
                 ToolOutputContent::Text { text: Cow::Owned("return code: 0".into()) },
             ]
-        );
-    }
-
-    #[tokio::test]
-    #[cfg(windows)]
-    async fn test_sh_tool_windows() {
-        let dir = Arc::new(cwd());
-        let tool = ShTool::new(dir.clone());
-
-        assert_eq!(
-            tool.call(&json!({"command": "echo hello"})).await.unwrap(),
-            json!({"stdout": "hello\r\n", "stderr": "", "return_code": 0})
-        );
-        assert_eq!(
-            tool.call(&json!({"command": "echo (1 + 1)"})).await.unwrap(),
-            json!({"stdout": "2\r\n", "stderr": "", "return_code": 0})
         );
     }
 }

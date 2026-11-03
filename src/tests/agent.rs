@@ -12,7 +12,7 @@ use crate::model::Model;
 use crate::provider::Provider;
 use crate::query::DataQuery;
 use crate::request::test_client::ResponseData;
-use crate::testing::QueueStream;
+use crate::testing::{QueueStream, normalize_json};
 
 fn create_message_event(data: &str) -> SseEvent {
     SseEvent::Message(eventsource_stream::Event {
@@ -472,7 +472,7 @@ async fn test_agent_history() {
 
 #[tokio::test]
 async fn test_agent_tool_call_loop() {
-    use crate::item::{Item, ItemContent, ToolCallContent, ToolOutput};
+    use crate::item::{Item, ItemContent};
     use crate::session::{Response, Turn, TurnType};
 
     let mut app = App::new().unwrap();
@@ -498,9 +498,9 @@ async fn test_agent_tool_call_loop() {
             Ok(SseEvent::Open),
             Ok(create_message_event(r#"{"type":"response.created","response":{"id":"resp-1","status":"in_progress"}}"#)),
             Ok(create_message_event(r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"sh","call_id":"call_1","arguments":""}}"#)),
-            Ok(create_message_event(r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"command\": \"printf"}"#)),
+            Ok(create_message_event(r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"command\": \"echo"}"#)),
             Ok(create_message_event(r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":" 3\"}"}"#)),
-            Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"sh","call_id":"call_1","arguments":"{\"command\": \"printf 3\"}"}}"#)),
+            Ok(create_message_event(r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"sh","call_id":"call_1","arguments":"{\"command\": \"echo 3\"}"}}"#)),
             Ok(create_message_event(r#"{"type":"response.completed","response":{"id":"resp-1","status":"completed"}}"#)),
         ])),
     );
@@ -533,21 +533,22 @@ async fn test_agent_tool_call_loop() {
 
     // The second request replays the tool call and its output.
     let body = request_body_value(&requests[1]);
+    // The newline style of shell output depends on the host shell.
     assert_eq!(
-        body["input"],
+        normalize_json(&body["input"]),
         json!([
             {"type": "message", "role": "user", "content": "call the sh tool"},
             {
                 "type": "function_call",
                 "call_id": "call_1",
                 "name": "sh",
-                "arguments": r#"{"command":"printf 3"}"#,
+                "arguments": r#"{"command":"echo 3"}"#,
             },
             {
                 "type": "function_call_output",
                 "call_id": "call_1",
                 "output": [
-                    {"type": "input_text", "text": "stdout:\n3"},
+                    {"type": "input_text", "text": "stdout:\n3\n"},
                     {"type": "input_text", "text": "return code: 0"},
                 ],
             },
@@ -572,14 +573,20 @@ async fn test_agent_tool_call_loop() {
     assert_eq!(items.len(), 3);
     assert_eq!(items[0].content, ItemContent::UserText("call the sh tool".to_owned()));
     assert_eq!(items[1].upstream_id.as_deref(), Some("fc_1"));
-    assert_eq!(items[1].content, ItemContent::ToolCall(ToolCallContent {
-        tool_name: "sh".to_owned(),
-        call_id: "call_1".to_owned(),
-        args: json!({ "command": "printf 3" }),
-        output: Some(ToolOutput::Completed {
-            value: json!({ "stdout": "3", "stderr": "", "return_code": 0 }),
-        }),
-    }));
+    // Tool args and output survive the round trip through the database.
+    assert_eq!(
+        normalize_json(&items[1].query("/content").unwrap()),
+        json!({
+            "type": "tool_call",
+            "tool_name": "sh",
+            "call_id": "call_1",
+            "args": { "command": "echo 3" },
+            "output": {
+                "status": "completed",
+                "content": { "stdout": "3\n", "stderr": "", "return_code": 0 },
+            },
+        })
+    );
     assert_eq!(items[2].upstream_id.as_deref(), Some("msg_2"));
     assert_eq!(items[2].content, ItemContent::ResponseText("The answer is 3.".to_owned()));
 }

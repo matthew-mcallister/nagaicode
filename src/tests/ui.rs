@@ -12,6 +12,7 @@ use crate::item::{Item, ItemContent};
 use crate::model::Model;
 use crate::provider::Provider;
 use crate::query::DataQuery;
+use crate::testing::normalize;
 use crate::ui::canvas::render_canvas;
 use crate::ui::chat::Chat;
 use crate::ui::style::THEME_DARK;
@@ -437,7 +438,8 @@ async fn test_app_process_command() {
     let mut app = App::new().unwrap();
     let cwd = Arc::clone(app.cwd());
 
-    // A successful command prints its output.
+    // A successful command prints its output. The newline style of the output
+    // depends on the host shell.
     run_bang(&mut app, "!echo test").await;
     let history = app
         .query("/chat/stacked/inner/history/history/items")
@@ -449,35 +451,29 @@ async fn test_app_process_command() {
     assert_eq!(last_two[0]["content"]["type"], json!("command_prompt"));
     assert_eq!(last_two[0]["content"]["value"], json!("$ echo test"));
     assert_eq!(last_two[1]["content"]["type"], json!("command_output"));
-    assert_eq!(last_two[1]["content"]["value"], json!("test\n"));
-
-    // Commands run in the app's working directory.
-    run_bang(&mut app, "!pwd").await;
-    let item = last_history_item(&app);
-    assert_eq!(item["content"]["type"], json!("command_output"));
-    let expected = std::fs::canonicalize(cwd.path()).unwrap();
     assert_eq!(
-        item["content"]["value"].as_str().unwrap().trim(),
-        expected.to_string_lossy().as_ref(),
+        normalize(last_two[1]["content"]["value"].as_str().unwrap()),
+        "test\n"
     );
 
-    #[cfg(not(windows))]
-    {
-        // A command with no output produces an empty output item.
-        run_bang(&mut app, "!true").await;
-        let item = last_history_item(&app);
-        assert_eq!(item["content"]["type"], json!("command_output"));
-        assert_eq!(item["content"]["value"], json!(""));
+    // Commands run in the app's working directory.
+    run_bang(&mut app, "!echo hi > out.txt").await;
+    let item = last_history_item(&app);
+    assert_eq!(item["content"]["type"], json!("command_output"));
+    assert_eq!(item["content"]["value"], json!(""));
+    assert!(cwd.path().join("out.txt").exists());
 
-        // A nonzero exit code reports stdout and stderr as an error.
-        run_bang(&mut app, "!printf 'error message\n' >&2; exit 1").await;
-        let item = last_history_item(&app);
-        assert_eq!(item["content"]["type"], json!("error"));
-        assert_eq!(
-            item["content"]["value"],
-            json!("command exited with code 1: error message\n")
-        );
-    }
+    // A command with no output produces an empty output item.
+    run_bang(&mut app, "!exit 0").await;
+    let item = last_history_item(&app);
+    assert_eq!(item["content"]["type"], json!("command_output"));
+    assert_eq!(item["content"]["value"], json!(""));
+
+    // A nonzero exit code is reported as an error.
+    run_bang(&mut app, "!exit 1").await;
+    let item = last_history_item(&app);
+    assert_eq!(item["content"]["type"], json!("error"));
+    assert_eq!(item["content"]["value"], json!("command exited with code 1: "));
 
     // A command the shell cannot run reports the shell's error.
     run_bang(&mut app, "!no_such_command_xyz").await;
@@ -485,9 +481,10 @@ async fn test_app_process_command() {
     assert_eq!(item["content"]["type"], json!("error"));
     let msg = item["content"]["value"].as_str().unwrap();
     assert!(
-        msg.starts_with("command exited with code 127: "),
+        msg.starts_with("command exited with code "),
         "unexpected error: {msg}"
     );
+    assert!(msg.contains("no_such_command_xyz"), "unexpected error: {msg}");
 
     assert!(app.process_command("").await.is_ok());
     assert!(app.process_command("   ").await.is_ok());

@@ -178,18 +178,20 @@ mod tests {
 
     use crate::cwd::cwd;
     use crate::item::Item;
-    use crate::testing::{session_turn, tool_call};
+    use crate::testing::{normalize, session_turn, tool_call};
 
     #[tokio::test]
     async fn test_call_tool() {
         let dir = Arc::new(cwd());
         let registry = ToolRegistry::new(&dir);
 
-        let output = registry.call("sh", &json!({ "command": "printf 'hi'" })).await;
+        let output = registry.call("sh", &json!({ "command": "echo hi" })).await;
         let ToolOutput::Completed { value } = &output else {
             panic!("expected a completed call, got {output:?}");
         };
-        assert_eq!(value["stdout"], json!("hi"));
+        assert_eq!(value["return_code"], json!(0));
+        assert_eq!(value["stderr"], json!(""));
+        assert_eq!(normalize(value["stdout"].as_str().unwrap()), "hi\n");
 
         // Failed calls record their error.
         assert_eq!(

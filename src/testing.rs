@@ -22,6 +22,25 @@ pub fn tool_registry() -> Arc<ToolRegistry> {
     Arc::new(ToolRegistry::new(&Arc::new(crate::cwd::cwd())))
 }
 
+pub fn normalize(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
+pub fn normalize_json(value: &Value) -> Value {
+    match value {
+        Value::String(text) => Value::String(normalize(text)),
+        Value::Array(items) => {
+            Value::Array(items.iter().map(normalize_json).collect())
+        }
+        Value::Object(fields) => Value::Object(
+            fields.iter()
+                .map(|(key, value)| (key.clone(), normalize_json(value)))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
 pub fn session_turn(conn: &mut SqliteConnection) -> (Session, Turn) {
     let session = Session::create(conn, "Session").unwrap();
     let turn = Turn::create(conn, session.id, TurnType::Assistant, None, None, None)

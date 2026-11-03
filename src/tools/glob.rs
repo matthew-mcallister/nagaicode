@@ -117,7 +117,6 @@ impl Tool for GlobTool {
                 rooted.push_str(pattern);
                 rooted
             };
-            eprintln!("{}", rooted);
             let compiled = Pattern::compile(&rooted)
                 .map_err(|e| anyhow!("invalid glob pattern '{pattern}': {e}"))?;
 
