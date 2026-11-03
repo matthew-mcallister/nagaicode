@@ -59,8 +59,14 @@ impl Tool for ShTool {
         "sh"
     }
 
+    #[cfg(not(windows))]
     fn description(&self) -> &str {
         "Run a shell command on the host system. Equivalent to `sh -C 'command'`."
+    }
+
+    #[cfg(windows)]
+    fn description(&self) -> &str {
+        "Run a shell command on the host system. Equivalent to `powershell -C 'command'`."
     }
 
     fn input_schema(&self) -> &Value {
@@ -73,9 +79,19 @@ impl Tool for ShTool {
                 .get("command")
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow!("invalid arguments for 'sh': expected {{\"command\": \"...\"}}"))?;
-            let output = tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
+            #[cfg(not(windows))]
+            let mut base = {
+                let mut cmd = tokio::process::Command::new("sh");
+                cmd.arg("-c");
+                cmd
+            };
+            #[cfg(windows)]
+            let mut base = {
+                let mut cmd = tokio::process::Command::new("powershell");
+                cmd.arg("-C");
+                cmd
+            };
+            let output = base.arg(cmd)
                 .current_dir(&**self.cwd)
                 .output()
                 .await
@@ -334,6 +350,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(not(windows))]
     async fn test_sh_tool() {
         let dir = Arc::new(cwd());
         let tool = ShTool::new(dir.clone());
@@ -378,6 +395,21 @@ mod tests {
                 ToolOutputContent::Text { text: Cow::Owned("stdout:\nhi".into()) },
                 ToolOutputContent::Text { text: Cow::Owned("return code: 0".into()) },
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sh_tool_windows() {
+        let dir = Arc::new(cwd());
+        let tool = ShTool::new(dir.clone());
+
+        assert_eq!(
+            tool.call(&json!({"command": "echo hello"})).await.unwrap(),
+            json!({"stdout": "hello\r\n", "stderr": "", "return_code": 0})
+        );
+        assert_eq!(
+            tool.call(&json!({"command": "echo (1 + 1)"})).await.unwrap(),
+            json!({"stdout": "2\r\n", "stderr": "", "return_code": 0})
         );
     }
 }
