@@ -109,13 +109,15 @@ impl Tool for GlobTool {
             let rooted = if Path::new(pattern).is_absolute() {
                 pattern.to_owned()
             } else {
-                let mut rooted = escape_glob(&self.cwd.to_string_lossy());
-                if !rooted.ends_with(std::path::MAIN_SEPARATOR) {
-                    rooted.push(std::path::MAIN_SEPARATOR);
+                let mut cwd = self.cwd.to_string_lossy().to_string();
+                if !cwd.ends_with(std::path::MAIN_SEPARATOR) {
+                    cwd.push(std::path::MAIN_SEPARATOR);
                 }
+                let mut rooted = escape_glob(&cwd);
                 rooted.push_str(pattern);
                 rooted
             };
+            eprintln!("{}", rooted);
             let compiled = Pattern::compile(&rooted)
                 .map_err(|e| anyhow!("invalid glob pattern '{pattern}': {e}"))?;
 
@@ -241,6 +243,7 @@ mod tests {
             .iter()
             .map(|r| r["path"].as_str().unwrap().to_owned())
             .collect();
+        paths.iter_mut().for_each(|p| *p = p.replace('\\', "/"));
         paths.sort();
         paths
     }

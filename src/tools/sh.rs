@@ -61,9 +61,10 @@ impl Tool for ShTool {
 
     #[cfg(not(windows))]
     fn description(&self) -> &str {
-        "Run a shell command on the host system. Equivalent to `sh -C 'command'`."
+        "Run a shell command on the host system. Equivalent to `sh -c 'command'`."
     }
 
+    // XXX: Could support alternative shells if there's a good use case
     #[cfg(windows)]
     fn description(&self) -> &str {
         "Run a shell command on the host system. Equivalent to `powershell -C 'command'`."
@@ -399,6 +400,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(windows)]
     async fn test_sh_tool_windows() {
         let dir = Arc::new(cwd());
         let tool = ShTool::new(dir.clone());

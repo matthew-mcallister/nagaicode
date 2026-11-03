@@ -461,20 +461,23 @@ async fn test_app_process_command() {
         expected.to_string_lossy().as_ref(),
     );
 
-    // A command with no output produces an empty output item.
-    run_bang(&mut app, "!true").await;
-    let item = last_history_item(&app);
-    assert_eq!(item["content"]["type"], json!("command_output"));
-    assert_eq!(item["content"]["value"], json!(""));
+    #[cfg(not(windows))]
+    {
+        // A command with no output produces an empty output item.
+        run_bang(&mut app, "!true").await;
+        let item = last_history_item(&app);
+        assert_eq!(item["content"]["type"], json!("command_output"));
+        assert_eq!(item["content"]["value"], json!(""));
 
-    // A nonzero exit code reports stdout and stderr as an error.
-    run_bang(&mut app, "!printf 'error message\n' >&2; exit 1").await;
-    let item = last_history_item(&app);
-    assert_eq!(item["content"]["type"], json!("error"));
-    assert_eq!(
-        item["content"]["value"],
-        json!("command exited with code 1: error message\n")
-    );
+        // A nonzero exit code reports stdout and stderr as an error.
+        run_bang(&mut app, "!printf 'error message\n' >&2; exit 1").await;
+        let item = last_history_item(&app);
+        assert_eq!(item["content"]["type"], json!("error"));
+        assert_eq!(
+            item["content"]["value"],
+            json!("command exited with code 1: error message\n")
+        );
+    }
 
     // A command the shell cannot run reports the shell's error.
     run_bang(&mut app, "!no_such_command_xyz").await;
