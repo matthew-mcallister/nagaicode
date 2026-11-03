@@ -31,8 +31,6 @@ pub struct EditTool {
 }
 
 impl EditTool {
-    /// Creates a tool that edits text files, rendering paths relative to
-    /// `cwd`.
     pub fn new(cwd: Arc<Cwd>) -> Self {
         Self {
             cwd,
@@ -40,7 +38,7 @@ impl EditTool {
                 "type": "object",
                 "properties": {
                     "filepath": { "type": "string" },
-                    "old_string": { "type": "string" },
+                    "old_string": { "type": "string", "minLength": 1 },
                     "new_string": { "type": "string" },
                     "replace_all": { "type": "boolean" },
                 },
@@ -98,6 +96,10 @@ impl Tool for EditTool {
                 .get("replace_all")
                 .and_then(Value::as_bool)
                 .ok_or_else(invalid)?;
+
+            if old_string.is_empty() {
+                return Err(anyhow!("old_string must not be empty"));
+            }
 
             let text = std::fs::read_to_string(filepath)
                 .map_err(|e| anyhow!("{filepath}: {e}"))?;
@@ -321,7 +323,7 @@ mod tests {
                 "type": "object",
                 "properties": {
                     "filepath": { "type": "string" },
-                    "old_string": { "type": "string" },
+                    "old_string": { "type": "string", "minLength": 1 },
                     "new_string": { "type": "string" },
                     "replace_all": { "type": "boolean" },
                 },
@@ -601,4 +603,3 @@ mod tests {
         assert!(matches!(item.query("/missing"), Err(QueryError::InvalidField(_))));
     }
 }
-
