@@ -645,28 +645,34 @@ impl TableBuilder {
 
 fn push_table(flow: &mut FlowBuilder<'_>, node: &Table) {
     assert!(!node.children.is_empty(), "empty table");
-    let Node::TableRow(ref row) = node.children[0] else { panic!() };
-    let num_rows = node.children.len();
-    let num_columns = row.children.len();
+    let num_columns = node.children.iter()
+        .map(|row| {
+            let Node::TableRow(row) = row else { panic!() };
+            row.children.len()
+        })
+        .max()
+        .unwrap();
 
     let (theme, base_style) = (flow.theme, flow.prefix.cur_style());
     let cells: Vec<Vec<_>> = node.children.iter().map(|row| {
         let Node::TableRow(row) = row else { panic!() };
-        row.children.iter().map(|cell| {
+        let mut cells: Vec<_> = row.children.iter().map(|cell| {
             let Node::TableCell(cell) = cell else { panic!() };
             let mut phrasing = PhrasingBuilder::new(theme, base_style);
             phrasing.push_all(&cell.children);
             phrasing
-        }).collect()
+        }).collect();
+        cells.resize_with(num_columns, || PhrasingBuilder::new(theme, base_style));
+        cells
     }).collect();
 
     // 2 cols padding left/right edges + 3 cols padding between each column
-    let padding = 4 + 3 * (num_columns - 1);
+    let padding = 4 + 3 * num_columns.saturating_sub(1);
     let content_width = flow.remaining_width().saturating_sub(padding);
     let mut col_widths: Vec<_> = (0..num_columns)
         .map(|col|
-            (0..num_rows)
-                .map(|row| cells[row][col].width())
+            cells.iter()
+                .map(|row| row[col].width())
                 .max()
                 .unwrap()
         )
@@ -1339,7 +1345,7 @@ mod tests {
             format!("\
                 {style}+---+---+---+\n\
                 {style}|   | B | b |\n\
-                {style}+---+---+---+\n\
+                {style}+===+===+===+\n\
                 {style}| B |   |   |\n\
                 {style}+---+---+---+\
             "),
