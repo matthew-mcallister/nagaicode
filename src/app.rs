@@ -289,6 +289,12 @@ impl App {
 
     /// Handles a terminal input event.
     pub async fn handle_input(&mut self, input: crossterm::event::Event) {
+        fn is_keyup(event: &crossterm::event::Event) -> bool {
+            use crossterm::event::{Event, KeyEvent, KeyEventKind};
+            matches!(event, Event::Key(KeyEvent { kind: KeyEventKind::Release, .. }))
+        }
+
+        if is_keyup(&input) { return; }
         let event = self.chat.handle_input(input);
         if let Some(event) = event {
             self.process_event(event).await;
