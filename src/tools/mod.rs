@@ -11,7 +11,7 @@ use crate::error::AnyResult;
 use crate::interface::{ToolInfo, ToolOutputContent};
 use crate::item::{ToolCallContent, ToolOutput};
 use crate::query::DataQuery;
-use crate::ui::render_item::{ErrorRenderItem, HelpRenderItem, RenderItem};
+use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
 
 pub mod edit;
 pub mod glob;
@@ -147,7 +147,7 @@ impl ToolRegistry {
 
     fn unknown_ui(tool_name: &str) -> Box<dyn RenderItem> {
         let tool_name = if tool_name.is_empty() { "<missing name>" } else { tool_name };
-        Box::new(HelpRenderItem::new(format!("Called '{}'", tool_name)))
+        Box::new(SystemRenderItem::new(format!("Called '{}'", tool_name)))
     }
 
     fn unknown_to_interface() -> InterfaceToolOutput {

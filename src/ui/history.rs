@@ -15,7 +15,7 @@ use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::UiContext;
 use crate::ui::render_item::{
-    CommandOutputRenderItem, CommandPromptRenderItem, ErrorRenderItem, HelpRenderItem,
+    CommandOutputRenderItem, CommandPromptRenderItem, ErrorRenderItem, SystemRenderItem,
     RenderItem, RewindRenderItem, get_item_content,
 };
 use crate::ui::markdown::ResumePoint;
@@ -271,7 +271,7 @@ pub struct History {
 
 fn item_head(head: Id<HistoryRow>) -> HistoryItem {
     HistoryItem {
-        content: Box::new(HelpRenderItem::new("")), // XXX: Maybe non-renderable content?
+        content: Box::new(SystemRenderItem::new("")), // XXX: Maybe non-renderable content?
         resume_point: Default::default(),
         item_id: None,
         seqno: i64::MAX,
@@ -809,7 +809,7 @@ impl History {
         match update {
             Update::ItemCreated { item } => self.on_item_created(item),
             Update::ItemUpdated { item } => self.on_item_updated(item),
-            Update::SystemMessage(content) => self.add_content(Box::new(HelpRenderItem::new(content))),
+            Update::SystemMessage(content) => self.add_content(Box::new(SystemRenderItem::new(content))),
             Update::RewindMessage(content) => {
                 self.add_content(Box::new(RewindRenderItem::new(content)))
             }

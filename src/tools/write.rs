@@ -11,7 +11,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::{InterfaceToolOutput, Tool};
-use crate::ui::render_item::{HelpRenderItem, RenderItem};
+use crate::ui::render_item::{SystemRenderItem, RenderItem};
 
 /// Creates or overwrites a text file with the given content.
 #[derive(Debug)]
@@ -104,7 +104,7 @@ impl Tool for WriteTool {
         } else {
             format!("Overwrote {path}")
         };
-        Ok(Box::new(HelpRenderItem::new(message)))
+        Ok(Box::new(SystemRenderItem::new(message)))
     }
 
     fn render_to_interface(

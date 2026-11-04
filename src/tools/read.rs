@@ -13,7 +13,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::{InterfaceToolOutput, Tool};
-use crate::ui::render_item::{ErrorRenderItem, HelpRenderItem, RenderItem};
+use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
 
 const MAX_LINE_BYTES: usize = 2000;
 const TRUNCATION_SUFFIX: &str = "... (truncated at 2000 bytes)";
@@ -157,7 +157,7 @@ impl Tool for ReadTool {
         } else {
             format!("Read {path} (start={start_line}, {num_lines} lines)")
         };
-        Ok(Box::new(HelpRenderItem::new(message)))
+        Ok(Box::new(SystemRenderItem::new(message)))
     }
 
     fn render_to_interface(

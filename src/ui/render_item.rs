@@ -59,7 +59,7 @@ macro_rules! string_render_item {
     };
 }
 
-string_render_item!(HelpRenderItem, "help");
+string_render_item!(SystemRenderItem, "help");
 string_render_item!(RewindRenderItem, "rewind_message");
 string_render_item!(ErrorRenderItem, "error");
 string_render_item!(UserRenderItem, "user");
@@ -68,7 +68,7 @@ string_render_item!(ResponseRenderItem, "response");
 string_render_item!(CommandPromptRenderItem, "command_prompt");
 string_render_item!(CommandOutputRenderItem, "command_output");
 
-impl RenderItem for HelpRenderItem {
+impl RenderItem for SystemRenderItem {
     fn render(
         &self,
         theme: &Theme,

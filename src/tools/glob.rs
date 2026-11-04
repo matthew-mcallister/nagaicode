@@ -13,7 +13,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::{InterfaceToolOutput, Tool};
-use crate::ui::render_item::{HelpRenderItem, RenderItem};
+use crate::ui::render_item::{SystemRenderItem, RenderItem};
 
 /// Searches for files and directories using glob patterns.
 #[derive(Debug)]
@@ -151,7 +151,7 @@ impl Tool for GlobTool {
             .get("pattern")
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("invalid tool input"))?;
-        Ok(Box::new(HelpRenderItem::new(format!("Glob {pattern}"))))
+        Ok(Box::new(SystemRenderItem::new(format!("Glob {pattern}"))))
     }
 
     // Output looks like this:
