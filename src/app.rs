@@ -141,7 +141,8 @@ impl App {
         let db_url = crate::db::db_url()?;
         let mut conn = crate::db::open(&db_url)?;
         let cwd = Arc::new(crate::cwd::cwd());
-        let tool_registry = Arc::new(ToolRegistry::new(&cwd));
+        let client = DefaultClient::default();
+        let tool_registry = Arc::new(ToolRegistry::new(&cwd, client.clone()));
         let ui = UiContext::new(Arc::clone(&tool_registry));
         let mut chat = Chat::new(&ui, w, h, theme);
         chat.handle_update(Update::SystemMessage(WELCOME));
@@ -158,7 +159,7 @@ impl App {
             selected_model,
             quit: false,
             theme,
-            client: DefaultClient::default(),
+            client,
             conn,
             db_url,
             settings,

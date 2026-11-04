@@ -19,7 +19,10 @@ use crate::session::{Session, Turn, TurnType};
 use crate::ui::UiContext;
 
 pub fn tool_registry() -> Arc<ToolRegistry> {
-    Arc::new(ToolRegistry::new(&Arc::new(crate::cwd::cwd())))
+    Arc::new(ToolRegistry::new(
+        &Arc::new(crate::cwd::cwd()),
+        crate::request::DefaultClient::default(),
+    ))
 }
 
 pub fn normalize(text: &str) -> String {

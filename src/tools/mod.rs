@@ -11,12 +11,14 @@ use crate::error::AnyResult;
 use crate::interface::{ToolInfo, ToolOutputContent};
 use crate::item::{ToolCallContent, ToolOutput};
 use crate::query::DataQuery;
+use crate::request::DefaultClient;
 use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
 
 pub mod edit;
 pub mod glob;
 pub mod read;
 pub mod sh;
+pub mod web_fetch;
 pub mod write;
 
 /// Interfaces for interacting with tools and rendering their output.
@@ -40,9 +42,12 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
     /// Invokes the tool on input.
     fn call<'a>(&'a self, input: &'a Value) -> BoxFuture<'a, AnyResult<Value>>;
 
+    // XXX: Should remove AnyResult from signature and force implementors to
+    // be liberal in what they accept.
     /// Builds a renderable item from the tool's output.
     fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>>;
 
+    // XXX: Same as above.
     /// Builds inference call inputs from the tool's output.
     fn render_to_interface(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput>;
 
@@ -69,13 +74,14 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
-    pub fn new(cwd: &Arc<Cwd>) -> Self {
+    pub fn new(cwd: &Arc<Cwd>, client: DefaultClient) -> Self {
         // Builtin tools
         // - sh
         // - read
         // - write
         // - edit
         // - glob
+        // - web_fetch
         let mut tools: FnvHashMap<String, Box<dyn Tool>> = FnvHashMap::default();
         let sh = sh::ShTool::new(Arc::clone(cwd));
         tools.insert(sh.name().to_owned(), Box::new(sh));
@@ -87,6 +93,8 @@ impl ToolRegistry {
         tools.insert(write.name().to_owned(), Box::new(write));
         let glob = glob::GlobTool::new(Arc::clone(cwd));
         tools.insert(glob.name().to_owned(), Box::new(glob));
+        let web_fetch = web_fetch::WebFetchTool::new(client);
+        tools.insert(web_fetch.name().to_owned(), Box::new(web_fetch));
         Self { tools }
     }
 
@@ -183,7 +191,7 @@ mod tests {
     #[tokio::test]
     async fn test_call_tool() {
         let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir);
+        let registry = ToolRegistry::new(&dir, DefaultClient::default());
 
         let output = registry.call("sh", &json!({ "command": "echo hi" })).await;
         let ToolOutput::Completed { value } = &output else {
@@ -210,7 +218,7 @@ mod tests {
     #[tokio::test]
     async fn test_call_failure_round_trip() {
         let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir);
+        let registry = ToolRegistry::new(&dir, DefaultClient::default());
         let mut conn = crate::db::open_new().unwrap();
         let (_, turn) = session_turn(&mut conn);
 
@@ -238,23 +246,23 @@ mod tests {
     #[test]
     fn test_list_tools() {
         let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir);
+        let registry = ToolRegistry::new(&dir, DefaultClient::default());
         let mut names: Vec<&str> = registry.list_tools().map(|t| t.name()).collect();
         names.sort();
-        assert_eq!(names, ["edit", "glob", "read", "sh", "write"]);
+        assert_eq!(names, ["edit", "glob", "read", "sh", "web_fetch", "write"]);
 
         let mut names: Vec<_> = registry.list_tool_infos()
             .into_iter()
             .map(|info| info.name)
             .collect();
         names.sort();
-        assert_eq!(names, &["edit", "glob", "read", "sh", "write"]);
+        assert_eq!(names, &["edit", "glob", "read", "sh", "web_fetch", "write"]);
     }
 
     #[test]
     fn test_render_unknown() {
         let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir);
+        let registry = ToolRegistry::new(&dir, DefaultClient::default());
 
         let call = ToolCallContent {
             tool_name: "missing".into(),
@@ -271,7 +279,7 @@ mod tests {
     #[test]
     fn test_render_failed() {
         let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir);
+        let registry = ToolRegistry::new(&dir, DefaultClient::default());
 
         let call = ToolCallContent {
             tool_name: "boom".into(),
@@ -288,7 +296,7 @@ mod tests {
     #[test]
     fn test_render_incomplete() {
         let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir);
+        let registry = ToolRegistry::new(&dir, DefaultClient::default());
         let pending = ToolCallContent {
             tool_name: "sh".into(),
             call_id: "call123".into(),

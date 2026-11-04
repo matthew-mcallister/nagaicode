@@ -39,3 +39,8 @@ macro_rules! try_nested {
         }
     }
 }
+
+macro_rules! version { () => { env!("CARGO_PKG_VERSION") } }
+pub(crate) use version;
+
+pub const VERSION: &str = version!();

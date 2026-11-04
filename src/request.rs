@@ -17,6 +17,8 @@ pub use self::test_client::DefaultClient;
 pub trait Response: Sized {
     fn status(&self) -> StatusCode;
 
+    fn version(&self) -> String;
+
     fn headers(&self) -> &HeaderMap;
 
     #[allow(async_fn_in_trait)]
@@ -31,6 +33,10 @@ pub trait Response: Sized {
 impl Response for reqwest::Response {
     fn status(&self) -> StatusCode {
         self.status()
+    }
+
+    fn version(&self) -> String {
+        version_string(reqwest::Response::version(self))
     }
 
     fn headers(&self) -> &HeaderMap {
@@ -48,6 +54,18 @@ impl Response for reqwest::Response {
     fn error_for_status(self) -> AnyResult<Self> {
         Ok(self.error_for_status()?)
     }
+}
+
+fn version_string(version: reqwest::Version) -> String {
+    match version {
+        reqwest::Version::HTTP_09 => "0.9",
+        reqwest::Version::HTTP_10 => "1.0",
+        reqwest::Version::HTTP_11 => "1.1",
+        reqwest::Version::HTTP_2 => "2.0",
+        reqwest::Version::HTTP_3 => "3.0",
+        _ => "",
+    }
+    .to_owned()
 }
 
 pub trait Client {
@@ -102,6 +120,10 @@ pub mod test_client {
     impl super::Response for Response {
         fn status(&self) -> StatusCode {
             self.status
+        }
+
+        fn version(&self) -> String {
+            "1.1".to_owned()
         }
 
         fn headers(&self) -> &HeaderMap {
