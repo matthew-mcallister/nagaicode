@@ -809,7 +809,7 @@ impl History {
         match update {
             Update::ItemCreated { item } => self.on_item_created(item),
             Update::ItemUpdated { item } => self.on_item_updated(item),
-            Update::HelpMessage(content) => self.add_content(Box::new(HelpRenderItem::new(content))),
+            Update::SystemMessage(content) => self.add_content(Box::new(HelpRenderItem::new(content))),
             Update::RewindMessage(content) => {
                 self.add_content(Box::new(RewindRenderItem::new(content)))
             }
@@ -829,7 +829,7 @@ impl History {
 pub enum Update<'a> {
     ItemCreated { item: &'a Item },
     ItemUpdated { item: &'a Item },
-    HelpMessage(&'a str),
+    SystemMessage(&'a str),
     RewindMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -1078,7 +1078,7 @@ mod tests {
         assert_eq!(h.cursor(), None);
         assert_eq!(render_draw(&h), "");
 
-        h.handle_update(Update::HelpMessage("hello"));
+        h.handle_update(Update::SystemMessage("hello"));
         assert_eq!(h.height(), 2);
         assert_eq!(h.num_rows(), 2);
 
@@ -1092,7 +1092,7 @@ mod tests {
         );
 
         let mut h = history(12, 2);
-        h.handle_update(Update::HelpMessage("one\ntwo"));
+        h.handle_update(Update::SystemMessage("one\ntwo"));
         assert_eq!(h.num_rows(), 3);
         assert_eq!(h.height(), 2);
 
@@ -1475,7 +1475,7 @@ mod tests {
     fn test_item_created_order() {
         let mut h = history(80, 10);
 
-        h.handle_update(Update::HelpMessage("help"));
+        h.handle_update(Update::SystemMessage("help"));
 
         let mut items: Vec<_> = [3, 1, 2]
             .into_iter()
@@ -1498,7 +1498,7 @@ mod tests {
         assert_eq!(item_contents(&h), ["help", "message 1", "message 2", "message 3"]);
 
         // No seqno: append at tail
-        h.handle_update(Update::HelpMessage("help"));
+        h.handle_update(Update::SystemMessage("help"));
         assert_eq!(
             item_contents(&h),
             ["help", "message 1", "message 2", "message 3", "help"]
@@ -1526,10 +1526,10 @@ mod tests {
     fn test_sort_key() {
         let mut h = history(80, 10);
 
-        h.handle_update(Update::HelpMessage("one"));
+        h.handle_update(Update::SystemMessage("one"));
         assert_eq!(h.query("/items/0/sort_key").unwrap(), json!([0, 0]));
 
-        h.handle_update(Update::HelpMessage("two"));
+        h.handle_update(Update::SystemMessage("two"));
         assert_eq!(h.query("/items/0/sort_key").unwrap(), json!([0, 0]));
         assert_eq!(h.query("/items/1/sort_key").unwrap(), json!([0, 1]));
 
@@ -1537,7 +1537,7 @@ mod tests {
         h.handle_update(Update::ItemCreated { item: &item });
         assert_eq!(h.query("/items/2/sort_key").unwrap(), json!([5, 0]));
 
-        h.handle_update(Update::HelpMessage("three"));
+        h.handle_update(Update::SystemMessage("three"));
         assert_eq!(h.query("/items/3/sort_key").unwrap(), json!([5, 1]));
 
         assert_eq!(h.query("/items/3/seqno").unwrap(), json!(5));

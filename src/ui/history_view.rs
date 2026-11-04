@@ -57,7 +57,7 @@ impl HistoryView {
 pub enum Update<'a> {
     ItemCreated { item: &'a Item },
     ItemUpdated { item: &'a Item },
-    HelpMessage(&'a str),
+    SystemMessage(&'a str),
     RewindMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -72,7 +72,7 @@ impl<'a> TryFrom<Update<'a>> for history::Update<'a> {
         match update {
             Update::ItemCreated { item } => Ok(history::Update::ItemCreated { item }),
             Update::ItemUpdated { item } => Ok(history::Update::ItemUpdated { item }),
-            Update::HelpMessage(content) => Ok(history::Update::HelpMessage(content)),
+            Update::SystemMessage(content) => Ok(history::Update::SystemMessage(content)),
             Update::RewindMessage(content) => Ok(history::Update::RewindMessage(content)),
             Update::ErrorMessage(content) => Ok(history::Update::ErrorMessage(content)),
             Update::CommandPrompt(content) => Ok(history::Update::CommandPrompt(content)),

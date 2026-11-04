@@ -509,7 +509,7 @@ async fn test_app_query() {
 
     let ui = crate::testing::ui_context();
     let mut chat = Chat::new(&ui, 80, 24, &THEME_DARK);
-    chat.handle_update(Update::HelpMessage(
+    chat.handle_update(Update::SystemMessage(
         "Welcome to NagaiCode!\n\nType /help for a list of commands.",
     ));
     let expected_chat = chat.query("/").unwrap();

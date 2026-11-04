@@ -7,6 +7,7 @@
   - `src/README.md`: architectural notes
   - `src/agent.rs`: LLM agents
   - `src/app.rs`: main entrypoint
+  - `src/arena.rs`: arena data structure
   - `src/task.rs`: task spawning and lifecycle
   - `src/query.rs`: debug query trait
   - `src/session.rs`: session, turn, and response tables

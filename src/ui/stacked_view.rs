@@ -116,7 +116,7 @@ impl StackedView {
 pub enum Update<'a> {
     ItemCreated { item: &'a Item },
     ItemUpdated { item: &'a Item },
-    HelpMessage(&'a str),
+    SystemMessage(&'a str),
     RewindMessage(&'a str),
     ErrorMessage(&'a str),
     CommandPrompt(&'a str),
@@ -132,7 +132,7 @@ impl<'a> TryFrom<Update<'a>> for history_view::Update<'a> {
         match update {
             Update::ItemCreated { item } => Ok(history_view::Update::ItemCreated { item }),
             Update::ItemUpdated { item } => Ok(history_view::Update::ItemUpdated { item }),
-            Update::HelpMessage(content) => Ok(history_view::Update::HelpMessage(content)),
+            Update::SystemMessage(content) => Ok(history_view::Update::SystemMessage(content)),
             Update::RewindMessage(content) => Ok(history_view::Update::RewindMessage(content)),
             Update::ErrorMessage(content) => Ok(history_view::Update::ErrorMessage(content)),
             Update::CommandPrompt(content) => Ok(history_view::Update::CommandPrompt(content)),

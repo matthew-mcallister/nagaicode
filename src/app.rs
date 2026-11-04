@@ -144,7 +144,7 @@ impl App {
         let tool_registry = Arc::new(ToolRegistry::new(&cwd));
         let ui = UiContext::new(Arc::clone(&tool_registry));
         let mut chat = Chat::new(&ui, w, h, theme);
-        chat.handle_update(Update::HelpMessage(WELCOME));
+        chat.handle_update(Update::SystemMessage(WELCOME));
         let settings = Settings::open(&db_url)?;
         let selected_model = settings
             .current_model()
@@ -448,7 +448,7 @@ impl App {
     /// greeting message.
     pub(crate) async fn new_session(&mut self) -> AnyResult<()> {
         self.clear_session().await?;
-        self.chat.handle_update(Update::HelpMessage(WELCOME));
+        self.chat.handle_update(Update::SystemMessage(WELCOME));
         Ok(())
     }
 
@@ -615,7 +615,7 @@ impl App {
             if slash_command {
                 let output = self.process_slash_command(command).await?;
                 if !output.trim().is_empty() {
-                    self.chat.handle_update(Update::HelpMessage(&output));
+                    self.chat.handle_update(Update::SystemMessage(&output));
                 }
             } else {
                 let task = crate::command::BangCommand::new(command.to_string());
@@ -635,7 +635,7 @@ impl App {
                 match self.run_command(command).await {
                     Ok(output) => {
                         if !output.trim().is_empty() {
-                            self.chat.handle_update(Update::HelpMessage(&output));
+                            self.chat.handle_update(Update::SystemMessage(&output));
                         }
                         Ok(())
                     }
@@ -687,7 +687,7 @@ impl App {
                 Ok(())
             }
             AppEvent::Interrupted => {
-                self.chat.handle_update(Update::HelpMessage("Interrupted."));
+                self.chat.handle_update(Update::SystemMessage("Interrupted."));
                 Ok(())
             }
             AppEvent::ErrorMessage(msg) => {
