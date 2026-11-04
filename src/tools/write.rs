@@ -78,8 +78,12 @@ impl Tool for WriteTool {
                 .and_then(Value::as_str)
                 .ok_or_else(invalid)?;
 
-            let created = !Path::new(filepath).exists();
-            std::fs::write(filepath, content)?;
+            let path = Path::new(filepath);
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)?;
+            }
+            let created = !path.exists();
+            std::fs::write(path, content)?;
 
             Ok(json!({ "created": created, "num_bytes": content.len() }))
         })
@@ -167,5 +171,19 @@ mod tests {
         assert_eq!(out["created"], json!(false));
         assert_eq!(out["num_bytes"], json!(9));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "replaced\n");
+    }
+
+    #[tokio::test]
+    async fn test_write_creates_parent_dirs() {
+        let cwd = Arc::new(Cwd::new());
+        let tool = WriteTool::new(Arc::clone(&cwd));
+        let path = cwd.path().join("nested").join("dir").join("a.txt");
+
+        let out = tool
+            .call(&json!({ "filepath": path.to_string_lossy(), "content": "hello" }))
+            .await
+            .unwrap();
+        assert_eq!(out["created"], json!(true));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
     }
 }
