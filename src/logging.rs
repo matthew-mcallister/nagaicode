@@ -16,6 +16,7 @@ mod real {
     const LOG_FILE_PREFIX: &str = "nagai";
 
     /// Returns the path of the log file for this run.
+    // FIXME: this should be state_dir() not data_dir()
     pub fn log_file_path() -> AnyResult<String> {
         let mut dir = data_dir()?;
         dir.push("log");

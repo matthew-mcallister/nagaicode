@@ -1,3 +1,4 @@
+// XXX: At some point should set up separate database for cache
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness};
 
