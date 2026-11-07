@@ -1099,6 +1099,7 @@ dependencies = [
  "markdown",
  "mime",
  "nglob",
+ "percent-encoding",
  "reqwest",
  "reqwest-eventsource",
  "serde",

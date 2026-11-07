@@ -1,13 +1,20 @@
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
+use fnv::FnvHashMap;
 use futures::future::BoxFuture;
-use reqwest::header::{ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, USER_AGENT, HeaderMap, HeaderValue};
-use reqwest::{Method, Request, StatusCode, Url};
+use reqwest::header::{ACCEPT_ENCODING, USER_AGENT, HeaderMap, HeaderValue};
+use reqwest::{Method, Request, Url};
 use serde_json::{Value, json};
 
+#[cfg(not(test))]
+use crate::config::temp_dir;
+use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
@@ -15,13 +22,31 @@ use crate::request::{Client, DefaultClient, Response as ResponseTrait};
 use crate::tools::{InterfaceToolOutput, Tool};
 use crate::ui::render_item::{RenderItem, SystemRenderItem};
 
-const MAX_CONTENT_LENGTH: u64 = 1024 * 1024;
 const USER_AGENT_STRING: &str = concat!("nagaicode/", crate::version!());
+
+#[cfg(test)]
+fn tool_dir() -> AnyResult<Cwd> {
+    Ok(crate::cwd::cwd())
+}
+
+#[cfg(not(test))]
+fn web_fetch_dir() -> AnyResult<PathBuf> {
+    let mut dir = temp_dir()?;
+    dir.push("web_fetch");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+#[cfg(not(test))]
+fn tool_dir() -> AnyResult<Cwd> {
+    web_fetch_dir()
+}
 
 /// Fetches documents from the web.
 #[derive(Debug)]
 pub struct WebFetchTool {
     client: DefaultClient,
+    dir: OnceLock<Cwd>,
     input_schema: Value,
 }
 
@@ -30,17 +55,25 @@ impl WebFetchTool {
     pub fn new(client: DefaultClient) -> Self {
         Self {
             client,
+            dir: OnceLock::new(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "url": { "type": "string" },
-                    "format": { "type": "string", "enum": ["raw"] },
                     "timeout": { "type": "number", "minimum": 1, "maximum": 120 },
                 },
-                "required": ["url", "format", "timeout"],
+                "required": ["url", "timeout"],
                 "additionalProperties": false,
             }),
         }
+    }
+
+    fn dir(&self) -> AnyResult<&Cwd> {
+        if let Some(dir) = self.dir.get() {
+            return Ok(dir);
+        }
+        let _ = self.dir.set(tool_dir()?);
+        Ok(self.dir.get().unwrap())
     }
 }
 
@@ -64,7 +97,8 @@ impl Tool for WebFetchTool {
     }
 
     fn description(&self) -> &str {
-        "Fetches a document from the web. Only text-based documents may be read."
+        "Fetches and saves a document from the web, returning a path to the
+        saved file."
     }
 
     fn input_schema(&self) -> &Value {
@@ -78,13 +112,6 @@ impl Tool for WebFetchTool {
                 .get("url")
                 .and_then(Value::as_str)
                 .ok_or_else(invalid)?;
-            let format = input
-                .get("format")
-                .and_then(Value::as_str)
-                .ok_or_else(invalid)?;
-            if format != "raw" {
-                return Err(invalid());
-            }
             let timeout = input
                 .get("timeout")
                 .and_then(Value::as_f64)
@@ -109,26 +136,18 @@ impl Tool for WebFetchTool {
             let version = ResponseTrait::version(&response);
             let headers = header_map_to_json(ResponseTrait::headers(&response));
 
-            validate_content_type(ResponseTrait::headers(&response))
-                .map_err(|e| status_error(&url, status, &e))?;
-            validate_content_length(ResponseTrait::headers(&response))
-                .map_err(|e| status_error(&url, status, &e))?;
-
-            let output = ResponseTrait::text(response)
+            let body = ResponseTrait::text(response)
                 .await
-                .map_err(|e| status_error(&url, status, &e))?;
+                .map_err(|e| anyhow!("{url}: (status {}) {e}", status.as_u16()))?;
             let response_time = start.elapsed().as_secs_f64();
 
-            if status.is_client_error() || status.is_server_error() {
-                return Err(status_error(&url, status, &output));
-            }
-
+            let filepath = write_no_clobber(self.dir()?, &file_name(&url), &body)?;
             Ok(json!({
                 "url": url.as_str(),
                 "version": version,
                 "status": status.as_u16(),
                 "headers": headers,
-                "output": output,
+                "filepath": filepath.display().to_string(),
                 "response_time": response_time,
             }))
         })
@@ -139,10 +158,11 @@ impl Tool for WebFetchTool {
             .get("url")
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("invalid tool input"))?;
-        let message = match content_length(output) {
+        let message = match get_content_length(output) {
             Some(length) => format!("Fetched {url} ({})", format_content_length(length)),
             None => format!("Fetched {url}"),
         };
+        // FIXME: Render as error message if status is >= 400
         Ok(Box::new(SystemRenderItem::new(message)))
     }
 
@@ -151,39 +171,100 @@ impl Tool for WebFetchTool {
         _input: &Value,
         output: &Value,
     ) -> AnyResult<InterfaceToolOutput> {
-        let text = output
-            .get("output")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("invalid tool output"))?;
         let status = output
             .get("status")
             .and_then(Value::as_u64)
             .ok_or_else(|| anyhow!("invalid tool output"))?;
+        let filepath = output
+            .get("filepath")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("invalid tool output"))?;
         let mut meta = format!("status {status}");
-        if let Some(length) = content_length(output) {
+        if let Some(length) = get_content_length(output) {
             meta.push_str(&format!("\nfetched {}", format_content_length(length)));
         }
+        meta.push_str(&format!("\nsaved to {filepath}"));
+        if let Some(content_type) = get_header(output, "content-type") {
+            meta.push_str(&format!("\nfile type: {content_type}"));
+        }
+        // TODO maybe: Infer filetype if MIME missing
         Ok(InterfaceToolOutput {
-            content: vec![
-                ToolOutputContent::Text {
-                    text: Cow::Owned(meta),
-                },
-                ToolOutputContent::Text {
-                    text: Cow::Owned(text.to_owned()),
-                },
-            ],
+            content: vec![ToolOutputContent::Text {
+                text: Cow::Owned(meta),
+            }],
         })
     }
 }
 
-fn content_length(output: &Value) -> Option<u64> {
-    let value = output.get("headers")?.get("content-length")?;
-    let value = match value {
-        Value::String(value) => value.as_str(),
-        Value::Array(values) => values.first()?.as_str()?,
-        _ => return None,
+fn is_replace_char(c: char) -> bool {
+    matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control()
+}
+
+/// Compute a save file name for the given URL
+fn file_name(url: &Url) -> String {
+    let segment = url
+        .path_segments()
+        .and_then(|segments| segments.filter(|s| !s.is_empty()).last());
+    let Some(segment) = segment else {
+        return "index".to_owned();
     };
-    value.trim().parse().ok()
+    let decoded = percent_encoding::percent_decode_str(segment).decode_utf8_lossy();
+    let name: String = decoded.chars()
+        .map(|c| if is_replace_char(c) { '_' } else { c })
+        .collect();
+    if name.is_empty() || name == "." || name == ".." {
+        "index".to_owned()
+    } else {
+        name
+    }
+}
+
+/// Write a file to disk. If a file with that name already exists, appends
+/// (1), (2), ... to the filename until it succeeds.
+fn write_no_clobber(dir: &Path, name: &str, body: &str) -> AnyResult<PathBuf> {
+    let mut attempt = 0;
+    loop {
+        let path = dir.join(add_attempt_number(name, attempt));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                file.write_all(body.as_bytes())?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => attempt += 1,
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
+/// Add a suffix "(n)" to a filename.
+fn add_attempt_number(name: &str, n: u32) -> String {
+    if n == 0 {
+        return name.to_owned();
+    }
+    let path = Path::new(name);
+    match (path.file_stem(), path.extension()) {
+        (Some(stem), Some(extension)) => {
+            format!(
+                "{}({n}).{}",
+                stem.to_string_lossy(),
+                extension.to_string_lossy()
+            )
+        }
+        _ => format!("{name}({n})"),
+    }
+}
+
+fn get_header<'a>(output: &'a Value, name: &str) -> Option<&'a str> {
+    let value = output.get("headers")?.get(name)?;
+    match value {
+        Value::String(value) => Some(value),
+        Value::Array(values) => values.first()?.as_str(),
+        _ => None,
+    }
+}
+
+fn get_content_length(output: &Value) -> Option<u64> {
+    get_header(output, "content-length")?.trim().parse().ok()
 }
 
 fn format_content_length(length: u64) -> String {
@@ -194,71 +275,28 @@ fn format_content_length(length: u64) -> String {
     }
 }
 
-fn status_error(url: &Url, status: StatusCode, error: &impl std::fmt::Display) -> anyhow::Error {
-    anyhow!("{url}: HTTP {}: {error}", status.as_u16())
-}
-
-fn validate_content_type(headers: &HeaderMap) -> AnyResult<()> {
-    let value = headers
-        .get(CONTENT_TYPE)
-        .ok_or_else(|| anyhow!("missing content-type"))?;
-    let value = value
-        .to_str()
-        .map_err(|_| anyhow!("invalid content-type"))?;
-    let mime: mime::Mime = value
-        .parse()
-        .map_err(|_| anyhow!("invalid content-type '{value}'"))?;
-    let is_text = mime.type_() == mime::TEXT
-        || (mime.type_() == mime::APPLICATION && is_text_application(mime.subtype().as_str()));
-    if is_text {
-        Ok(())
-    } else {
-        Err(anyhow!("unsupported content-type '{mime}'"))
-    }
-}
-
-fn is_text_application(subtype: &str) -> bool {
-    matches!(subtype, "json" | "xml" | "xhtml+xml" | "javascript")
-        || subtype.ends_with("+json")
-        || subtype.ends_with("+xml")
-}
-
-fn validate_content_length(headers: &HeaderMap) -> AnyResult<()> {
-    let value = headers
-        .get(CONTENT_LENGTH)
-        .ok_or_else(|| anyhow!("missing content-length"))?;
-    let value = value
-        .to_str()
-        .map_err(|_| anyhow!("invalid content-length"))?;
-    let length: u64 = value
-        .parse()
-        .map_err(|_| anyhow!("invalid content-length '{value}'"))?;
-    if length > MAX_CONTENT_LENGTH {
-        return Err(anyhow!(
-            "content-length {length} exceeds {MAX_CONTENT_LENGTH} bytes"
-        ));
-    }
-    Ok(())
-}
-
 fn header_map_to_json(headers: &HeaderMap) -> Value {
-    let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut map: FnvHashMap<String, Vec<String>> = Default::default();
     for (name, value) in headers {
-        map.entry(name.as_str().to_owned())
-            .or_default()
-            .push(String::from_utf8_lossy(value.as_bytes()).into_owned());
+        let key = name.as_str().to_owned();
+        // XXX: Could stand to handle non-utf8 headers better
+        let value = String::from_utf8_lossy(value.as_bytes()).to_lowercase();
+        map.entry(key).or_default().push(value);
     }
+
+    fn map_values(mut values: Vec<String>) -> Value {
+        if values.len() == 1 {
+            Value::String(values.pop().unwrap())
+        } else {
+            Value::Array(values.into_iter().map(Value::String).collect())
+        }
+    }
+
     let map: serde_json::Map<String, Value> = map
         .into_iter()
-        .map(|(name, mut values)| {
-            let value = if values.len() == 1 {
-                Value::String(values.pop().expect("one value"))
-            } else {
-                Value::Array(values.into_iter().map(Value::String).collect())
-            };
-            (name, value)
-        })
+        .map(|(name, values)| (name, map_values(values)))
         .collect();
+
     Value::Object(map)
 }
 
@@ -272,141 +310,90 @@ mod tests {
     use crate::request::test_client::{Response, ResponseData};
 
     fn input(url: &str) -> Value {
-        json!({ "url": url, "format": "raw", "timeout": 30 })
+        json!({ "url": url, "timeout": 30 })
     }
 
-    async fn fetch(
-        client: &mut DefaultClient,
-        input: &Value,
-        status: StatusCode,
-        body: &str,
-        headers: &[(&str, &str)],
-    ) -> AnyResult<Value> {
-        let mut header_map = HeaderMap::new();
-        for (name, value) in headers {
-            header_map.insert(
-                HeaderName::from_bytes(name.as_bytes()).expect("header name"),
-                HeaderValue::from_str(value).expect("header value"),
-            );
+    fn get_filepath(output: &Value) -> PathBuf {
+        PathBuf::from(output["filepath"].as_str().unwrap())
+    }
+
+    #[derive(Debug)]
+    struct Fixture {
+        client: DefaultClient,
+        tool: WebFetchTool,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let client = DefaultClient::default();
+            Self {
+                tool: WebFetchTool::new(client.clone()),
+                client,
+            }
         }
-        let url = input["url"].as_str().unwrap();
-        client.add_response(url, ResponseData::Http(Ok(Response {
-            body: body.to_owned(),
-            status,
-            headers: header_map,
-        })));
-        let tool = WebFetchTool::new((*client).clone());
-        tool.call(input).await
+        
+        async fn fetch(
+            &mut self,
+            url: &str,
+            status: StatusCode,
+            body: &str,
+            headers: &[(&str, &str)],
+        ) -> AnyResult<Value> {
+            let mut header_map = HeaderMap::new();
+            for (name, value) in headers {
+                header_map.insert(
+                    HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                    HeaderValue::from_str(value).unwrap(),
+                );
+            }
+            self.client.add_response(url, ResponseData::Http(Ok(Response {
+                body: body.to_owned(),
+                status,
+                headers: header_map,
+            })));
+            self.tool.call(&input(url)).await
+        }
     }
 
     #[tokio::test]
     async fn test_success() {
-        let input = input("https://example.com/");
-        let mut client = DefaultClient::default();
-        let output = fetch(
-            &mut client,
-            &input,
-            StatusCode::OK,
-            "hello",
-            &[("content-type", "text/plain"), ("content-length", "5")],
-        ).await.unwrap();
-        assert_eq!(output["output"], json!("hello"));
+        let mut f = Fixture::new();
+        let headers = [("content-type", "text/plain"), ("content-length", "5")];
+        let output = f.fetch("https://example.com/", StatusCode::OK, "hello", &headers).await.unwrap();
+        assert_eq!(output.get("status"), Some(&Value::Number(200.into())));
+        assert_eq!(std::fs::read_to_string(&get_filepath(&output)).unwrap(), "hello");
     }
 
     #[tokio::test]
-    async fn test_failed_status() {
-        let input = input("https://example.com/");
-        let mut client = DefaultClient::default();
-        let error = fetch(
-            &mut client,
-            &input,
-            StatusCode::BAD_REQUEST,
-            "bad request",
-            &[("content-type", "text/plain"), ("content-length", "11")],
-        ).await.unwrap_err();
-        assert_eq!(error.to_string(), "https://example.com/: HTTP 400: bad request");
+    async fn test_file_name() {
+        let mut f = Fixture::new();
+        let url = "https://example.com/a.html";
+        let headers = [("content-type", "text/plain"), ("content-length", "4")];
+        for expected in ["a.html", "a(1).html", "a(2).html"] {
+            let output = f.fetch(url, StatusCode::OK, "blah", &headers).await.unwrap();
+            let path = get_filepath(&output);
+            assert_eq!(path.file_name().unwrap().to_str().unwrap(), expected);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "blah");
+        }
     }
 
     #[tokio::test]
-    async fn test_non_text_content_type() {
-        let input = input("https://example.com/");
-        let mut client = DefaultClient::default();
-        let error = fetch(
-            &mut client,
-            &input,
-            StatusCode::OK,
-            "<svg/>",
-            &[("content-type", "image/svg+xml"), ("content-length", "6")],
-        ).await.unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "https://example.com/: HTTP 200: unsupported content-type 'image/svg+xml'"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_oversized_content_length() {
-        let input = input("https://example.com/");
-        let mut client = DefaultClient::default();
-        let content_length = (MAX_CONTENT_LENGTH + 1).to_string();
-        let error = fetch(
-            &mut client,
-            &input,
-            StatusCode::OK,
-            "",
-            &[
-                ("content-type", "text/plain"),
-                ("content-length", content_length.as_str()),
-            ],
-        ).await.unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            format!("https://example.com/: HTTP 200: content-length {content_length} exceeds {MAX_CONTENT_LENGTH} bytes")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_missing_content_length() {
-        let input = input("https://example.com/");
-        let mut client = DefaultClient::default();
-        let error = fetch(
-            &mut client,
-            &input,
-            StatusCode::OK,
-            "hello",
-            &[("content-type", "text/plain")],
-        ).await.unwrap_err();
-        assert_eq!(error.to_string(), "https://example.com/: HTTP 200: missing content-length");
-    }
-
-    #[tokio::test]
-    async fn test_render_ui() {
-        let tool = WebFetchTool::new(DefaultClient::default());
-        let input = input("https://example.com/");
-        let mut client = DefaultClient::default();
-
-        let output = fetch(
-            &mut client,
-            &input,
-            StatusCode::OK,
-            "hello",
-            &[("content-type", "text/plain"), ("content-length", "1234")],
-        ).await.unwrap();
-        let item = tool.render_to_ui(&input, &output).unwrap();
+    async fn test_content_size() {
+        let mut f = Fixture::new();
+        let url = "https://example.com/";
+        let input = input(url);
+        let headers = [("content-type", "text/plain"), ("content-length", "1234")];
+        let output = f.fetch(url, StatusCode::OK, "hello", &headers).await.unwrap();
+        let item = f.tool.render_to_ui(&input, &output).unwrap();
         assert_eq!(item.query("/type").unwrap(), json!("help"));
         assert_eq!(
             item.query("/value").unwrap(),
             json!("Fetched https://example.com/ (1234 bytes)")
         );
 
-        let output = fetch(
-            &mut client,
-            &input,
-            StatusCode::OK,
-            "hello",
-            &[("content-type", "text/plain"), ("content-length", "10000")],
-        ).await.unwrap();
-        let item = tool.render_to_ui(&input, &output).unwrap();
+        let headers = [("content-type", "text/plain"), ("content-length", "10000")];
+        let output = f.fetch(url, StatusCode::OK, "hello", &headers).await.unwrap();
+        let item = f.tool.render_to_ui(&input, &output).unwrap();
         assert_eq!(item.query("/type").unwrap(), json!("help"));
         assert_eq!(
             item.query("/value").unwrap(),
@@ -416,40 +403,39 @@ mod tests {
 
     #[tokio::test]
     async fn test_render_interface() {
-        let tool = WebFetchTool::new(DefaultClient::default());
-        let input = input("https://example.com/");
-        let mut client = DefaultClient::default();
-
-        let output = fetch(
-            &mut client,
-            &input,
-            StatusCode::OK,
-            "hello",
-            &[("content-type", "text/plain"), ("content-length", "1234")],
-        ).await.unwrap();
-        let result = tool.render_to_interface(&input, &output).unwrap();
+        let mut f = Fixture::new();
+        let url = "https://example.com/";
+        let input = input(url);
+        let headers = [("content-type", "text/plain"), ("content-length", "1234")];
+        let output = f.fetch(url, StatusCode::OK, "hello", &headers).await.unwrap();
+        let filepath = output["filepath"].as_str().unwrap();
+        let result = f.tool.render_to_interface(&input, &output).unwrap();
         assert_eq!(
             result.content,
-            vec![
-                ToolOutputContent::Text { text: Cow::Owned("status 200\nfetched 1234 bytes".into()) },
-                ToolOutputContent::Text { text: Cow::Owned("hello".into()) },
-            ]
+            vec![ToolOutputContent::Text {
+                text: Cow::Owned(format!("\
+                    status 200\n\
+                    fetched 1234 bytes\n\
+                    saved to {filepath}\n\
+                    file type: text/plain\
+                ")),
+            }]
         );
 
-        let output = fetch(
-            &mut client,
-            &input,
-            StatusCode::OK,
-            "hello",
-            &[("content-type", "text/plain"), ("content-length", "10000")],
-        ).await.unwrap();
-        let result = tool.render_to_interface(&input, &output).unwrap();
+        let headers = [("content-type", "text/plain"), ("content-length", "10000")];
+        let output = f.fetch(url, StatusCode::INTERNAL_SERVER_ERROR, "hello", &headers).await.unwrap();
+        let filepath = output["filepath"].as_str().unwrap();
+        let result = f.tool.render_to_interface(&input, &output).unwrap();
         assert_eq!(
             result.content,
-            vec![
-                ToolOutputContent::Text { text: Cow::Owned("status 200\nfetched 10.0 kb".into()) },
-                ToolOutputContent::Text { text: Cow::Owned("hello".into()) },
-            ]
+            vec![ToolOutputContent::Text {
+                text: Cow::Owned(format!("\
+                    status 500\n\
+                    fetched 10.0 kb\n\
+                    saved to {filepath}\n\
+                    file type: text/plain\
+                ")),
+            }]
         );
     }
 }
