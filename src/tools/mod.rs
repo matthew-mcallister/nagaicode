@@ -6,6 +6,7 @@ use log::warn;
 use futures::future::BoxFuture;
 use serde_json::Value;
 
+use crate::config::Dirs;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::{ToolInfo, ToolOutputContent};
@@ -65,6 +66,14 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
 #[derive(Debug)]
 pub struct InterfaceToolOutput {
     pub content: Vec<ToolOutputContent<'static>>,
+}
+
+/// Args passed at tool creation time.
+#[derive(Debug)]
+pub(crate) struct ToolCreateArgs<'a> {
+    pub(crate) cwd: &'a Arc<Cwd>,
+    pub(crate) dirs: &'a Dirs,
+    pub(crate) client: &'a DefaultClient,
 }
 
 /// Maps tool names to tools.
