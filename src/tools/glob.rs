@@ -12,7 +12,7 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCreateArgs};
 use crate::ui::render_item::{SystemRenderItem, RenderItem};
 
 /// Searches for files and directories using glob patterns.
@@ -25,9 +25,9 @@ pub struct GlobTool {
 impl GlobTool {
     /// Creates a tool that searches for files, rooting relative patterns at
     /// `cwd`.
-    pub fn new(cwd: Arc<Cwd>) -> Self {
+    pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
-            cwd,
+            cwd: Arc::clone(args.cwd),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -223,7 +223,7 @@ fn display_path(cwd: &Path, path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cwd::cwd;
+    use crate::app::App;
 
     fn write(dir: &Cwd, name: &str) {
         let path = dir.path().join(name);
@@ -249,11 +249,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_glob() {
-        let dir = Arc::new(cwd());
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
         write(&dir, "a.txt");
         write(&dir, "src/b.jpg");
         write(&dir, "src/c.txt");
-        let tool = GlobTool::new(dir.clone());
+        let tool = GlobTool::new(&app.tool_create_args());
 
         assert_eq!(
             glob_paths(&tool, "files").await,

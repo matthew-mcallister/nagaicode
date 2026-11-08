@@ -12,7 +12,7 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCreateArgs};
 use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
 
 const MAX_LINE_BYTES: usize = 2000;
@@ -28,9 +28,9 @@ pub struct ReadTool {
 impl ReadTool {
     /// Creates a tool that reads text files, rendering paths relative to
     /// `cwd`.
-    pub fn new(cwd: Arc<Cwd>) -> Self {
+    pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
-            cwd,
+            cwd: Arc::clone(args.cwd),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -220,7 +220,7 @@ fn display_path(cwd: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cwd::cwd;
+    use crate::app::App;
     use crate::query::QueryError;
     use crate::ui::canvas::render_canvas;
     use crate::ui::render_item::{render_error, render_help};
@@ -245,9 +245,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_tool() {
-        let dir = Arc::new(cwd());
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
         let path = write(&dir, "a.txt", "one\ntwo\nthree\n");
-        let tool = ReadTool::new(dir.clone());
+        let tool = ReadTool::new(&app.tool_create_args());
 
         assert_eq!(tool.name(), "read");
         assert!(tool.is_visible());
@@ -339,8 +340,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_tool_truncates_lines() {
-        let dir = Arc::new(cwd());
-        let tool = ReadTool::new(dir.clone());
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
+        let tool = ReadTool::new(&app.tool_create_args());
 
         // Long lines are truncated at a byte boundary.
         let path = write(&dir, "long.txt", long_line(MAX_LINE_BYTES + 1000));
@@ -376,8 +378,9 @@ mod tests {
 
     #[test]
     fn test_read_render_ui() {
-        let dir = Arc::new(cwd());
-        let tool = ReadTool::new(dir.clone());
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
+        let tool = ReadTool::new(&app.tool_create_args());
         let theme = &THEME_DARK;
 
         let render = |input: &Value, output: &Value| -> String {
@@ -425,8 +428,9 @@ mod tests {
 
     #[test]
     fn test_read_render_interface() {
-        let dir = Arc::new(cwd());
-        let tool = ReadTool::new(dir.clone());
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
+        let tool = ReadTool::new(&app.tool_create_args());
         let path = dir.path().join("a.txt").to_string_lossy().into_owned();
 
         let input = json!({ "filepath": path, "start_line": 1, "max_lines": 2 });
@@ -463,7 +467,8 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let tool = ReadTool::new(Arc::new(cwd()));
+        let app = App::new().unwrap();
+        let tool = ReadTool::new(&app.tool_create_args());
         assert_eq!(tool.query("/").unwrap(), json!({ "name": "read", "is_visible": true }));
         assert_eq!(tool.query("/name").unwrap(), json!("read"));
         assert_eq!(tool.query("/is_visible").unwrap(), json!(true));

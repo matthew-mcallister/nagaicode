@@ -498,8 +498,8 @@ mod tests {
     #[test]
     fn test_render_item_query() {
         use super::*;
-        use std::sync::Arc;
 
+        use crate::app::App;
         use crate::query::QueryError;
         use crate::tools::Tool;
         use crate::tools::sh::ShTool;
@@ -515,7 +515,8 @@ mod tests {
         assert_eq!(command.query("/").unwrap(), json!({"type": "command_prompt", "value": "!foo"}));
         assert!(!command.trailing_padding());
 
-        let tool = ShTool::new(Arc::new(crate::cwd::cwd()));
+        let app = App::new().unwrap();
+        let tool = ShTool::new(&app.tool_create_args());
         let item = tool.render_to_ui(
             &json!({"command": "echo hi"}),
             &json!({"stdout": "hi\n", "stderr": "", "return_code": 0}),

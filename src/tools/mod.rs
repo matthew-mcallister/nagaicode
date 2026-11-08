@@ -70,8 +70,9 @@ pub struct InterfaceToolOutput {
 
 /// Args passed at tool creation time.
 #[derive(Debug)]
-pub(crate) struct ToolCreateArgs<'a> {
+pub struct ToolCreateArgs<'a> {
     pub(crate) cwd: &'a Arc<Cwd>,
+    #[allow(dead_code)]
     pub(crate) dirs: &'a Dirs,
     pub(crate) client: &'a DefaultClient,
 }
@@ -83,7 +84,7 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
-    pub fn new(cwd: &Arc<Cwd>, client: DefaultClient) -> Self {
+    pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         // Builtin tools
         // - sh
         // - read
@@ -92,17 +93,17 @@ impl ToolRegistry {
         // - glob
         // - web_fetch
         let mut tools: FnvHashMap<String, Box<dyn Tool>> = FnvHashMap::default();
-        let sh = sh::ShTool::new(Arc::clone(cwd));
+        let sh = sh::ShTool::new(args);
         tools.insert(sh.name().to_owned(), Box::new(sh));
-        let read = read::ReadTool::new(Arc::clone(cwd));
+        let read = read::ReadTool::new(args);
         tools.insert(read.name().to_owned(), Box::new(read));
-        let edit = edit::EditTool::new(Arc::clone(cwd));
+        let edit = edit::EditTool::new(args);
         tools.insert(edit.name().to_owned(), Box::new(edit));
-        let write = write::WriteTool::new(Arc::clone(cwd));
+        let write = write::WriteTool::new(args);
         tools.insert(write.name().to_owned(), Box::new(write));
-        let glob = glob::GlobTool::new(Arc::clone(cwd));
+        let glob = glob::GlobTool::new(args);
         tools.insert(glob.name().to_owned(), Box::new(glob));
-        let web_fetch = web_fetch::WebFetchTool::new(client);
+        let web_fetch = web_fetch::WebFetchTool::new(args);
         tools.insert(web_fetch.name().to_owned(), Box::new(web_fetch));
         Self { tools }
     }
@@ -193,14 +194,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    use crate::cwd::cwd;
+    use crate::app::App;
     use crate::item::Item;
     use crate::testing::{normalize, session_turn, tool_call};
 
+    fn registry() -> Arc<ToolRegistry> {
+        App::new().unwrap().tool_registry().clone()
+    }
+
     #[tokio::test]
     async fn test_call_tool() {
-        let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir, DefaultClient::default());
+        let registry = registry();
 
         let output = registry.call("sh", &json!({ "command": "echo hi" })).await;
         let ToolOutput::Completed { value } = &output else {
@@ -226,8 +230,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_call_failure_round_trip() {
-        let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir, DefaultClient::default());
+        let registry = registry();
         let mut conn = crate::db::open_new().unwrap();
         let (_, turn) = session_turn(&mut conn);
 
@@ -254,8 +257,7 @@ mod tests {
 
     #[test]
     fn test_list_tools() {
-        let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir, DefaultClient::default());
+        let registry = registry();
         let mut names: Vec<&str> = registry.list_tools().map(|t| t.name()).collect();
         names.sort();
         assert_eq!(names, ["edit", "glob", "read", "sh", "web_fetch", "write"]);
@@ -270,8 +272,7 @@ mod tests {
 
     #[test]
     fn test_render_unknown() {
-        let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir, DefaultClient::default());
+        let registry = registry();
 
         let call = ToolCallContent {
             tool_name: "missing".into(),
@@ -287,8 +288,7 @@ mod tests {
 
     #[test]
     fn test_render_failed() {
-        let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir, DefaultClient::default());
+        let registry = registry();
 
         let call = ToolCallContent {
             tool_name: "boom".into(),
@@ -304,8 +304,7 @@ mod tests {
 
     #[test]
     fn test_render_incomplete() {
-        let dir = Arc::new(cwd());
-        let registry = ToolRegistry::new(&dir, DefaultClient::default());
+        let registry = registry();
         let pending = ToolCallContent {
             tool_name: "sh".into(),
             call_id: "call123".into(),

@@ -25,6 +25,7 @@ pub mod text;
 pub use component::Component;
 
 /// Shared state threaded down to UI components.
+// TODO: Rename to UiCreateArgs
 #[derive(Clone, Debug)]
 pub struct UiContext {
     tools: Arc<ToolRegistry>,

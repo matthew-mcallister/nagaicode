@@ -19,7 +19,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::{Client, DefaultClient, Response as ResponseTrait};
-use crate::tools::{InterfaceToolOutput, Tool};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCreateArgs};
 use crate::ui::render_item::{RenderItem, SystemRenderItem};
 
 const USER_AGENT_STRING: &str = concat!("nagaicode/", crate::version!());
@@ -51,10 +51,10 @@ pub struct WebFetchTool {
 }
 
 impl WebFetchTool {
-    /// Creates a tool that fetches documents using `client`.
-    pub fn new(client: DefaultClient) -> Self {
+    /// Creates a tool that fetches documents using `args.client`.
+    pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
-            client,
+            client: args.client.clone(),
             dir: OnceLock::new(),
             input_schema: json!({
                 "type": "object",
@@ -306,6 +306,7 @@ mod tests {
     use reqwest::StatusCode;
     use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
+    use crate::app::App;
     use crate::request::DefaultClient;
     use crate::request::test_client::{Response, ResponseData};
 
@@ -325,10 +326,11 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
-            let client = DefaultClient::default();
+            let mut app = App::new().unwrap();
+            let tool = WebFetchTool::new(&app.tool_create_args());
             Self {
-                tool: WebFetchTool::new(client.clone()),
-                client,
+                tool,
+                client: app.client_mut().clone(),
             }
         }
         

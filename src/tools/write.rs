@@ -10,7 +10,7 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCreateArgs};
 use crate::ui::render_item::{SystemRenderItem, RenderItem};
 
 /// Creates or overwrites a text file with the given content.
@@ -23,9 +23,9 @@ pub struct WriteTool {
 impl WriteTool {
     /// Creates a tool that writes text files, rendering paths relative to
     /// `cwd`.
-    pub fn new(cwd: Arc<Cwd>) -> Self {
+    pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
-            cwd,
+            cwd: Arc::clone(args.cwd),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -145,7 +145,7 @@ mod tests {
     #[tokio::test]
     async fn test_write() {
         let app = App::new().unwrap();
-        let tool = WriteTool::new(app.cwd().clone());
+        let tool = WriteTool::new(&app.tool_create_args());
         let path = app.cwd().path().join("a.txt");
 
         let out = tool
@@ -160,7 +160,7 @@ mod tests {
     #[tokio::test]
     async fn test_overwrite() {
         let app = App::new().unwrap();
-        let tool = WriteTool::new(app.cwd().clone());
+        let tool = WriteTool::new(&app.tool_create_args());
         let path = app.cwd().path().join("a.txt");
         std::fs::write(&path, "original").unwrap();
 
@@ -175,9 +175,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_creates_parent_dirs() {
-        let cwd = Arc::new(Cwd::new());
-        let tool = WriteTool::new(Arc::clone(&cwd));
-        let path = cwd.path().join("nested").join("dir").join("a.txt");
+        let app = App::new().unwrap();
+        let tool = WriteTool::new(&app.tool_create_args());
+        let path = app.cwd().path().join("nested").join("dir").join("a.txt");
 
         let out = tool
             .call(&json!({ "filepath": path.to_string_lossy(), "content": "hello" }))

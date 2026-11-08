@@ -24,6 +24,7 @@ use tokio::time::Instant;
 use crate::agent::Agent;
 use crate::command::Command;
 use crate::command_history::{CommandHistory, CommandHistoryItem};
+use crate::config::Dirs;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::item::Item;
@@ -38,7 +39,7 @@ use crate::session::Session;
 use crate::settings::{ModelRef, Settings};
 use crate::task::{Task, TaskContext, TaskError, TaskHandle, Tid};
 use crate::terminal::{DefaultTerminal, Terminal};
-use crate::tools::ToolRegistry;
+use crate::tools::{ToolCreateArgs, ToolRegistry};
 use crate::ui::Component;
 use crate::ui::canvas::Canvas;
 use crate::ui::chat::{Chat, Update};
@@ -111,6 +112,7 @@ pub struct App {
     // XXX replace most uses of &'static Theme with Arc<Theme> or Rc<Theme>
     theme: &'static Theme,
     client: DefaultClient,
+    dirs: Dirs,
     conn: SqliteConnection,
     db_url: String,
     settings: Settings,
@@ -141,8 +143,14 @@ impl App {
         let db_url = crate::db::db_url()?;
         let mut conn = crate::db::open(&db_url)?;
         let cwd = Arc::new(crate::cwd::cwd());
+        let dirs = Dirs::new()?;
         let client = DefaultClient::default();
-        let tool_registry = Arc::new(ToolRegistry::new(&cwd, client.clone()));
+        let args = ToolCreateArgs {
+            cwd: &cwd,
+            dirs: &dirs,
+            client: &client,
+        };
+        let tool_registry = Arc::new(ToolRegistry::new(&args));
         let ui = UiContext::new(Arc::clone(&tool_registry));
         let mut chat = Chat::new(&ui, w, h, theme);
         chat.handle_update(Update::SystemMessage(WELCOME));
@@ -160,6 +168,7 @@ impl App {
             quit: false,
             theme,
             client,
+            dirs,
             conn,
             db_url,
             settings,
@@ -194,6 +203,15 @@ impl App {
     /// Returns the current working directory.
     pub fn cwd(&self) -> &Arc<Cwd> {
         &self.cwd
+    }
+
+    /// Returns args for constructing tools using the app's dependencies.
+    pub fn tool_create_args(&self) -> ToolCreateArgs<'_> {
+        ToolCreateArgs {
+            cwd: &self.cwd,
+            dirs: &self.dirs,
+            client: &self.client,
+        }
     }
 
     fn input_text(&self) -> String {

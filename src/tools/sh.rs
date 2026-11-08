@@ -10,7 +10,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::shell;
-use crate::tools::{InterfaceToolOutput, Tool};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCreateArgs};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::RenderItem;
 use crate::ui::style::{Style, Theme};
@@ -33,9 +33,9 @@ const DESCRIPTION: &str =
 
 impl ShTool {
     /// Creates a tool that runs shell commands within `cwd`.
-    pub fn new(cwd: Arc<Cwd>) -> Self {
+    pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
-            cwd,
+            cwd: Arc::clone(args.cwd),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -246,14 +246,13 @@ fn render_sh_stdout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::App;
     use crate::query::QueryError;
-    use crate::cwd::cwd;
     use crate::testing::normalize;
     use crate::ui::canvas::render_canvas;
     use crate::ui::style::THEME_DARK;
 
-    fn render(width: usize, input: &Value, output: &Value) -> AnyResult<String> {
-        let tool = ShTool::new(Arc::new(cwd()));
+    fn render(tool: &ShTool, width: usize, input: &Value, output: &Value) -> AnyResult<String> {
         let item = tool.render_to_ui(input, output)?;
         let (mut lines, _) = item.render(&THEME_DARK, width, Default::default());
         Ok(render_canvas(&mut lines[..]))
@@ -282,17 +281,19 @@ mod tests {
         let theme = &THEME_DARK;
         let style = Style::new(theme.text_base, theme.bg_prompt);
         let ok_output = || json!({"stdout": "", "stderr": "", "return_code": 0});
+        let app = App::new().unwrap();
+        let tool = ShTool::new(&app.tool_create_args());
 
         let output = json!({"stdout": "hello\n", "stderr": "", "return_code": 0});
         assert_eq!(
-            render(14, &json!({"command": "echo hi"}), &output).unwrap(),
+            render(&tool, 14, &json!({"command": "echo hi"}), &output).unwrap(),
             format!(
                 "{style}              \n{style}  $ echo hi   \n{style}  hello       \n{style}              "
             )
         );
         let output = json!({"stdout": "hi\n", "stderr": "", "return_code": 0});
         assert_eq!(
-            render(14, &json!({"command": "echo hello world"}), &output).unwrap(),
+            render(&tool, 14, &json!({"command": "echo hello world"}), &output).unwrap(),
             format!(
                 "{style}              \n{style}  $ echo hel  \n{style}  lo world    \n{style}  hi          \n{style}              "
             )
@@ -303,7 +304,7 @@ mod tests {
         let output = json!({"stdout": "x".repeat(120), "stderr": "", "return_code": 0});
         let line = || format!("{style}  xxxxxxxxxx  ");
         assert_eq!(
-            render(14, &json!({"command": "echo hi"}), &output).unwrap(),
+            render(&tool, 14, &json!({"command": "echo hi"}), &output).unwrap(),
             [
                 format!("{style}              "),
                 format!("{style}  $ echo hi   "),
@@ -315,16 +316,16 @@ mod tests {
         );
 
         assert_eq!(
-            render(14, &json!({"command": "echo hi"}), &ok_output()).unwrap(),
+            render(&tool, 14, &json!({"command": "echo hi"}), &ok_output()).unwrap(),
             ""
         );
         assert_eq!(
-            render(7, &json!({"command": "echo hi"}), &output).unwrap(),
+            render(&tool, 7, &json!({"command": "echo hi"}), &output).unwrap(),
             ""
         );
 
-        assert!(render(14, &json!({}), &ok_output()).is_err());
-        assert!(render(14, &json!({"command": "echo hi"}), &json!({})).is_err());
+        assert!(render(&tool, 14, &json!({}), &ok_output()).is_err());
+        assert!(render(&tool, 14, &json!({"command": "echo hi"}), &json!({})).is_err());
     }
 
     #[test]
@@ -332,8 +333,10 @@ mod tests {
         let theme = &THEME_DARK;
         let style = Style::new(theme.text_base, theme.bg_prompt);
         let output = json!({"stdout": "hi\n", "stderr": "", "return_code": 0});
+        let app = App::new().unwrap();
+        let tool = ShTool::new(&app.tool_create_args());
         assert_eq!(
-            render(14, &json!({"command": "echo a\necho b"}), &output).unwrap(),
+            render(&tool, 14, &json!({"command": "echo a\necho b"}), &output).unwrap(),
             format!(
                 "{style}              \n{style}  $ echo a    \n{style}  echo b      \n{style}  hi          \n{style}              "
             )
@@ -342,8 +345,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sh_tool() {
-        let dir = Arc::new(cwd());
-        let tool = ShTool::new(dir.clone());
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
+        let tool = ShTool::new(&app.tool_create_args());
 
         assert_eq!(tool.name(), "sh");
         assert_eq!(

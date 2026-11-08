@@ -11,7 +11,7 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCreateArgs};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::{ErrorRenderItem, RenderItem};
 use crate::ui::style::{Style, Theme};
@@ -75,9 +75,9 @@ pub struct EditTool {
 }
 
 impl EditTool {
-    pub fn new(cwd: Arc<Cwd>) -> Self {
+    pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
-            cwd,
+            cwd: Arc::clone(args.cwd),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -370,7 +370,8 @@ fn render_edit_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cwd::cwd;
+    use crate::app::App;
+    use crate::query::QueryError;
     use crate::ui::canvas::render_canvas;
     use crate::ui::render_item::render_error;
     use crate::ui::style::THEME_DARK;
@@ -385,8 +386,8 @@ mod tests {
         std::fs::read_to_string(path).expect("read file")
     }
 
-    fn call(dir: &Arc<Cwd>, input: &Value) -> anyhow::Result<Value> {
-        let tool = EditTool::new(dir.clone());
+    fn call(app: &App, input: &Value) -> anyhow::Result<Value> {
+        let tool = EditTool::new(&app.tool_create_args());
         futures::executor::block_on(tool.call(input))
     }
 
@@ -398,9 +399,10 @@ mod tests {
 
     #[test]
     fn test_edit_tool() {
-        let dir = Arc::new(cwd());
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
         let path = write(&dir, "a.txt", "one\ntwo\nthree\n");
-        let tool = EditTool::new(dir.clone());
+        let tool = EditTool::new(&app.tool_create_args());
 
         assert_eq!(tool.name(), "edit");
         assert!(tool.is_visible());
@@ -420,7 +422,7 @@ mod tests {
         );
 
         // A unique match is replaced and reported with its diff.
-        let out = call(&dir, &json!({
+        let out = call(&app, &json!({
             "filepath": path,
             "old_string": "two",
             "new_string": "TWO",
@@ -431,7 +433,7 @@ mod tests {
         assert_eq!(read(&path), "one\nTWO\nthree\n");
 
         // Replacements may span lines.
-        let out = call(&dir, &json!({
+        let out = call(&app, &json!({
             "filepath": path,
             "old_string": "one\nTWO",
             "new_string": "ONE\ntwo",
@@ -441,7 +443,7 @@ mod tests {
         assert_eq!(read(&path), "ONE\ntwo\nthree\n");
 
         // Deleting text is a replacement with an empty string.
-        let out = call(&dir, &json!({
+        let out = call(&app, &json!({
             "filepath": path,
             "old_string": "three\n",
             "new_string": "",
@@ -452,7 +454,7 @@ mod tests {
 
         // replace_all replaces every occurrence.
         let path = write(&dir, "b.txt", "one\ntwo\ntwo\nthree\n");
-        let out = call(&dir, &json!({
+        let out = call(&app, &json!({
             "filepath": path,
             "old_string": "two",
             "new_string": "TWO",
@@ -462,7 +464,7 @@ mod tests {
         assert_eq!(read(&path), "one\nTWO\nTWO\nthree\n");
 
         // Zero matches is not an error when replacing all.
-        let out = call(&dir, &json!({
+        let out = call(&app, &json!({
             "filepath": path,
             "old_string": "nope",
             "new_string": "TWO",
@@ -475,11 +477,12 @@ mod tests {
 
     #[test]
     fn test_edit_tool_line_endings() {
-        let dir = Arc::new(cwd());
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
 
         // A CRLF file is edited with the LF strings models produce.
         let path = write(&dir, "crlf.txt", "one\r\ntwo\r\nthree\r\n");
-        let out = call(&dir, &json!({
+        let out = call(&app, &json!({
             "filepath": path,
             "old_string": "two\nthree",
             "new_string": "TWO\nTHREE",
@@ -496,7 +499,7 @@ mod tests {
 
         // CRLF arguments are accepted for a file with LF line endings.
         let path = write(&dir, "lf.txt", "one\ntwo\nthree\n");
-        let out = call(&dir, &json!({
+        let out = call(&app, &json!({
             "filepath": path,
             "old_string": "two\r\nthree",
             "new_string": "TWO\r\nTHREE",
@@ -508,7 +511,7 @@ mod tests {
 
         // A file with no line endings falls back on the host convention.
         let path = write(&dir, "no_eol.txt", "one");
-        let out = call(&dir, &json!({
+        let out = call(&app, &json!({
             "filepath": path,
             "old_string": "one",
             "new_string": "ONE\nTWO",
@@ -541,30 +544,31 @@ mod tests {
 
     #[test]
     fn test_edit_tool_errors() {
-        let dir = Arc::new(cwd());
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
         let path = write(&dir, "a.txt", "one\ntwo\ntwo\nthree\n");
 
         // Invalid arguments are errors.
         assert_eq!(
-            call(&dir, &json!({})).unwrap_err().to_string(),
+            call(&app, &json!({})).unwrap_err().to_string(),
             "arguments don't match schema"
         );
-        assert!(call(&dir, &json!({
+        assert!(call(&app, &json!({
             "filepath": path, "old_string": "two", "new_string": "x", "replace_all": "no",
         })).is_err());
-        assert!(call(&dir, &json!({
+        assert!(call(&app, &json!({
             "filepath": path, "old_string": 1, "new_string": "x", "replace_all": true,
         })).is_err());
 
         // Unreadable files are errors.
         let missing = dir.path().join("missing.txt").to_string_lossy().into_owned();
-        let err = call(&dir, &json!({
+        let err = call(&app, &json!({
             "filepath": missing, "old_string": "x", "new_string": "y", "replace_all": true,
         })).unwrap_err();
         assert!(err.to_string().starts_with(&format!("{missing}: ")));
 
         // Without replace_all, old_string must be unique and present.
-        let err = call(&dir, &json!({
+        let err = call(&app, &json!({
             "filepath": path, "old_string": "two", "new_string": "TWO", "replace_all": false,
         })).unwrap_err();
         assert_eq!(
@@ -575,7 +579,7 @@ mod tests {
             )
         );
 
-        let err = call(&dir, &json!({
+        let err = call(&app, &json!({
             "filepath": path, "old_string": "nope", "new_string": "TWO", "replace_all": false,
         })).unwrap_err();
         assert_eq!(
@@ -614,8 +618,9 @@ mod tests {
 
     #[test]
     fn test_edit_render_ui() {
-        let dir = Arc::new(cwd());
-        let tool = EditTool::new(dir.clone());
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
+        let tool = EditTool::new(&app.tool_create_args());
         let style = Style::new(THEME_DARK.text_base, THEME_DARK.bg_prompt);
 
         let input = json!({ "filepath": dir.path().join("a.txt").to_string_lossy() });
@@ -673,8 +678,8 @@ mod tests {
 
     #[test]
     fn test_edit_render_long_diff() {
-        let dir = Arc::new(cwd());
-        let tool = EditTool::new(dir.clone());
+        let app = App::new().unwrap();
+        let tool = EditTool::new(&app.tool_create_args());
         let style = Style::new(THEME_DARK.text_base, THEME_DARK.bg_prompt);
         let ellipsis_style = Style::new(THEME_DARK.text_subtle, THEME_DARK.bg_prompt);
 
@@ -697,8 +702,9 @@ mod tests {
 
     #[test]
     fn test_edit_render_interface() {
-        let dir = Arc::new(cwd());
-        let tool = EditTool::new(dir.clone());
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
+        let tool = EditTool::new(&app.tool_create_args());
         let input = json!({ "filepath": dir.path().join("a.txt").to_string_lossy() });
 
         let output = json!({ "matches": 3, "line_ending": "crlf", "diff": "-two\n+TWO\n" });
@@ -735,8 +741,8 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let dir = Arc::new(cwd());
-        let tool = EditTool::new(dir.clone());
+        let app = App::new().unwrap();
+        let tool = EditTool::new(&app.tool_create_args());
         assert_eq!(tool.query("/").unwrap(), json!({ "name": "edit", "is_visible": true }));
         assert_eq!(tool.query("/name").unwrap(), json!("edit"));
         assert_eq!(tool.query("/is_visible").unwrap(), json!(true));
