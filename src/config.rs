@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
+#![cfg_attr(test, allow(dead_code))]
 
-use anyhow::anyhow;
+use std::path::{Path, PathBuf};
 
 use crate::error::AnyResult;
 
@@ -39,9 +39,17 @@ impl Dirs {
 
 #[cfg(not(test))]
 fn get_dirs() -> AnyResult<Dirs> {
+    use anyhow::anyhow;
+
+    let base = dirs::data_dir().ok_or_else(|| anyhow!("xdg data dir not available"))?;
+    let data = create_app_dir(&base)?;
+
+    let base = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
+    let temp = create_app_dir(&base)?;
+
     Ok(Dirs {
-        data: data_dir()?,
-        temp: temp_dir()?,
+        data,
+        temp,
     })
 }
 
@@ -51,14 +59,4 @@ fn get_dirs() -> AnyResult<Dirs> {
         data: AppDir::new(),
         temp: AppDir::new(),
     })
-}
-    
-pub fn data_dir() -> AnyResult<PathBuf> {
-    let base = dirs::data_dir().ok_or_else(|| anyhow!("xdg data dir not available"))?;
-    create_app_dir(&base)
-}
-
-pub fn temp_dir() -> AnyResult<PathBuf> {
-    let base = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
-    create_app_dir(&base)
 }

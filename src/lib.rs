@@ -22,6 +22,7 @@ pub mod shell;
 pub mod system_prompt;
 pub mod task;
 pub mod terminal;
+#[cfg(test)]
 pub mod testing;
 pub mod tools;
 mod util;

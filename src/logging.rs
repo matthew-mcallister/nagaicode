@@ -1,24 +1,27 @@
 #[cfg(not(test))]
-pub use self::real::{init_logging, log_file_path};
+pub(crate) use self::real::init_logging;
 #[cfg(test)]
-pub use self::mock::{init_logging, log_file_path};
+pub(crate) use self::mock::init_logging;
 
 #[cfg(not(test))]
 mod real {
     use std::io::Write;
+    use std::sync::OnceLock;
 
     use chrono::Local;
     use env_logger::{Env, Target};
 
-    use crate::config::data_dir;
+    use crate::config::Dirs;
     use crate::error::AnyResult;
 
     const LOG_FILE_PREFIX: &str = "nagai";
 
+    static INIT: OnceLock<()> = OnceLock::new();
+
     /// Returns the path of the log file for this run.
     // FIXME: this should be state_dir() not data_dir()
-    pub fn log_file_path() -> AnyResult<String> {
-        let mut dir = data_dir()?;
+    fn log_file_path(dirs: &Dirs) -> AnyResult<String> {
+        let mut dir = dirs.data().to_path_buf();
         dir.push("log");
         std::fs::create_dir_all(&dir)?;
         let timestamp = Local::now().format("%Y-%m-%dT%H%M%S");
@@ -27,8 +30,11 @@ mod real {
     }
 
     /// Configures the global logger to write to a timestamped file.
-    pub fn init_logging() -> AnyResult<()> {
-        let path = log_file_path()?;
+    pub(crate) fn init_logging(dirs: &Dirs) -> AnyResult<()> {
+        if INIT.get().is_some() {
+            return Ok(());
+        }
+        let path = log_file_path(dirs)?;
         let target = Box::new(std::fs::File::create(&path)?);
         env_logger::Builder::from_env(Env::default())
             .target(Target::Pipe(target))
@@ -42,22 +48,18 @@ mod real {
                 )
             })
             .init();
+        let _ = INIT.set(());
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod mock {
+    use crate::config::Dirs;
     use crate::error::AnyResult;
 
-    /// Returns the path of the log file for this run.
-    pub fn log_file_path() -> AnyResult<String> {
-        let tmpdir = std::env::var("TMPDIR").unwrap_or_default();
-        Ok(format!("{tmpdir}/nagai.log"))
-    }
-
     /// No-op in tests so log output never touches the filesystem.
-    pub fn init_logging() -> AnyResult<()> {
+    pub(crate) fn init_logging(_dirs: &Dirs) -> AnyResult<()> {
         Ok(())
     }
 }

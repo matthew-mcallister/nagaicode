@@ -72,7 +72,6 @@ pub struct InterfaceToolOutput {
 #[derive(Debug)]
 pub struct ToolCreateArgs<'a> {
     pub(crate) cwd: &'a Arc<Cwd>,
-    #[allow(dead_code)]
     pub(crate) dirs: &'a Dirs,
     pub(crate) client: &'a DefaultClient,
 }

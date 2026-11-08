@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_settings() {
-        let url = crate::db::db_url().expect("db url failed");
+        let url = crate::db::memory_url();
         let mut conn = crate::db::open(&url).expect("open failed");
 
         // Missing keys read as defaults.

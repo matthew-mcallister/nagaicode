@@ -140,10 +140,11 @@ impl App {
         let (w, h) = terminal.size()?;
         let theme = &THEME_DARK;
         let (send, recv) = unbounded_channel();
-        let db_url = crate::db::db_url()?;
+        let dirs = Dirs::new()?;
+        crate::logging::init_logging(&dirs)?;
+        let db_url = crate::db::db_url(&dirs)?;
         let mut conn = crate::db::open(&db_url)?;
         let cwd = Arc::new(crate::cwd::cwd());
-        let dirs = Dirs::new()?;
         let client = DefaultClient::default();
         let args = ToolCreateArgs {
             cwd: &cwd,

@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
@@ -12,9 +11,6 @@ use reqwest::header::{ACCEPT_ENCODING, USER_AGENT, HeaderMap, HeaderValue};
 use reqwest::{Method, Request, Url};
 use serde_json::{Value, json};
 
-#[cfg(not(test))]
-use crate::config::temp_dir;
-use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
@@ -24,29 +20,11 @@ use crate::ui::render_item::{RenderItem, SystemRenderItem};
 
 const USER_AGENT_STRING: &str = concat!("nagaicode/", crate::version!());
 
-#[cfg(test)]
-fn tool_dir() -> AnyResult<Cwd> {
-    Ok(crate::cwd::cwd())
-}
-
-#[cfg(not(test))]
-fn web_fetch_dir() -> AnyResult<PathBuf> {
-    let mut dir = temp_dir()?;
-    dir.push("web_fetch");
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
-}
-
-#[cfg(not(test))]
-fn tool_dir() -> AnyResult<Cwd> {
-    web_fetch_dir()
-}
-
 /// Fetches documents from the web.
 #[derive(Debug)]
 pub struct WebFetchTool {
     client: DefaultClient,
-    dir: OnceLock<Cwd>,
+    dir: PathBuf,
     input_schema: Value,
 }
 
@@ -55,7 +33,7 @@ impl WebFetchTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             client: args.client.clone(),
-            dir: OnceLock::new(),
+            dir: args.dirs.temp().join("web_fetch"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -68,12 +46,9 @@ impl WebFetchTool {
         }
     }
 
-    fn dir(&self) -> AnyResult<&Cwd> {
-        if let Some(dir) = self.dir.get() {
-            return Ok(dir);
-        }
-        let _ = self.dir.set(tool_dir()?);
-        Ok(self.dir.get().unwrap())
+    fn dir(&self) -> AnyResult<&Path> {
+        std::fs::create_dir_all(&self.dir)?;
+        Ok(&self.dir)
     }
 }
 
