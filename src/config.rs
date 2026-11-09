@@ -84,7 +84,15 @@ impl Config {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(err) => return Err(err.into()),
         };
-        Ok(toml::from_str(&text)?)
+        let config: Self = toml::from_str(&text)?;
+
+        for (index, server) in config.mcp.server.iter().enumerate() {
+            if matches!(server.type_, McpServerConfigType::Stdio) && server.command.is_empty() {
+                anyhow::bail!("mcp.server[{index}]: stdio server requires a non-empty `command`");
+            }
+        }
+
+        Ok(config)
     }
 }
 
@@ -97,7 +105,7 @@ pub(crate) struct McpConfig {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub(crate) enum McpServerConfigType {
-    Stdio { path: String },
+    Stdio,
     Http { url: String },
 }
 
@@ -107,6 +115,8 @@ pub(crate) struct McpServerConfig {
     pub(crate) type_: McpServerConfigType,
     #[serde(default)]
     pub(crate) enabled: bool,
+    #[serde(default)]
+    pub(crate) command: Vec<String>,
     #[serde(default)]
     pub(crate) include: Vec<String>,
     #[serde(default)]
@@ -125,7 +135,7 @@ mod tests {
             r#"
                 [[mcp.server]]
                 type = "stdio"
-                path = "/usr/bin/mcp-server"
+                command = ["/usr/bin/mcp-server", "--foo"]
                 enabled = true
                 include = ["sound"]
                 exclude = ["fury"]
@@ -140,23 +150,19 @@ mod tests {
 
         assert_eq!(config.mcp.server.len(), 2);
 
-        let stdio = &config.mcp.server[0];
-        match &stdio.type_ {
-            McpServerConfigType::Stdio { path } => assert_eq!(path, "/usr/bin/mcp-server"),
-            other => panic!("unexpected server type: {other:?}"),
-        }
-        assert!(stdio.enabled);
-        assert_eq!(stdio.include, vec!["sound".to_string()]);
-        assert_eq!(stdio.exclude, vec!["fury".to_string()]);
+        let mcp = &config.mcp.server[0];
+        let McpServerConfigType::Stdio = mcp.type_ else { panic!() };
+        assert_eq!(&mcp.command, &["/usr/bin/mcp-server", "--foo"]);
+        assert!(mcp.enabled);
+        assert_eq!(mcp.include, vec!["sound".to_string()]);
+        assert_eq!(mcp.exclude, vec!["fury".to_string()]);
 
-        let http = &config.mcp.server[1];
-        match &http.type_ {
-            McpServerConfigType::Http { url } => assert_eq!(url, "http://localhost:1234"),
-            other => panic!("unexpected server type: {other:?}"),
-        }
-        assert!(!http.enabled);
-        assert!(http.include.is_empty());
-        assert!(http.exclude.is_empty());
+        let mcp = &config.mcp.server[1];
+        let McpServerConfigType::Http { url } = &mcp.type_ else { panic!() };
+        assert_eq!(url, "mcp://localhost:1234");
+        assert!(!mcp.enabled);
+        assert!(mcp.include.is_empty());
+        assert!(mcp.exclude.is_empty());
     }
 
     #[test]
