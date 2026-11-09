@@ -10,7 +10,7 @@ use crate::error::AnyResult;
 pub(crate) use crate::cwd::Cwd as AppDir;
 
 const APP_DIR_NAME: &str = "nagaicode";
-const CONFIG_FILE_NAME: &str = "config.toml";
+pub(crate) const CONFIG_FILE_NAME: &str = "config.toml";
 
 fn create_app_dir(base_dir: &Path) -> AnyResult<PathBuf> {
     let dir = base_dir.join(APP_DIR_NAME);

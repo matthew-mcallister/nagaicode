@@ -24,7 +24,7 @@ use tokio::time::Instant;
 use crate::agent::Agent;
 use crate::command::Command;
 use crate::command_history::{CommandHistory, CommandHistoryItem};
-use crate::config::Dirs;
+use crate::config::{Config, Dirs};
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::item::Item;
@@ -103,7 +103,35 @@ enum Poll {
     Event(AppEvent),
 }
 
+#[derive(Debug)]
+pub(crate) struct Environment {
+    pub(crate) terminal: DefaultTerminal,
+    pub(crate) client: DefaultClient,
+    pub(crate) dirs: Dirs,
+}
+
+impl Environment {
+    pub(crate) fn new() -> AnyResult<Self> {
+        Ok(Self {
+            terminal: DefaultTerminal::default(),
+            client: DefaultClient::default(),
+            dirs: Dirs::new()?,
+        })
+    }
+
+    #[cfg(test)]
+    fn write_config(&mut self, content: &str) -> AnyResult<()> {
+        std::fs::write(
+            self.dirs.data().join(crate::config::CONFIG_FILE_NAME),
+            content,
+        )?;
+        Ok(())
+    }
+}
+
 pub struct App {
+    #[allow(dead_code)]
+    config: Config,
     terminal: DefaultTerminal,
     terminal_captured: bool,
     chat: Chat,
@@ -136,16 +164,23 @@ pub struct App {
 impl App {
     /// Creates a new `App` instance.
     pub fn new() -> AnyResult<Self> {
-        let terminal = DefaultTerminal::default();
+        Self::with_environment(Environment::new()?)
+    }
+
+    pub(crate) fn with_environment(env: Environment) -> AnyResult<Self> {
+        let Environment {
+            terminal,
+            client,
+            dirs,
+        } = env;
+        crate::logging::init_logging(&dirs)?;
+        let config = Config::load(&dirs)?;
         let (w, h) = terminal.size()?;
         let theme = &THEME_DARK;
         let (send, recv) = unbounded_channel();
-        let dirs = Arc::new(Dirs::new()?);
-        crate::logging::init_logging(&dirs)?;
         let db_url = crate::db::db_url(&dirs)?;
         let mut conn = crate::db::open(&db_url)?;
         let cwd = Arc::new(crate::cwd::cwd());
-        let client = DefaultClient::default();
         let args = ToolCreateArgs {
             cwd: &cwd,
             client: &client,
@@ -161,6 +196,7 @@ impl App {
             .flatten();
         let command_history = CommandHistory::load(&mut conn)?;
         Ok(Self {
+            config,
             terminal,
             terminal_captured: false,
             chat,
@@ -168,7 +204,7 @@ impl App {
             quit: false,
             theme,
             client,
-            dirs,
+            dirs: Arc::new(dirs),
             conn,
             db_url,
             settings,
@@ -820,4 +856,29 @@ pub async fn run() -> AnyResult<()> {
             ),
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_write_config() {
+        let mut env = Environment::new().unwrap();
+        env.write_config(
+            r#"
+            [[mcp.server]]
+            type = "http"
+            url = "http://localhost:1234"
+            "#,
+        ).unwrap();
+        let config = Config::load(&env.dirs).unwrap();
+        assert_eq!(config.mcp.server.len(), 1);
+        match &config.mcp.server[0].type_ {
+            crate::config::McpServerConfigType::Http { url } => {
+                assert_eq!(url, "http://localhost:1234")
+            }
+            other => panic!("unexpected server type: {other:?}"),
+        }
+    }
 }
