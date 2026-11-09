@@ -66,8 +66,7 @@ impl Agent {
                 return Ok(());
             }
 
-            // Originally these executed in parallel but some models seem to
-            // assume sequential execution
+            // TODO: Make calls optionally run in parallel again
             for tool_call in tool_calls {
                 context.subtask(ExecuteToolCall::new(tool_call)).await?;
             }
