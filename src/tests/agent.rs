@@ -570,7 +570,7 @@ async fn test_agent_tool_call_loop() {
     assert_eq!(responses[1].upstream_status.as_deref(), Some("completed"));
 
     let items = Item::list_by_session(app.conn(), session_id).unwrap();
-    assert_eq!(items.len(), 3);
+    assert_eq!(items.len(), 4);
     assert_eq!(items[0].content, ItemContent::UserText("call the sh tool".to_owned()));
     assert_eq!(items[1].upstream_id.as_deref(), Some("fc_1"));
     // Tool args and output survive the round trip through the database.
@@ -587,6 +587,21 @@ async fn test_agent_tool_call_loop() {
             },
         })
     );
-    assert_eq!(items[2].upstream_id.as_deref(), Some("msg_2"));
-    assert_eq!(items[2].content, ItemContent::ResponseText("The answer is 3.".to_owned()));
+    // Completing a tool call also records a separate tool output item.
+    assert_eq!(items[2].upstream_id.as_deref(), Some("fc_1"));
+    assert_eq!(
+        normalize_json(&items[2].query("/content").unwrap()),
+        json!({
+            "type": "tool_output",
+            "tool_name": "sh",
+            "call_id": "call_1",
+            "args": { "command": "echo 3" },
+            "output": {
+                "status": "completed",
+                "content": { "stdout": "3\n", "stderr": "", "return_code": 0 },
+            },
+        })
+    );
+    assert_eq!(items[3].upstream_id.as_deref(), Some("msg_2"));
+    assert_eq!(items[3].content, ItemContent::ResponseText("The answer is 3.".to_owned()));
 }

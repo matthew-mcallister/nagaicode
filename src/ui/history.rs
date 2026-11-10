@@ -1008,7 +1008,7 @@ mod tests {
 
     use std::fmt::Write;
 
-    use crate::item::{ItemContent, ToolCallContent, ToolOutput};
+    use crate::item::{ItemContent, ToolCallContent, ToolOutput, ToolOutputContent};
     use crate::ui::canvas::render_canvas;
     use crate::ui::render_item::ResponseRenderItem;
     use crate::ui::style::{Style, THEME_DARK};
@@ -1357,15 +1357,7 @@ mod tests {
         assert_eq!(item.query("/num_rows").unwrap(), json!(0));
     }
 
-    // TODO: tests out of date
-    fn make_tool_call(
-        id: i32,
-        seqno: i64,
-        call_id: &str,
-        name: &str,
-        args: Value,
-        output: Option<Value>,
-    ) -> Item {
+    fn make_tool_call(id: i32, seqno: i64, call_id: &str, name: &str, args: Value) -> Item {
         Item {
             id,
             session_id: 1,
@@ -1378,7 +1370,32 @@ mod tests {
                 tool_name: name.to_owned(),
                 call_id: call_id.to_owned(),
                 args,
-                output: output.map(|value| ToolOutput::Completed { value }),
+                output: None,
+            }),
+        }
+    }
+
+    fn make_tool_output(
+        id: i32,
+        seqno: i64,
+        call_id: &str,
+        name: &str,
+        args: Value,
+        output: Value,
+    ) -> Item {
+        Item {
+            id,
+            session_id: 1,
+            turn_id: 1,
+            response_id: None,
+            provider_id: None,
+            seqno,
+            upstream_id: None,
+            content: ItemContent::ToolOutput(ToolOutputContent {
+                tool_name: name.to_owned(),
+                call_id: call_id.to_owned(),
+                args,
+                output: ToolOutput::Completed { value: output },
             }),
         }
     }
@@ -1391,23 +1408,23 @@ mod tests {
         let output = json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 });
 
         let mut h = history(14, 10);
-        let call = make_tool_call(1, 1, "call_1", "sh", json!({ "command": "echo hi" }), None);
+        let call = make_tool_call(1, 1, "call_1", "sh", json!({ "command": "echo hi" }));
         h.handle_update(Update::ItemCreated { item: &call });
 
-        // Tool calls without output are ignored.
+        // Tool calls are ignored; only tool outputs are rendered.
         assert_eq!(h.num_rows(), 0);
         assert_eq!(h.by_item_id.len(), 0);
 
-        // When the output arrives, the item is inserted and rendered.
-        let call = make_tool_call(
-            1,
-            1,
+        // The tool output is inserted and rendered.
+        let output_item = make_tool_output(
+            2,
+            2,
             "call_1",
             "sh",
             json!({ "command": "echo hi" }),
-            Some(output.clone()),
+            output.clone(),
         );
-        h.handle_update(Update::ItemUpdated { item: &call });
+        h.handle_update(Update::ItemCreated { item: &output_item });
 
         // Rendered with the prompt background and padding, plus the item's
         // own trailing padding row.
@@ -1424,32 +1441,32 @@ mod tests {
             json!({"type": "sh", "cmd_line": "echo hi", "stdout": "hello\n"})
         );
 
-        // Items created with output render immediately.
+        // Tool outputs render without a preceding tool call.
         let mut h = history(14, 10);
-        let call = make_tool_call(
-            2,
+        let output_item = make_tool_output(
+            3,
             2,
             "call_2",
             "sh",
             json!({ "command": "echo hi" }),
-            Some(output),
+            output,
         );
-        h.handle_update(Update::ItemCreated { item: &call });
+        h.handle_update(Update::ItemCreated { item: &output_item });
         assert_eq!(h.num_rows(), 5);
     }
 
     #[test]
-    fn test_tool_call_missing_name() {
+    fn test_tool_output_missing_name() {
         let mut h = history(14, 10);
-        let call = make_tool_call(
+        let output_item = make_tool_output(
             1,
             1,
             "call_1",
             "",
             json!({ "command": "echo hi" }),
-            Some(json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 })),
+            json!({ "stdout": "hello\n", "stderr": "", "return_code": 0 }),
         );
-        h.handle_update(Update::ItemCreated { item: &call });
+        h.handle_update(Update::ItemCreated { item: &output_item });
 
         // An empty tool name falls back to a placeholder.
         assert_eq!(

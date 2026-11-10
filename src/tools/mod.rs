@@ -244,12 +244,12 @@ mod tests {
         // Round trip gives expected results
         let item = Item::get(&mut conn, item.id).unwrap().unwrap();
         assert_eq!(
-            item.content.as_tool_output().unwrap(),
-            &ToolOutputContent {
+            item.content.as_tool_call().unwrap(),
+            &ToolCallContent {
                 tool_name: "sh".into(),
                 call_id: "call123".into(),
                 args: json!({ "command": 123 }),
-                output: ToolOutput::Failed { error: error.into() },
+                output: Some(ToolOutput::Failed { error: error.into() }),
             },
         );
     }

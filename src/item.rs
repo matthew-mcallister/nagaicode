@@ -650,7 +650,7 @@ impl DataQuery for ItemContent {
                     "args": self.query("/args")?,
                     "output": self.query("/output")?,
                 }))),
-                "type" => Ok(QueryField::Value(json!("tool_call"))),
+                "type" => Ok(QueryField::Value(json!("tool_output"))),
                 "tool_name" => Ok(QueryField::Value(json!(tool_name))),
                 "call_id" => Ok(QueryField::Value(json!(call_id))),
                 "args" => Ok(QueryField::DataQuery(args)),
@@ -743,7 +743,7 @@ mod tests {
         assert_eq!(ItemType::from_upstream("function_call"), Some(ItemType::ToolCall));
         assert_eq!(ItemType::from_upstream("function_call_output"), None);
         assert_eq!("tool_call".parse::<ItemType>().unwrap(), ItemType::ToolCall);
-        assert!("tool_output".parse::<ItemType>().is_err());
+        assert_eq!("tool_output".parse::<ItemType>().unwrap(), ItemType::ToolOutput);
         assert!("bogus".parse::<ItemType>().is_err());
 
         let mut conn = crate::db::open_new().unwrap();

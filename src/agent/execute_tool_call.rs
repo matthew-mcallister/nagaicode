@@ -117,15 +117,19 @@ mod tests {
         );
 
         let events = app.drain_events();
-        assert_eq!(events.len(), items.len());
-        for (event, item) in events.iter().zip(&items) {
-            match event {
-                AppEvent::ItemUpdated { item: updated } => {
-                    assert_eq!(updated.id, item.id);
-                    assert_eq!(updated.content, item.content);
-                }
-                other => panic!("unexpected event: {other:?}"),
-            }
+        assert_eq!(events.len(), 8);
+        let calls: Vec<_> = items.iter().filter(|item| item.content.as_tool_call().is_some()).collect();
+        let tool_outputs: Vec<_> = items.iter().filter(|item| item.content.as_tool_output().is_some()).collect();
+        assert_eq!(calls.len(), 4);
+        assert_eq!(tool_outputs.len(), 4);
+        for (pair, (call, tool_output)) in events.chunks(2).zip(calls.iter().zip(&tool_outputs)) {
+            let [AppEvent::ItemCreated { item: created }, AppEvent::ItemUpdated { item: updated }] = pair else {
+                panic!("unexpected events: {pair:?}");
+            };
+            assert_eq!(created.id, tool_output.id);
+            assert_eq!(created.content, tool_output.content);
+            assert_eq!(updated.id, call.id);
+            assert_eq!(updated.content, call.content);
         }
     }
 
