@@ -9,8 +9,8 @@ use serde_json::Value;
 use crate::config::Dirs;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
-use crate::interface::{ToolInfo, ToolOutputContent};
-use crate::item::{ToolCallContent, ToolOutput};
+use crate::interface::{ToolInfo, ToolOutputContent as InterfaceToolOutputContent};
+use crate::item::{ToolCallContent, ToolOutput, ToolOutputContent};
 use crate::query::DataQuery;
 use crate::request::DefaultClient;
 use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
@@ -65,7 +65,7 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
 /// Tool call representation submitted to inference API.
 #[derive(Debug)]
 pub struct InterfaceToolOutput {
-    pub content: Vec<ToolOutputContent<'static>>,
+    pub content: Vec<InterfaceToolOutputContent<'static>>,
 }
 
 /// Args passed at tool creation time.
@@ -131,16 +131,16 @@ impl ToolRegistry {
 
     /// Builds a render item to display a tool call. Handles all possible
     /// errors. Returns `None` if the tool call has no output.
-    pub fn render_to_ui(&self, content: &ToolCallContent) -> Option<Box<dyn RenderItem>> {
+    pub fn render_to_ui(&self, content: &ToolOutputContent) -> Option<Box<dyn RenderItem>> {
         let tool_name = &content.tool_name;
-        Some(match content.output.as_ref()? {
+        Some(match &content.output {
             ToolOutput::Completed { value } => self.tools.get(tool_name)
-                .and_then(|tool| tool.render_to_ui(&content.args, value)
+                .and_then(|tool| tool.render_to_ui(&content.args, &value)
                     .inspect_err(|e| warn!("tool output render error: {e}"))
                     .ok()
                 )
                 .unwrap_or_else(|| Self::unknown_ui(tool_name)),
-            ToolOutput::Failed { error } => Self::failure_ui(tool_name, error),
+            ToolOutput::Failed { error } => Self::failure_ui(tool_name, &error),
         })
     }
 
@@ -157,7 +157,7 @@ impl ToolRegistry {
                 .unwrap_or_else(Self::unknown_to_interface),
             Some(ToolOutput::Failed { error }) => Self::failure_to_interface(error),
             None => InterfaceToolOutput {
-                content: vec![ToolOutputContent::Text { text: "tool call interrupted".into() }],
+                content: vec![InterfaceToolOutputContent::Text { text: "tool call interrupted".into() }],
             },
         }
     }
@@ -169,7 +169,7 @@ impl ToolRegistry {
 
     fn unknown_to_interface() -> InterfaceToolOutput {
         InterfaceToolOutput {
-            content: vec![ToolOutputContent::Text {
+            content: vec![InterfaceToolOutputContent::Text {
                 text: Cow::Owned("error: could not parse output".into()),
             }],
         }
@@ -181,7 +181,7 @@ impl ToolRegistry {
 
     fn failure_to_interface(error: &str) -> InterfaceToolOutput {
         InterfaceToolOutput {
-            content: vec![ToolOutputContent::Text {
+            content: vec![InterfaceToolOutputContent::Text {
                 text: Cow::Owned(format!("error: {error}")),
             }],
         }
@@ -244,12 +244,12 @@ mod tests {
         // Round trip gives expected results
         let item = Item::get(&mut conn, item.id).unwrap().unwrap();
         assert_eq!(
-            item.content.as_tool_call().unwrap(),
-            &ToolCallContent {
+            item.content.as_tool_output().unwrap(),
+            &ToolOutputContent {
                 tool_name: "sh".into(),
                 call_id: "call123".into(),
                 args: json!({ "command": 123 }),
-                output: Some(ToolOutput::Failed { error: error.into() }),
+                output: ToolOutput::Failed { error: error.into() },
             },
         );
     }
@@ -273,15 +273,15 @@ mod tests {
     fn test_render_unknown() {
         let registry = registry();
 
-        let call = ToolCallContent {
+        let call = ToolOutputContent {
             tool_name: "missing".into(),
             call_id: "call123".into(),
             args: json!({}),
-            output: Some(ToolOutput::Completed { value: json!({}) }),
+            output: ToolOutput::Completed { value: json!({}) },
         };
         let ui = registry.render_to_ui(&call).unwrap();
         assert_eq!(ui.query("/type").unwrap(), json!("help"));
-        let out = registry.render_to_interface(&call);
+        let out = registry.render_to_interface(&call.into_call());
         assert_eq!(out.content.len(), 1);
     }
 
@@ -289,29 +289,15 @@ mod tests {
     fn test_render_failed() {
         let registry = registry();
 
-        let call = ToolCallContent {
+        let call = ToolOutputContent {
             tool_name: "boom".into(),
             call_id: "call123".into(),
             args: json!({}),
-            output: Some(ToolOutput::Failed { error: "boom".to_owned() }),
+            output: ToolOutput::Failed { error: "boom".to_owned() },
         };
         let ui = registry.render_to_ui(&call).unwrap();
         assert_eq!(ui.query("/type").unwrap(), json!("error"));
-        let out = registry.render_to_interface(&call);
+        let out = registry.render_to_interface(&call.into_call());
         assert_eq!(out.content.len(), 1);
-    }
-
-    #[test]
-    fn test_render_incomplete() {
-        let registry = registry();
-        let pending = ToolCallContent {
-            tool_name: "sh".into(),
-            call_id: "call123".into(),
-            args: json!({ "command": "echo 123" }),
-            output: None,
-        };
-        assert!(registry.render_to_ui(&pending).is_none());
-        let ToolOutputContent::Text { text } = &registry.render_to_interface(&pending).content[0];
-        assert_eq!(text, "tool call interrupted");
     }
 }

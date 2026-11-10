@@ -1357,6 +1357,7 @@ mod tests {
         assert_eq!(item.query("/num_rows").unwrap(), json!(0));
     }
 
+    // TODO: tests out of date
     fn make_tool_call(
         id: i32,
         seqno: i64,

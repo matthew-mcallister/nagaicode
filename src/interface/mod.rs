@@ -158,6 +158,8 @@ pub fn build_history<'a>(
                     output: output.content,
                 });
             }
+            // ToolCall branch already handles this
+            ItemContent::ToolOutput(_) => {},
         }
     }
     messages.append(&mut pending_outputs);

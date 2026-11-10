@@ -1,6 +1,8 @@
+use diesel::Connection;
+
 use crate::app::AppEvent;
 use crate::error::AnyResult;
-use crate::item::Item;
+use crate::item::{Item, ItemContent, NewItem, ToolOutputContent};
 use crate::task::{Task, TaskContext};
 
 pub struct ExecuteToolCall {
@@ -13,13 +15,30 @@ impl ExecuteToolCall {
     }
 
     async fn process(mut self, context: &mut TaskContext) -> AnyResult<()> {
-        let tc = self.item.content.as_tool_call().expect("tried to execute non-tool-call");
+        let tc = self.item.content.as_tool_call().unwrap().clone();
         let output = context.tool_registry().call(&tc.tool_name, &tc.args).await;
-        self.item.set_output(context.connection()?, output)?;
 
-        context.send(AppEvent::ItemUpdated {
-            item: self.item,
-        });
+        let new_item = context.connection()?.transaction(|cxn| -> AnyResult<_> {
+            self.item.set_output(cxn, output.clone())?;
+            let new_item = Item::create(cxn, NewItem {
+                session_id: self.item.session_id,
+                turn_id: self.item.turn_id,
+                response_id: None,
+                provider_id: None,
+                upstream_id: self.item.upstream_id.clone(),
+                seqno: None,
+                content: ItemContent::ToolOutput(ToolOutputContent {
+                    tool_name: tc.tool_name,
+                    call_id: tc.call_id,
+                    args: tc.args,
+                    output,
+                }),
+            })?;
+            Ok(new_item)
+        })?;
+
+        context.send(AppEvent::ItemCreated { item: new_item });
+        context.send(AppEvent::ItemUpdated { item: self.item.clone() });
 
         Ok(())
     }
@@ -40,7 +59,7 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::db;
-    use crate::item::{ItemContent, ToolCallContent, ToolOutput};
+    use crate::item::{ItemContent, ToolOutput};
     use crate::query::DataQuery;
     use crate::testing::{normalize, session_turn, tool_call};
 
@@ -121,18 +140,18 @@ mod tests {
         ExecuteToolCall::new(call).run(&mut context).await.unwrap();
 
         let events = app.drain_events();
-        let AppEvent::ItemUpdated { item } = &events[0] else {
+        let AppEvent::ItemCreated { item } = &events[0] else {
             panic!("unexpected event: {:?}", events[0]);
         };
         assert_eq!(
             item.content,
-            ItemContent::ToolCall(ToolCallContent {
+            ItemContent::ToolOutput(ToolOutputContent {
                 tool_name: "no_such_tool".to_owned(),
                 call_id: "call5".to_owned(),
                 args: json!({}),
-                output: Some(ToolOutput::Failed {
+                output: ToolOutput::Failed {
                     error: "no such tool 'no_such_tool'".to_owned(),
-                }),
+                },
             }),
         );
     }

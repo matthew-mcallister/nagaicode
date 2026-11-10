@@ -23,6 +23,7 @@ pub enum ItemType {
     ResponseText,
     Reasoning,
     ToolCall,
+    ToolOutput,
 }
 
 impl fmt::Display for ItemType {
@@ -32,6 +33,7 @@ impl fmt::Display for ItemType {
             ItemType::ResponseText => write!(f, "response_text"),
             ItemType::Reasoning => write!(f, "reasoning"),
             ItemType::ToolCall => write!(f, "tool_call"),
+            ItemType::ToolOutput => write!(f, "tool_output"),
         }
     }
 }
@@ -44,6 +46,7 @@ impl FromStr for ItemType {
             "response_text" => Ok(ItemType::ResponseText),
             "reasoning" => Ok(ItemType::Reasoning),
             "tool_call" => Ok(ItemType::ToolCall),
+            "tool_output" => Ok(ItemType::ToolOutput),
             other => Err(anyhow!("unknown item type: {other}")),
         }
     }
@@ -222,9 +225,29 @@ pub struct ToolCallContent {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ToolOutputContent {
+    pub tool_name: String,
+    pub call_id: String,
+    pub args: Value,
+    pub output: ToolOutput,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ToolOutput {
     Completed { value: Value },
     Failed { error: String },
+}
+
+#[cfg(test)]
+impl ToolOutputContent {
+    pub(crate) fn into_call(self) -> ToolCallContent {
+        ToolCallContent {
+            tool_name: self.tool_name,
+            call_id: self.call_id,
+            args: self.args,
+            output: Some(self.output),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -233,6 +256,7 @@ pub enum ItemContent {
     ResponseText(String),
     Reasoning(ReasoningContent),
     ToolCall(ToolCallContent),
+    ToolOutput(ToolOutputContent),
 }
 
 impl ItemContent {
@@ -241,6 +265,38 @@ impl ItemContent {
             Self::ToolCall(content) => Some(&content),
             _ => None,
         }
+    }
+
+    pub fn as_tool_output(&self) -> Option<&ToolOutputContent> {
+        match self {
+            Self::ToolOutput(content) => Some(&content),
+            _ => None,
+        }
+    }
+}
+
+fn require<T>(value: &Option<T>) -> AnyResult<&T> {
+    value.as_ref().ok_or_else(|| anyhow!("missing field"))
+}
+
+macro_rules! validate_field {
+    ($row:ident.$field:ident, $b:block) => {
+        (move || -> AnyResult<_> { $b })()
+            .map_err(|e| anyhow!("item {} '{}': {e}", $row.id, stringify!($field)))
+    }
+}
+
+macro_rules! require {
+    ($row:ident.$field:ident) => {
+        validate_field!($row.$field, { require(&$row.$field) })
+    }
+}
+
+macro_rules! require_json {
+    ($row:ident.$field:ident) => {
+        validate_field!($row.$field, {
+            Ok(serde_json::from_str(require(&$row.$field)?)?)
+        })
     }
 }
 
@@ -297,10 +353,10 @@ impl Item {
     fn from_row_inner(row: &DbItem) -> AnyResult<Item> {
         let content = match row.ty()? {
             ItemType::UserText => {
-                ItemContent::UserText(require(row.id, "text", row.text.clone())?)
+                ItemContent::UserText(require!(row.text)?.clone())
             }
             ItemType::ResponseText => {
-                ItemContent::ResponseText(require(row.id, "text", row.text.clone())?)
+                ItemContent::ResponseText(require!(row.text)?.clone())
             }
             ItemType::Reasoning => ItemContent::Reasoning(ReasoningContent {
                 text: row.text.clone(),
@@ -308,15 +364,22 @@ impl Item {
                 encrypted: row.encrypted_text.clone(),
             }),
             ItemType::ToolCall => ItemContent::ToolCall(ToolCallContent {
-                tool_name: require(row.id, "text", row.text.clone())?,
-                call_id: require(row.id, "upstream_call_id", row.upstream_call_id.clone())?,
-                args: parse_json(row.id, "tool_args", row.tool_args.as_deref())?,
-                output: match row.tool_output.as_deref() {
-                    Some(raw) => {
-                        Some(decode_output(raw).map_err(|e| anyhow!("item {}: {e}", row.id))?)
-                    }
-                    None => None,
-                },
+                tool_name: require!(row.text)?.clone(),
+                call_id: require!(row.upstream_call_id)?.clone(),
+                args: require_json!(row.tool_args)?,
+                output: row.tool_output.as_ref().map(|s| {
+                    validate_field!(row.tool_output, {
+                        decode_output(serde_json::from_str(s)?)
+                    })
+                }).transpose()?,
+            }),
+            ItemType::ToolOutput => ItemContent::ToolOutput(ToolOutputContent {
+                tool_name: require!(row.text)?.clone(),
+                call_id: require!(row.upstream_call_id)?.clone(),
+                args: require_json!(row.tool_args)?,
+                output: validate_field!(row.tool_output, {
+                    decode_output(serde_json::from_str(require(&row.tool_output)?)?)
+                })?,
             }),
         };
         Ok(Item {
@@ -425,6 +488,18 @@ impl Item {
                 row.tool_args = Some(args.to_string());
                 row.tool_output = output.as_ref().map(encode_output);
             }
+            ItemContent::ToolOutput(ToolOutputContent {
+                tool_name,
+                call_id,
+                args,
+                output,
+            }) => {
+                row.ty = Some(ItemType::ToolOutput);
+                row.text = Some(tool_name);
+                row.upstream_call_id = Some(call_id);
+                row.tool_args = Some(args.to_string());
+                row.tool_output = Some(encode_output(&output));
+            }
         }
         let row = DbItem::create(conn, row)?;
         Ok(Self::from_row(&row).unwrap())
@@ -444,7 +519,7 @@ impl Item {
         Ok(count)
     }
 
-    /// Updates and commits output of a tool call.
+    /// Updates the output of a tool call.
     ///
     /// Panics if the item is not a tool call.
     pub fn set_output(&mut self, conn: &mut SqliteConnection, output: ToolOutput) -> AnyResult<()> {
@@ -456,7 +531,10 @@ impl Item {
         };
         let encoded = encode_output(&output);
         diesel::update(item::table.filter(item::id.eq(self.id)))
-            .set(item::tool_output.eq(&encoded))
+            .set((
+                item::tool_output.eq(&encoded),
+                item::updated_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>("CURRENT_TIMESTAMP")),
+            ))
             .execute(conn)?;
         *slot = Some(output);
         Ok(())
@@ -559,6 +637,26 @@ impl DataQuery for ItemContent {
                 },
                 _ => Err(QueryError::InvalidField(field.to_string())),
             },
+            ItemContent::ToolOutput(ToolOutputContent {
+                tool_name,
+                call_id,
+                args,
+                output,
+            }) => match field {
+                "" => Ok(QueryField::Value(json!({
+                    "type": self.query("/type")?,
+                    "tool_name": self.query("/tool_name")?,
+                    "call_id": self.query("/call_id")?,
+                    "args": self.query("/args")?,
+                    "output": self.query("/output")?,
+                }))),
+                "type" => Ok(QueryField::Value(json!("tool_call"))),
+                "tool_name" => Ok(QueryField::Value(json!(tool_name))),
+                "call_id" => Ok(QueryField::Value(json!(call_id))),
+                "args" => Ok(QueryField::DataQuery(args)),
+                "output" => Ok(QueryField::DataQuery(output)),
+                _ => Err(QueryError::InvalidField(field.to_string())),
+            },
         }
     }
 }
@@ -584,17 +682,6 @@ impl DataQuery for ToolOutput {
     }
 }
 
-fn require(id: i32, field: &str, value: Option<String>) -> AnyResult<String> {
-    value.ok_or_else(|| anyhow!("item {id}: {field} is missing"))
-}
-
-fn parse_json(id: i32, field: &str, raw: Option<&str>) -> AnyResult<Value> {
-    let raw = raw.ok_or_else(|| anyhow!("item {id}: {field} is missing"))?;
-    let value = serde_json::from_str(raw)
-        .map_err(|e| anyhow!("item {id}: {field} is not valid JSON: {e}"))?;
-    Ok(value)
-}
-
 fn encode_output(output: &ToolOutput) -> String {
     match output {
         ToolOutput::Completed { value } => json!({ "completed": value }),
@@ -602,8 +689,7 @@ fn encode_output(output: &ToolOutput) -> String {
     }.to_string()
 }
 
-fn decode_output(raw: &str) -> AnyResult<ToolOutput> {
-    let value: Value = serde_json::from_str(raw)?;
+fn decode_output(value: Value) -> AnyResult<ToolOutput> {
     if let Some(value) = value.get("completed") {
         Ok(ToolOutput::Completed {
             value: value.clone(),

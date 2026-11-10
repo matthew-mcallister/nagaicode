@@ -175,7 +175,8 @@ pub fn get_item_content(
             let text = text.clone().or_else(|| summary.clone())?;
             Box::new(ThoughtRenderItem::new(text))
         }
-        ItemContent::ToolCall(content) => tools.render_to_ui(content)?,
+        ItemContent::ToolCall(_) => return None,
+        ItemContent::ToolOutput(content) => tools.render_to_ui(content)?,
     })
 }
 
