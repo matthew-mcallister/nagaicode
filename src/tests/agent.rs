@@ -212,7 +212,6 @@ async fn test_system_prompt() {
     let body = request_body_value(&requests[0]);
     let canonical = std::fs::canonicalize(&agents_md).unwrap();
     let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
-    let session_storage = app.context().dirs().session_storage(session_id);
     assert_eq!(
         body["input"],
         json!([
@@ -222,13 +221,11 @@ async fn test_system_prompt() {
                 "content": format!(
                     "\
                         Harness: nagaicode/{}\n\
-                        Session storage path: {}\n\
                         \n\
                         Instructions from {}:\n\
                         Always answer in lowercase.\n\
                     ",
                     crate::VERSION,
-                    session_storage.display(),
                     canonical.display(),
                 ),
             },

@@ -6,9 +6,9 @@ use crate::error::AnyResult;
 use crate::session::Session;
 
 pub(crate) struct SystemPromptContext<'a> {
-    pub(crate) session: &'a Session,
+    pub(crate) _session: &'a Session,
     pub(crate) cwd: &'a Path,
-    pub(crate) dirs: &'a Dirs,
+    pub(crate) _dirs: &'a Dirs,
 }
 
 pub(crate) fn build_system_prompt(context: SystemPromptContext<'_>) -> AnyResult<Vec<String>> {
@@ -24,18 +24,10 @@ pub(crate) fn build_system_prompt(context: SystemPromptContext<'_>) -> AnyResult
     Ok(parts)
 }
 
-pub(crate) fn build_harness_info(context: &SystemPromptContext<'_>) -> AnyResult<Vec<String>> {
+pub(crate) fn build_harness_info(_context: &SystemPromptContext<'_>) -> AnyResult<Vec<String>> {
     let mut parts = vec![];
     
-    let session_storage = context.dirs.session_storage(context.session.id);
-    parts.push(format!(
-        "\
-            Harness: nagaicode/{}\n\
-            Session storage path: {}\n\
-        ",
-        crate::VERSION,
-        session_storage.display(),
-    ));
+    parts.push(format!("Harness: nagaicode/{}\n", crate::VERSION));
 
     Ok(parts)
 }
