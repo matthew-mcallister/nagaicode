@@ -35,7 +35,8 @@ struct Request {
     method: String,
     #[serde(default)]
     params: Value,
-    id: Value,
+    #[serde(default)]
+    id: Option<Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
@@ -196,30 +197,31 @@ fn echo(arguments: Value) -> Value {
     tool_result(text, arguments)
 }
 
-fn respond(line: &str) -> Response {
-    match serde_json::from_str::<Request>(line) {
-        Ok(request) => {
-            let id = request.id.clone();
-            let body = match handle(request) {
-                Ok(result) => ResponseBody::Result(result),
-                Err(error) => ResponseBody::Error(error),
-            };
-            Response {
+fn respond(line: &str) -> Option<Response> {
+    let request = match serde_json::from_str::<Request>(line) {
+        Ok(request) => request,
+        Err(error) => {
+            return Some(Response {
                 jsonrpc: "2.0".to_owned(),
-                body,
-                id,
-            }
+                body: ResponseBody::Error(Error {
+                    code: -32700,
+                    message: format!("parse error: {error}"),
+                    data: None,
+                }),
+                id: Value::Null,
+            });
         }
-        Err(error) => Response {
-            jsonrpc: "2.0".to_owned(),
-            body: ResponseBody::Error(Error {
-                code: -32700,
-                message: format!("parse error: {error}"),
-                data: None,
-            }),
-            id: Value::Null,
-        },
-    }
+    };
+    let id = request.id.clone()?;
+    let body = match handle(request) {
+        Ok(result) => ResponseBody::Result(result),
+        Err(error) => ResponseBody::Error(error),
+    };
+    Some(Response {
+        jsonrpc: "2.0".to_owned(),
+        body,
+        id,
+    })
 }
 
 async fn serve_stdio() -> Result<(), Error> {
@@ -229,7 +231,10 @@ async fn serve_stdio() -> Result<(), Error> {
         if line.trim().is_empty() {
             continue;
         }
-        let response = serde_json::to_string(&respond(&line))?;
+        let Some(response) = respond(&line) else {
+            continue;
+        };
+        let response = serde_json::to_string(&response)?;
         stdout.write_all(response.as_bytes()).await?;
         stdout.write_all(b"\n").await?;
         stdout.flush().await?;
@@ -263,7 +268,7 @@ mod tests {
             jsonrpc: "2.0".to_owned(),
             method: method.to_owned(),
             params,
-            id: json!(1),
+            id: Some(json!(1)),
         }
     }
 
