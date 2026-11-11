@@ -148,7 +148,6 @@ impl App {
         let client = DefaultClient::default();
         let args = ToolCreateArgs {
             cwd: &cwd,
-            dirs: &dirs,
             client: &client,
         };
         let tool_registry = Arc::new(ToolRegistry::new(&args));
@@ -210,7 +209,6 @@ impl App {
     pub fn tool_create_args(&self) -> ToolCreateArgs<'_> {
         ToolCreateArgs {
             cwd: &self.cwd,
-            dirs: &self.dirs,
             client: &self.client,
         }
     }

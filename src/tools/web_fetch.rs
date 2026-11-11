@@ -76,7 +76,7 @@ impl Tool for WebFetchTool {
     fn description(&self) -> &str {
         "Fetches a text document from the web. Start line is 1-indexed. \
         Output includes next line offset for pagination. Lines truncated at \
-        2000 bytes max."
+        2000 bytes max. HTML will be converted to markdown."
     }
 
     fn input_schema(&self) -> &Value {
@@ -139,6 +139,15 @@ impl Tool for WebFetchTool {
                 .await
                 .map_err(|e| anyhow!("{url}: (status {}) {e}", status.as_u16()))?;
             let response_time = start.elapsed().as_secs_f64();
+
+            let body = if is_html_content_type(content_type) {
+                html_to_markdown_rs::convert(&body, None)
+                    .map_err(|e| anyhow!("{url}: {e}"))?
+                    .content
+                    .ok_or_else(|| anyhow!("{url}: conversion produced no output"))?
+            } else {
+                body
+            };
 
             let (content, num_lines, next_line) =
                 paginate(body.split_inclusive('\n').map(Ok), start_line, max_lines)?;
@@ -235,7 +244,7 @@ fn content_length(headers: &Value) -> Option<u64> {
 }
 
 fn is_text_content_type(content_type: &str) -> bool {
-    let mime = content_type.split(';').next().unwrap_or("").trim();
+    let mime = mime_type(content_type);
     if mime.starts_with("text/") {
         return true;
     }
@@ -254,6 +263,14 @@ fn is_text_content_type(content_type: &str) -> bool {
                 | ("application", "yaml")
                 | ("application", "x-yaml")
         )
+}
+
+fn is_html_content_type(content_type: &str) -> bool {
+    matches!(mime_type(content_type), "text/html" | "application/xhtml+xml")
+}
+
+fn mime_type(content_type: &str) -> &str {
+    content_type.split(';').next().unwrap_or("").trim()
 }
 
 fn format_content_length(length: u64) -> String {
@@ -326,6 +343,18 @@ mod tests {
             body: &str,
             headers: &[(&str, &str)],
         ) -> AnyResult<Value> {
+            let input = input(url);
+            self.fetch_with(url, status, body, headers, &input).await
+        }
+
+        async fn fetch_with(
+            &mut self,
+            url: &str,
+            status: StatusCode,
+            body: &str,
+            headers: &[(&str, &str)],
+            input: &Value,
+        ) -> AnyResult<Value> {
             let mut header_map = HeaderMap::new();
             for (name, value) in headers {
                 header_map.insert(
@@ -339,7 +368,7 @@ mod tests {
                 headers: header_map,
             })));
             let context = ToolCallContext { session_id: 1 };
-            self.tool.call(&context, &input(url)).await
+            self.tool.call(&context, input).await
         }
     }
 
@@ -353,6 +382,33 @@ mod tests {
         assert_eq!(output["content"], json!("hello"));
         assert_eq!(output["num_lines"], json!(1));
         assert_eq!(output.get("next_line"), None);
+    }
+
+    #[tokio::test]
+    async fn test_html_conversion() {
+        let mut f = Fixture::new();
+        let url = "https://example.com/";
+        let html = "<h1>Title</h1><p>Body</p>";
+        let headers = [("content-type", "text/html; charset=utf-8"), ("content-length", "25")];
+
+        let input = json!({ "url": url, "start_line": 1, "max_lines": 10 });
+        let output = f
+            .fetch_with(url, StatusCode::OK, html, &headers, &input)
+            .await
+            .unwrap();
+        assert_eq!(output["content"], json!("# Title\n\nBody\n"));
+        assert_eq!(output["num_lines"], json!(3));
+        assert_eq!(output.get("next_line"), None);
+
+        // Pagination applies to the converted markdown, not the raw HTML.
+        let input = json!({ "url": url, "start_line": 1, "max_lines": 2 });
+        let output = f
+            .fetch_with(url, StatusCode::OK, html, &headers, &input)
+            .await
+            .unwrap();
+        assert_eq!(output["content"], json!("# Title\n\n"));
+        assert_eq!(output["num_lines"], json!(2));
+        assert_eq!(output["next_line"], json!(3));
     }
 
     #[tokio::test]
