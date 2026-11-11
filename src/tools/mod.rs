@@ -17,6 +17,7 @@ use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
 
 pub mod edit;
 pub mod glob;
+pub mod html2markdown;
 pub mod read;
 pub mod sh;
 pub mod web_fetch;
@@ -100,6 +101,7 @@ impl ToolRegistry {
         // - edit
         // - glob
         // - web_fetch
+        // - html2markdown
         let mut tools: FnvHashMap<String, Box<dyn Tool>> = FnvHashMap::default();
         let sh = sh::ShTool::new(args);
         tools.insert(sh.name().to_owned(), Box::new(sh));
@@ -113,6 +115,8 @@ impl ToolRegistry {
         tools.insert(glob.name().to_owned(), Box::new(glob));
         let web_fetch = web_fetch::WebFetchTool::new(args);
         tools.insert(web_fetch.name().to_owned(), Box::new(web_fetch));
+        let html2markdown = html2markdown::Html2MarkdownTool::new(args);
+        tools.insert(html2markdown.name().to_owned(), Box::new(html2markdown));
         Self { tools }
     }
 
@@ -277,14 +281,14 @@ mod tests {
         let registry = registry();
         let mut names: Vec<&str> = registry.list_tools().map(|t| t.name()).collect();
         names.sort();
-        assert_eq!(names, ["edit", "glob", "read", "sh", "web_fetch", "write"]);
+        assert_eq!(names, ["edit", "glob", "html2markdown", "read", "sh", "web_fetch", "write"]);
 
         let mut names: Vec<_> = registry.list_tool_infos()
             .into_iter()
             .map(|info| info.name)
             .collect();
         names.sort();
-        assert_eq!(names, &["edit", "glob", "read", "sh", "web_fetch", "write"]);
+        assert_eq!(names, &["edit", "glob", "html2markdown", "read", "sh", "web_fetch", "write"]);
     }
 
     #[test]
