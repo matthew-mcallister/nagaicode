@@ -12,15 +12,37 @@ pub(crate) struct SystemPromptContext<'a> {
 }
 
 pub(crate) fn build_system_prompt(context: SystemPromptContext<'_>) -> AnyResult<Vec<String>> {
-    let session_storage = context.dirs.session_storage(context.session.id);
-    let mut parts = vec![format!(
-        "Session storage path: {}",
-        session_storage.display()
-    )];
+    let mut parts = vec![];
+
+    parts.extend(build_harness_info(&context)?);
+
     for path in find_agents_md(context.cwd)? {
         let content = fs::read_to_string(&path)?;
         parts.push(agents_md_template(&path, &content));
     }
+
+    Ok(parts)
+}
+
+pub(crate) fn build_harness_info(context: &SystemPromptContext<'_>) -> AnyResult<Vec<String>> {
+    let mut parts = vec![];
+    
+    let session_storage = context.dirs.session_storage(context.session.id);
+    parts.push(format!(
+        "\
+            Harness: nagaicode/{}\n\
+            Session storage path: {}\n\
+        ",
+        crate::VERSION,
+        session_storage.display(),
+    ));
+
+    parts.push("\
+        Harness instructions:\n\
+        Tool calls are executed sequentially. You may chain tool calls together, e.g. \
+        web_fetch -> html2markdown -> read.\
+    ".into());
+
     Ok(parts)
 }
 
