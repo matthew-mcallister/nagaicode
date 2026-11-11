@@ -39,8 +39,8 @@ pub(crate) fn build_harness_info(context: &SystemPromptContext<'_>) -> AnyResult
 
     parts.push("\
         Harness instructions:\n\
-        Tool calls are executed sequentially. You may chain tool calls together, e.g. \
-        web_fetch -> html2markdown -> read.\
+        Tool calls are executed sequentially. You may chain tool calls together without inspecting \
+        intermediate output, e.g. web_fetch -> html2markdown -> read.\
     ".into());
 
     Ok(parts)

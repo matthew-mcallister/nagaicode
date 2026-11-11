@@ -225,8 +225,8 @@ async fn test_system_prompt() {
                         Session storage path: {}\n\
                         \n\
                         Harness instructions:\n\
-                        Tool calls are executed sequentially. You may chain tool calls together, e.g. \
-                        web_fetch -> html2markdown -> read.\n\
+                        Tool calls are executed sequentially. You may chain tool calls together \
+                        without inspecting intermediate output, e.g. web_fetch -> html2markdown -> read.\n\
                         \n\
                         Instructions from {}:\n\
                         Always answer in lowercase.\n\
