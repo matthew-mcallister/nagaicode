@@ -9,8 +9,12 @@ path = "src/main.rs"
 
 [dependencies]
 crossterm = { version = "0.28", features = ["event-stream"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "sync", "time", "io-std", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "sync", "time", "io-std", "io-util", "net"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
 dirs = "5"
 diesel = { version = "2", features = ["sqlite", "chrono", "serde_json", "returning_clauses_for_sqlite_3_35"] }
 diesel_migrations = { version = "2", features = ["sqlite"] }
