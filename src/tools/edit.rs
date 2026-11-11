@@ -11,7 +11,7 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCreateArgs};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::{ErrorRenderItem, RenderItem};
 use crate::ui::style::{Style, Theme};
@@ -121,7 +121,11 @@ impl Tool for EditTool {
         &self.input_schema
     }
 
-    fn call<'a>(&'a self, input: &'a Value) -> BoxFuture<'a, AnyResult<Value>> {
+    fn call<'a>(
+        &'a self,
+        _context: &'a ToolCallContext,
+        input: &'a Value,
+    ) -> BoxFuture<'a, AnyResult<Value>> {
         Box::pin(async move {
             let invalid = || anyhow!("arguments don't match schema");
             let filepath = input
@@ -388,7 +392,8 @@ mod tests {
 
     fn call(app: &App, input: &Value) -> anyhow::Result<Value> {
         let tool = EditTool::new(&app.tool_create_args());
-        futures::executor::block_on(tool.call(input))
+        let context = ToolCallContext { session_id: 1 };
+        futures::executor::block_on(tool.call(&context, input))
     }
 
     fn render(tool: &EditTool, width: usize, input: &Value, output: &Value) -> AnyResult<String> {

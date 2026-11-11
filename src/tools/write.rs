@@ -10,7 +10,7 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCreateArgs};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs};
 use crate::ui::render_item::{SystemRenderItem, RenderItem};
 
 /// Creates or overwrites a text file with the given content.
@@ -66,7 +66,11 @@ impl Tool for WriteTool {
         &self.input_schema
     }
 
-    fn call<'a>(&'a self, input: &'a Value) -> BoxFuture<'a, AnyResult<Value>> {
+    fn call<'a>(
+        &'a self,
+        _context: &'a ToolCallContext,
+        input: &'a Value,
+    ) -> BoxFuture<'a, AnyResult<Value>> {
         Box::pin(async move {
             let invalid = || anyhow!("arguments don't match schema");
             let filepath = input
@@ -146,10 +150,11 @@ mod tests {
     async fn test_write() {
         let app = App::new().unwrap();
         let tool = WriteTool::new(&app.tool_create_args());
+        let context = ToolCallContext { session_id: 1 };
         let path = app.cwd().path().join("a.txt");
 
         let out = tool
-            .call(&json!({ "filepath": path.to_string_lossy(), "content": "one\ntwo\n" }))
+            .call(&context, &json!({ "filepath": path.to_string_lossy(), "content": "one\ntwo\n" }))
             .await
             .unwrap();
         assert_eq!(out["created"], json!(true));
@@ -161,11 +166,12 @@ mod tests {
     async fn test_overwrite() {
         let app = App::new().unwrap();
         let tool = WriteTool::new(&app.tool_create_args());
+        let context = ToolCallContext { session_id: 1 };
         let path = app.cwd().path().join("a.txt");
         std::fs::write(&path, "original").unwrap();
 
         let out = tool
-            .call(&json!({ "filepath": path.to_string_lossy(), "content": "replaced\n" }))
+            .call(&context, &json!({ "filepath": path.to_string_lossy(), "content": "replaced\n" }))
             .await
             .unwrap();
         assert_eq!(out["created"], json!(false));
@@ -177,10 +183,11 @@ mod tests {
     async fn test_write_creates_parent_dirs() {
         let app = App::new().unwrap();
         let tool = WriteTool::new(&app.tool_create_args());
+        let context = ToolCallContext { session_id: 1 };
         let path = app.cwd().path().join("nested").join("dir").join("a.txt");
 
         let out = tool
-            .call(&json!({ "filepath": path.to_string_lossy(), "content": "hello" }))
+            .call(&context, &json!({ "filepath": path.to_string_lossy(), "content": "hello" }))
             .await
             .unwrap();
         assert_eq!(out["created"], json!(true));

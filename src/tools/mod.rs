@@ -41,7 +41,11 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
     fn input_schema(&self) -> &Value;
 
     /// Invokes the tool on input.
-    fn call<'a>(&'a self, input: &'a Value) -> BoxFuture<'a, AnyResult<Value>>;
+    fn call<'a>(
+        &'a self,
+        context: &'a ToolCallContext,
+        input: &'a Value,
+    ) -> BoxFuture<'a, AnyResult<Value>>;
 
     // XXX: Should remove AnyResult from signature and force implementors to
     // be liberal in what they accept.
@@ -74,6 +78,11 @@ pub struct ToolCreateArgs<'a> {
     pub(crate) cwd: &'a Arc<Cwd>,
     pub(crate) dirs: &'a Dirs,
     pub(crate) client: &'a DefaultClient,
+}
+
+#[derive(Debug)]
+pub struct ToolCallContext {
+    pub session_id: i32,
 }
 
 /// Maps tool names to tools.
@@ -119,11 +128,16 @@ impl ToolRegistry {
 
     /// Invokes the tool named by a tool call item. Handles all possible
     /// errors. Makes no DB queries.
-    pub async fn call(&self, tool_name: &str, input: &Value) -> ToolOutput {
+    pub async fn call(
+        &self,
+        context: &ToolCallContext,
+        tool_name: &str,
+        input: &Value,
+    ) -> ToolOutput {
         let Some(tool) = self.tools.get(tool_name) else {
             return ToolOutput::Failed { error: format!("no such tool '{}'", tool_name) };
         };
-        match tool.call(input).await {
+        match tool.call(context, input).await {
             Ok(value) => ToolOutput::Completed { value },
             Err(e) => ToolOutput::Failed { error: e.to_string() },
         }
@@ -204,8 +218,11 @@ mod tests {
     #[tokio::test]
     async fn test_call_tool() {
         let registry = registry();
+        let context = ToolCallContext { session_id: 1 };
 
-        let output = registry.call("sh", &json!({ "command": "echo hi" })).await;
+        let output = registry
+            .call(&context, "sh", &json!({ "command": "echo hi" }))
+            .await;
         let ToolOutput::Completed { value } = &output else {
             panic!("expected a completed call, got {output:?}");
         };
@@ -215,14 +232,14 @@ mod tests {
 
         // Failed calls record their error.
         assert_eq!(
-            registry.call("sh", &json!({ "dnammoc": 123 })).await,
+            registry.call(&context, "sh", &json!({ "dnammoc": 123 })).await,
             ToolOutput::Failed {
                 error: "invalid arguments for 'sh': expected {\"command\": \"...\"}".to_owned(),
             }
         );
 
         assert_eq!(
-            registry.call("missing", &json!({})).await,
+            registry.call(&context, "missing", &json!({})).await,
             ToolOutput::Failed { error: "no such tool 'missing'".to_owned() },
         );
     }
@@ -231,12 +248,13 @@ mod tests {
     async fn test_call_failure_round_trip() {
         let registry = registry();
         let mut conn = crate::db::open_new().unwrap();
-        let (_, turn) = session_turn(&mut conn);
+        let (session, turn) = session_turn(&mut conn);
+        let context = ToolCallContext { session_id: session.id };
 
         // Tool call expects a string
         let mut item = tool_call(&mut conn, &turn, "sh", "call123", json!({ "command": 123 }), None);
         let tc = item.content.as_tool_call().unwrap();
-        let output = registry.call(&tc.tool_name, &tc.args).await;
+        let output = registry.call(&context, &tc.tool_name, &tc.args).await;
         let error = "invalid arguments for 'sh': expected {\"command\": \"...\"}";
         assert_eq!(output, ToolOutput::Failed { error: error.to_owned() });
         item.set_output(&mut conn, output).unwrap();

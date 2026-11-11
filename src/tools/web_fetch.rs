@@ -15,7 +15,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::{Client, DefaultClient, Response as ResponseTrait};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCreateArgs};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs};
 use crate::ui::render_item::{RenderItem, SystemRenderItem};
 
 const USER_AGENT_STRING: &str = concat!("nagaicode/", crate::version!());
@@ -80,7 +80,11 @@ impl Tool for WebFetchTool {
         &self.input_schema
     }
 
-    fn call<'a>(&'a self, input: &'a Value) -> BoxFuture<'a, AnyResult<Value>> {
+    fn call<'a>(
+        &'a self,
+        _context: &'a ToolCallContext,
+        input: &'a Value,
+    ) -> BoxFuture<'a, AnyResult<Value>> {
         Box::pin(async move {
             let invalid = || anyhow!("arguments don't match schema");
             let url = input
@@ -328,7 +332,8 @@ mod tests {
                 status,
                 headers: header_map,
             })));
-            self.tool.call(&input(url)).await
+            let context = ToolCallContext { session_id: 1 };
+            self.tool.call(&context, &input(url)).await
         }
     }
 
