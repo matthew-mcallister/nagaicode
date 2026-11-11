@@ -78,8 +78,8 @@ async fn test_app_prompt_agent() {
     let body = request_body_value(&requests[0]);
     assert_eq!(body["model"], "gpt-4");
     assert_eq!(body["stream"], true);
-    assert_eq!(body["input"][0]["role"], "user");
-    assert_eq!(body["input"][0]["content"], "hello");
+    assert_eq!(body["input"][1]["role"], "user");
+    assert_eq!(body["input"][1]["content"], "hello");
 
     // The prompt should be recorded in the app state.
     assert_eq!(
@@ -211,6 +211,8 @@ async fn test_system_prompt() {
     assert_eq!(requests[0].url().as_str(), url);
     let body = request_body_value(&requests[0]);
     let canonical = std::fs::canonicalize(&agents_md).unwrap();
+    let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+    let session_storage = app.context().dirs().session_storage(session_id);
     assert_eq!(
         body["input"],
         json!([
@@ -218,7 +220,8 @@ async fn test_system_prompt() {
                 "type": "message",
                 "role": "system",
                 "content": format!(
-                    "Instructions from {}:\nAlways answer in lowercase.\n",
+                    "Session storage path: {}\n\nInstructions from {}:\nAlways answer in lowercase.\n",
+                    session_storage.display(),
                     canonical.display(),
                 ),
             },
@@ -459,9 +462,19 @@ async fn test_agent_history() {
     let requests = app.client_mut().get_requests();
     assert_eq!(requests.len(), 2);
     let body = request_body_value(&requests[1]);
+    let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+    let session_storage = app.context().dirs().session_storage(session_id);
     assert_eq!(
         body["input"],
         json!([
+            {
+                "type": "message",
+                "role": "system",
+                "content": format!(
+                    "Session storage path: {}\n",
+                    session_storage.display(),
+                ),
+            },
             {"type": "message", "role": "user", "content": "what is 1+1?"},
             {"type": "reasoning", "content": [{"type": "reasoning_text", "text": "I should add."}]},
             {"type": "message", "role": "assistant", "content": "The answer is 2."},
@@ -533,10 +546,20 @@ async fn test_agent_tool_call_loop() {
 
     // The second request replays the tool call and its output.
     let body = request_body_value(&requests[1]);
+    let session_id = app.query("/session/id").unwrap().as_i64().unwrap() as i32;
+    let session_storage = app.context().dirs().session_storage(session_id);
     // The newline style of shell output depends on the host shell.
     assert_eq!(
         normalize_json(&body["input"]),
         json!([
+            {
+                "type": "message",
+                "role": "system",
+                "content": format!(
+                    "Session storage path: {}\n",
+                    session_storage.display(),
+                ),
+            },
             {"type": "message", "role": "user", "content": "call the sh tool"},
             {
                 "type": "function_call",

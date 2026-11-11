@@ -35,6 +35,12 @@ impl Dirs {
     pub(crate) fn temp(&self) -> &Path {
         &self.temp
     }
+
+    pub(crate) fn session_storage(&self, session_id: i32) -> PathBuf {
+        self.temp()
+            .join("session_storage")
+            .join(session_id.to_string())
+    }
 }
 
 #[cfg(not(test))]

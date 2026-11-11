@@ -112,7 +112,7 @@ pub struct App {
     // XXX replace most uses of &'static Theme with Arc<Theme> or Rc<Theme>
     theme: &'static Theme,
     client: DefaultClient,
-    dirs: Dirs,
+    dirs: Arc<Dirs>,
     conn: SqliteConnection,
     db_url: String,
     settings: Settings,
@@ -140,7 +140,7 @@ impl App {
         let (w, h) = terminal.size()?;
         let theme = &THEME_DARK;
         let (send, recv) = unbounded_channel();
-        let dirs = Dirs::new()?;
+        let dirs = Arc::new(Dirs::new()?);
         crate::logging::init_logging(&dirs)?;
         let db_url = crate::db::db_url(&dirs)?;
         let mut conn = crate::db::open(&db_url)?;
@@ -531,6 +531,7 @@ impl App {
             self.db_url.clone(),
             Arc::clone(&self.tool_registry),
             Arc::clone(&self.cwd),
+            Arc::clone(&self.dirs),
         )
     }
 

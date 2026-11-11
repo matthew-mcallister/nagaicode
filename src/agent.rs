@@ -41,6 +41,9 @@ impl Agent {
 
     /// Runs the model/tool loop until the model stops requesting tools.
     async fn process(self, context: &mut TaskContext) -> AnyResult<()> {
+        let session_storage = context.dirs().session_storage(self.session.id);
+        std::fs::create_dir_all(&session_storage)?;
+
         context
             .subtask(CreatePrompt::new(self.session.id, &self.prompt))
             .await?;

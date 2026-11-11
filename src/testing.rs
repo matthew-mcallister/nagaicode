@@ -94,6 +94,7 @@ pub fn task_context(sender: UnboundedSender<AppEvent>) -> TaskContext {
         crate::db::memory_url(),
         tool_registry(),
         Arc::new(crate::cwd::cwd()),
+        Arc::new(crate::config::Dirs::new().unwrap()),
     )
 }
 

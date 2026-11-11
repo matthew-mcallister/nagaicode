@@ -10,6 +10,7 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::app::AppEvent;
+use crate::config::Dirs;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::tools::ToolRegistry;
@@ -35,6 +36,7 @@ pub struct TaskContext {
     connection: Option<SqliteConnection>,
     tool_registry: Arc<ToolRegistry>,
     cwd: Arc<Cwd>,
+    dirs: Arc<Dirs>,
 }
 
 impl TaskContext {
@@ -45,6 +47,7 @@ impl TaskContext {
         db_url: String,
         tool_registry: Arc<ToolRegistry>,
         cwd: Arc<Cwd>,
+        dirs: Arc<Dirs>,
     ) -> Self {
         Self {
             tid_counter,
@@ -54,6 +57,7 @@ impl TaskContext {
             connection: None,
             tool_registry,
             cwd,
+            dirs,
         }
     }
 
@@ -85,6 +89,11 @@ impl TaskContext {
         &self.cwd
     }
 
+    /// Returns the application's directories.
+    pub(crate) fn dirs(&self) -> &Arc<Dirs> {
+        &self.dirs
+    }
+
     /// Creates a child context sharing this context's state, using `cancel`.
     pub fn fork(&self, cancel: CancellationToken) -> Self {
         Self {
@@ -95,6 +104,7 @@ impl TaskContext {
             connection: None,
             tool_registry: Arc::clone(&self.tool_registry),
             cwd: Arc::clone(&self.cwd),
+            dirs: Arc::clone(&self.dirs),
         }
     }
 

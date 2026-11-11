@@ -6,7 +6,7 @@ use crate::model::Model;
 use crate::provider::Provider;
 use crate::request::DefaultClient;
 use crate::session::Session;
-use crate::system_prompt::build_system_prompt;
+use crate::system_prompt::{SystemPromptContext, build_system_prompt};
 use crate::task::{Task, TaskContext};
 
 pub struct StreamResponse {
@@ -40,7 +40,11 @@ impl StreamResponse {
 
         let history = Item::list_by_session(context.connection()?, self.session.id)?;
         // TODO: This should be done once at session create time, *not* at inference time
-        let system_prompt_parts = build_system_prompt(context.cwd())?;
+        let system_prompt_parts = build_system_prompt(SystemPromptContext {
+            session: &self.session,
+            cwd: context.cwd(),
+            dirs: context.dirs(),
+        })?;
         let messages = build_history(
             context.tool_registry(),
             &system_prompt_parts,
