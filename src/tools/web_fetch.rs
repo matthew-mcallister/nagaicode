@@ -19,6 +19,8 @@ use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs};
 use crate::ui::render_item::{RenderItem, SystemRenderItem};
 
 const USER_AGENT_STRING: &str = concat!("nagaicode/", crate::version!());
+const TIMEOUT_SECS: u64 = 120;
+const MAX_CONTENT_LENGTH: u64 = 1_000_000;
 
 /// Fetches documents from the web.
 #[derive(Debug)]
@@ -39,9 +41,8 @@ impl WebFetchTool {
                 "properties": {
                     "url": { "type": "string" },
                     "filename": { "type": "string" },
-                    "timeout": { "type": "number", "minimum": 1, "maximum": 120 },
                 },
-                "required": ["url", "filename", "timeout"],
+                "required": ["url", "filename"],
                 "additionalProperties": false,
             }),
         }
@@ -92,13 +93,6 @@ impl Tool for WebFetchTool {
                 .get("filename")
                 .and_then(Value::as_str)
                 .ok_or_else(invalid)?;
-            let timeout = input
-                .get("timeout")
-                .and_then(Value::as_f64)
-                .ok_or_else(invalid)?;
-            if !(1.0..=120.0).contains(&timeout) {
-                return Err(invalid());
-            }
 
             // TODO: support sandboxed relative filepaths
             if !is_valid_filename(filename) {
@@ -113,13 +107,26 @@ impl Tool for WebFetchTool {
             let mut request = Request::new(Method::GET, url.clone());
             request.headers_mut().insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
             request.headers_mut().insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_STRING));
-            *request.timeout_mut() = Some(Duration::from_secs_f64(timeout));
+            *request.timeout_mut() = Some(Duration::from_secs(TIMEOUT_SECS));
 
             let start = Instant::now();
             let response = Client::execute(&self.client, request).await?;
             let status = ResponseTrait::status(&response);
             let version = ResponseTrait::version(&response);
             let headers = header_map_to_json(ResponseTrait::headers(&response));
+            let content_type = header_value(&headers, "content-type")
+                .ok_or_else(|| anyhow!("{url}: missing content-type"))?;
+            if !is_text_content_type(content_type) {
+                return Err(anyhow!("{url}: unsupported content type '{content_type}'"));
+            }
+            let length = content_length(&headers)
+                .ok_or_else(|| anyhow!("{url}: missing content-length"))?;
+            if length > MAX_CONTENT_LENGTH {
+                return Err(anyhow!(
+                    "{url}: content too large ({})",
+                    format_content_length(length)
+                ));
+            }
 
             let body = ResponseTrait::text(response)
                 .await
@@ -192,8 +199,11 @@ fn is_valid_filename(name: &str) -> bool {
 }
 
 fn get_header<'a>(output: &'a Value, name: &str) -> Option<&'a str> {
-    let value = output.get("headers")?.get(name)?;
-    match value {
+    header_value(output.get("headers")?, name)
+}
+
+fn header_value<'a>(headers: &'a Value, name: &str) -> Option<&'a str> {
+    match headers.get(name)? {
         Value::String(value) => Some(value),
         Value::Array(values) => values.first()?.as_str(),
         _ => None,
@@ -201,7 +211,33 @@ fn get_header<'a>(output: &'a Value, name: &str) -> Option<&'a str> {
 }
 
 fn get_content_length(output: &Value) -> Option<u64> {
-    get_header(output, "content-length")?.trim().parse().ok()
+    content_length(output.get("headers")?)
+}
+
+fn content_length(headers: &Value) -> Option<u64> {
+    header_value(headers, "content-length")?.trim().parse().ok()
+}
+
+fn is_text_content_type(content_type: &str) -> bool {
+    let mime = content_type.split(';').next().unwrap_or("").trim();
+    if mime.starts_with("text/") {
+        return true;
+    }
+    let Some((ty, subtype)) = mime.split_once('/') else {
+        return false;
+    };
+    subtype.ends_with("+json")
+        || subtype.ends_with("+xml")
+        || matches!(
+            (ty, subtype),
+            ("application", "json")
+                | ("application", "xml")
+                | ("application", "javascript")
+                | ("application", "x-javascript")
+                | ("application", "toml")
+                | ("application", "yaml")
+                | ("application", "x-yaml")
+        )
 }
 
 fn format_content_length(length: u64) -> String {
@@ -248,7 +284,7 @@ mod tests {
     use crate::request::test_client::{Response, ResponseData};
 
     fn input(url: &str, filename: &str) -> Value {
-        json!({ "url": url, "filename": filename, "timeout": 30 })
+        json!({ "url": url, "filename": filename })
     }
 
     fn get_filepath(output: &Value) -> &Path {
