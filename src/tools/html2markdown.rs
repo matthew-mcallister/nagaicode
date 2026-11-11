@@ -7,6 +7,7 @@ use futures::future::BoxFuture;
 use serde_json::{Value, json};
 
 use crate::config::Dirs;
+use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
@@ -16,6 +17,7 @@ use crate::ui::render_item::{RenderItem, SystemRenderItem};
 /// Converts HTML files to Markdown.
 #[derive(Debug)]
 pub struct Html2MarkdownTool {
+    cwd: Arc<Cwd>,
     dirs: Arc<Dirs>,
     input_schema: Value,
 }
@@ -24,6 +26,7 @@ impl Html2MarkdownTool {
     /// Creates a tool that converts HTML files into session storage.
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
+            cwd: Arc::clone(args.cwd),
             dirs: Arc::clone(args.dirs),
             input_schema: json!({
                 "type": "object",
@@ -72,7 +75,7 @@ impl Tool for Html2MarkdownTool {
     ) -> BoxFuture<'a, AnyResult<Value>> {
         Box::pin(async move {
             let invalid = || anyhow!("arguments don't match schema");
-            let path = input
+            let filepath = input
                 .get("path")
                 .and_then(Value::as_str)
                 .ok_or_else(invalid)?;
@@ -86,17 +89,18 @@ impl Tool for Html2MarkdownTool {
                 return Err(anyhow!("invalid filename: {filename}"));
             }
 
-            let html = std::fs::read_to_string(path)?;
+            let path = self.cwd.join(filepath);
+            let html = std::fs::read_to_string(&path)?;
             let markdown = html_to_markdown_rs::convert(&html, None)
-                .map_err(|e| anyhow!("{path}: {e}"))?
+                .map_err(|e| anyhow!("{filepath}: {e}"))?
                 .content
-                .ok_or_else(|| anyhow!("{path}: conversion produced no output"))?;
+                .ok_or_else(|| anyhow!("{filepath}: conversion produced no output"))?;
 
             let dir = self.dirs.session_storage(context.session_id);
             std::fs::create_dir_all(&dir)?;
-            let filepath = dir.join(filename);
-            std::fs::write(&filepath, &markdown)?;
-            Ok(json!(filepath.display().to_string()))
+            let out_path = dir.join(filename);
+            std::fs::write(&out_path, &markdown)?;
+            Ok(json!(out_path.display().to_string()))
         })
     }
 

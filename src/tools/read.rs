@@ -97,7 +97,8 @@ impl Tool for ReadTool {
                 return Err(invalid());
             }
 
-            let file = File::open(filepath)?;
+            let path = self.cwd.join(filepath);
+            let file = File::open(&path)?;
             let mut reader = BufReader::new(file);
 
             let start_line = start_line.max(1);
@@ -226,6 +227,7 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::query::QueryError;
+    use crate::tools::write::WriteTool;
     use crate::ui::canvas::render_canvas;
     use crate::ui::render_item::{render_error, render_help};
     use crate::ui::style::THEME_DARK;
@@ -341,6 +343,31 @@ mod tests {
             .await
             .expect_err("invalid utf-8");
         assert!(error.to_string().contains("stream did not contain valid UTF-8"), "{}", error.to_string());
+    }
+
+    #[tokio::test]
+    async fn test_relative_filepaths() {
+        let app = App::new().unwrap();
+        let dir = Arc::clone(app.cwd());
+        let context = ToolCallContext { session_id: 1 };
+        let write = WriteTool::new(&app.tool_create_args());
+        let tool = ReadTool::new(&app.tool_create_args());
+
+        let out = write
+            .call(&context, &json!({ "filepath": "nested/a.txt", "content": "one\ntwo\n" }))
+            .await
+            .unwrap();
+        assert_eq!(out["created"], json!(true));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("nested").join("a.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+
+        let out = tool
+            .call(&context, &json!({ "filepath": "nested/a.txt", "start_line": 1, "max_lines": 10 }))
+            .await
+            .unwrap();
+        assert_eq!(read_content(&out), "one\ntwo\n");
     }
 
     #[tokio::test]

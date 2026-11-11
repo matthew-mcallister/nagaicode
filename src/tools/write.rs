@@ -82,12 +82,12 @@ impl Tool for WriteTool {
                 .and_then(Value::as_str)
                 .ok_or_else(invalid)?;
 
-            let path = Path::new(filepath);
+            let path = self.cwd.join(filepath);
             if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
                 std::fs::create_dir_all(parent)?;
             }
             let created = !path.exists();
-            std::fs::write(path, content)?;
+            std::fs::write(&path, content)?;
 
             Ok(json!({ "created": created, "num_bytes": content.len() }))
         })

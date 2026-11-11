@@ -149,7 +149,8 @@ impl Tool for EditTool {
                 return Err(anyhow!("old_string must not be empty"));
             }
 
-            let text = std::fs::read_to_string(filepath)
+            let path = self.cwd.join(filepath);
+            let text = std::fs::read_to_string(&path)
                 .map_err(|e| anyhow!("{filepath}: {e}"))?;
 
             // Models don't natively handle CRLF so do conversion if needed
@@ -180,7 +181,7 @@ impl Tool for EditTool {
             };
             let diff = unified_diff(filepath, &text, &edited);
             if edited != text {
-                std::fs::write(filepath, &edited).map_err(|e| anyhow!("{filepath}: {e}"))?;
+                std::fs::write(&path, &edited).map_err(|e| anyhow!("{filepath}: {e}"))?;
             }
 
             Ok(json!({
