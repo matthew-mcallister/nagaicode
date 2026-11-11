@@ -159,7 +159,7 @@ mod tests {
 
         let mcp = &config.mcp.server[1];
         let McpServerConfigType::Http { url } = &mcp.type_ else { panic!() };
-        assert_eq!(url, "mcp://localhost:1234");
+        assert_eq!(url, "http://localhost:1234");
         assert!(!mcp.enabled);
         assert!(mcp.include.is_empty());
         assert!(mcp.exclude.is_empty());

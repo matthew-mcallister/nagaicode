@@ -1,17 +1,19 @@
 use std::time::Duration;
 
 use chrono::{SecondsFormat, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, ser::SerializeMap};
 use serde_json::{Value, json};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const PROTOCOL_VERSION: &str = "2026-07-28";
 const SERVER_NAME: &str = "toy-mcp";
 const SERVER_VERSION: &str = "1.0.0";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct Error {
     code: i64,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<Value>,
 }
 
@@ -27,10 +29,11 @@ impl<E> From<E> for Error
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 struct Request {
     jsonrpc: String,
     method: String,
+    #[serde(default)]
     params: Value,
     id: Value,
 }
@@ -65,6 +68,19 @@ struct Response {
     jsonrpc: String,
     body: ResponseBody,
     id: Value,
+}
+
+impl Serialize for Response {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(3))?;
+        map.serialize_entry("jsonrpc", &self.jsonrpc)?;
+        match &self.body {
+            ResponseBody::Result(result) => map.serialize_entry("result", result)?,
+            ResponseBody::Error(error) => map.serialize_entry("error", error)?,
+        }
+        map.serialize_entry("id", &self.id)?;
+        map.end()
+    }
 }
 
 fn handle(request: Request) -> Result<Value, Error> {
@@ -180,7 +196,63 @@ fn echo(arguments: Value) -> Value {
     tool_result(text, arguments)
 }
 
-fn main() {}
+fn respond(line: &str) -> Response {
+    match serde_json::from_str::<Request>(line) {
+        Ok(request) => {
+            let id = request.id.clone();
+            let body = match handle(request) {
+                Ok(result) => ResponseBody::Result(result),
+                Err(error) => ResponseBody::Error(error),
+            };
+            Response {
+                jsonrpc: "2.0".to_owned(),
+                body,
+                id,
+            }
+        }
+        Err(error) => Response {
+            jsonrpc: "2.0".to_owned(),
+            body: ResponseBody::Error(Error {
+                code: -32700,
+                message: format!("parse error: {error}"),
+                data: None,
+            }),
+            id: Value::Null,
+        },
+    }
+}
+
+async fn serve_stdio() -> Result<(), Error> {
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    let mut stdout = tokio::io::stdout();
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = serde_json::to_string(&respond(&line))?;
+        stdout.write_all(response.as_bytes()).await?;
+        stdout.write_all(b"\n").await?;
+        stdout.flush().await?;
+    }
+    Ok(())
+}
+
+const USAGE: &str = "usage: toy_mcp <stdio|http>";
+
+#[tokio::main]
+async fn main() {
+    let mut args = std::env::args().skip(1);
+    match args.next().as_deref() {
+        Some("stdio") => serve_stdio().await.unwrap(),
+        Some("http") => todo!("http transport"),
+        Some(command) => {
+            eprintln!("unknown command: {command}");
+            eprintln!("{USAGE}");
+            std::process::exit(2);
+        }
+        None => println!("{USAGE}"),
+    }
+}
 
 #[cfg(test)]
 mod tests {

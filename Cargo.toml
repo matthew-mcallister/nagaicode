@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 crossterm = { version = "0.28", features = ["event-stream"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "sync", "time", "io-std", "io-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 dirs = "5"
 diesel = { version = "2", features = ["sqlite", "chrono", "serde_json", "returning_clauses_for_sqlite_3_35"] }
@@ -41,3 +41,6 @@ base64 = "0.22"
 similar = "3.2.0"
 nglob = { git = "https://github.com/matthew-mcallister/nglob.git", tag = "v0.99.2", features = ["tokio"] }
 html-to-markdown-rs = "3"
+
+[dev-dependencies]
+assert_cmd = "2"
