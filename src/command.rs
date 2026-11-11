@@ -525,7 +525,7 @@ pub async fn run_session_command(
             Ok(String::new())
         }
         SessionCommand::Rewind => {
-            app.rewind()?;
+            app.rewind().await?;
             Ok(String::new())
         }
         SessionCommand::Restore => {

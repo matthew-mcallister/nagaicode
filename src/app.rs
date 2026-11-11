@@ -492,10 +492,12 @@ impl App {
         let Some(session_id) = self.session.as_ref().map(|session| session.id) else {
             return Ok(());
         };
+        self.cancel_task().await;
         self.switch_session(session_id).await
     }
 
-    pub fn rewind(&mut self) -> AnyResult<()> {
+    pub async fn rewind(&mut self) -> AnyResult<()> {
+        self.cancel_task().await;
         let Some(session) = &self.session else {
             return Ok(());
         };
