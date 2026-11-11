@@ -99,31 +99,10 @@ impl Tool for ReadTool {
 
             let path = self.cwd.join(filepath);
             let file = File::open(&path)?;
-            let mut reader = BufReader::new(file);
+            let reader = BufReader::new(file);
 
-            let start_line = start_line.max(1);
-            let start = start_line as usize - 1;
-
-            // Skip lines
-            let mut line = String::new();
-            for i in 0..start {
-                line.clear();
-                let n = reader.read_line(&mut line)?;
-                if n == 0 {
-                    return Err(anyhow!("start line {start_line} is past end of file ({i} lines)"));
-                }
-            }
-
-            // Read lines
-            let mut content = String::with_capacity(100 * max_lines as usize);
-            let mut num_lines = 0usize;
-            while num_lines < max_lines as usize {
-                line.clear();
-                let n = reader.read_line(&mut line)?;
-                if n == 0 { break; }
-                push_line(&mut content, &line);
-                num_lines += 1;
-            }
+            let (content, num_lines, next_line) =
+                paginate(read_lines(reader), start_line, max_lines)?;
 
             let mut output = json!({
                 "content": content,
@@ -131,12 +110,8 @@ impl Tool for ReadTool {
             });
 
             // Check for EOF
-            if num_lines as i64 == max_lines {
-                line.clear();
-                let n = reader.read_line(&mut line)?;
-                if n > 0 {
-                    output["next_line"] = json!(start_line + num_lines as i64);
-                }
+            if let Some(next_line) = next_line {
+                output["next_line"] = json!(next_line);
             }
 
             Ok(output)
@@ -200,6 +175,56 @@ impl Tool for ReadTool {
             ],
         })
     }
+}
+
+fn read_lines<R: BufRead>(mut reader: R) -> impl Iterator<Item = AnyResult<String>> {
+    std::iter::from_fn(move || {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => None,
+            Ok(_) => Some(Ok(line)),
+            Err(e) => Some(Err(e.into())),
+        }
+    })
+}
+
+pub(crate) fn paginate<S: AsRef<str>>(
+    mut lines: impl Iterator<Item = AnyResult<S>>,
+    start_line: i64,
+    max_lines: i64,
+) -> AnyResult<(String, usize, Option<i64>)> {
+    let start_line = start_line.max(1);
+    let start = start_line as usize - 1;
+
+    // Skip lines
+    for i in 0..start {
+        let Some(line) = lines.next() else {
+            return Err(anyhow!("start line {start_line} is past end of file ({i} lines)"));
+        };
+        line?;
+    }
+
+    // Read lines
+    let mut content = String::with_capacity(100 * max_lines as usize);
+    let mut num_lines = 0usize;
+    while num_lines < max_lines as usize {
+        let Some(line) = lines.next() else { break };
+        push_line(&mut content, line?.as_ref());
+        num_lines += 1;
+    }
+
+    // Check for EOF
+    let next_line = if num_lines as i64 == max_lines {
+        match lines.next() {
+            Some(Ok(_)) => Some(start_line + num_lines as i64),
+            Some(Err(e)) => return Err(e),
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    Ok((content, num_lines, next_line))
 }
 
 fn push_line(out: &mut String, line: &str) {
