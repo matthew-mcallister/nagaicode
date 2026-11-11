@@ -20,7 +20,7 @@ use crate::ui::UiContext;
 
 pub fn tool_registry() -> Arc<ToolRegistry> {
     let cwd = Arc::new(crate::cwd::cwd());
-    let dirs = crate::config::Dirs::new().unwrap();
+    let dirs = Arc::new(crate::config::Dirs::new().unwrap());
     let client = crate::request::DefaultClient::default();
     let args = crate::tools::ToolCreateArgs {
         cwd: &cwd,

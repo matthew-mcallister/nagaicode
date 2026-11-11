@@ -1,7 +1,6 @@
 use std::borrow::Cow;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
@@ -11,6 +10,7 @@ use reqwest::header::{ACCEPT_ENCODING, USER_AGENT, HeaderMap, HeaderValue};
 use reqwest::{Method, Request, Url};
 use serde_json::{Value, json};
 
+use crate::config::Dirs;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
@@ -24,7 +24,7 @@ const USER_AGENT_STRING: &str = concat!("nagaicode/", crate::version!());
 #[derive(Debug)]
 pub struct WebFetchTool {
     client: DefaultClient,
-    dir: PathBuf,
+    dirs: Arc<Dirs>,
     input_schema: Value,
 }
 
@@ -33,22 +33,18 @@ impl WebFetchTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             client: args.client.clone(),
-            dir: args.dirs.temp().join("web_fetch"),
+            dirs: Arc::clone(args.dirs),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "url": { "type": "string" },
+                    "filename": { "type": "string" },
                     "timeout": { "type": "number", "minimum": 1, "maximum": 120 },
                 },
-                "required": ["url", "timeout"],
+                "required": ["url", "filename", "timeout"],
                 "additionalProperties": false,
             }),
         }
-    }
-
-    fn dir(&self) -> AnyResult<&Path> {
-        std::fs::create_dir_all(&self.dir)?;
-        Ok(&self.dir)
     }
 }
 
@@ -72,8 +68,9 @@ impl Tool for WebFetchTool {
     }
 
     fn description(&self) -> &str {
-        "Fetches and saves a document from the web, returning a path to the
-        saved file."
+        "Fetches and saves a document from the web into session storage,
+        returning a path to the saved file. Any existing file with the same
+        filename is overwritten."
     }
 
     fn input_schema(&self) -> &Value {
@@ -82,7 +79,7 @@ impl Tool for WebFetchTool {
 
     fn call<'a>(
         &'a self,
-        _context: &'a ToolCallContext,
+        context: &'a ToolCallContext,
         input: &'a Value,
     ) -> BoxFuture<'a, AnyResult<Value>> {
         Box::pin(async move {
@@ -91,12 +88,21 @@ impl Tool for WebFetchTool {
                 .get("url")
                 .and_then(Value::as_str)
                 .ok_or_else(invalid)?;
+            let filename = input
+                .get("filename")
+                .and_then(Value::as_str)
+                .ok_or_else(invalid)?;
             let timeout = input
                 .get("timeout")
                 .and_then(Value::as_f64)
                 .ok_or_else(invalid)?;
             if !(1.0..=120.0).contains(&timeout) {
                 return Err(invalid());
+            }
+
+            // TODO: support sandboxed relative filepaths
+            if !is_valid_filename(filename) {
+                return Err(anyhow!("invalid filename: {filename}"));
             }
 
             let url = Url::parse(url).map_err(|e| anyhow!("invalid url: {e}"))?;
@@ -120,7 +126,10 @@ impl Tool for WebFetchTool {
                 .map_err(|e| anyhow!("{url}: (status {}) {e}", status.as_u16()))?;
             let response_time = start.elapsed().as_secs_f64();
 
-            let filepath = write_no_clobber(self.dir()?, &file_name(&url), &body)?;
+            let dir = self.dirs.session_storage(context.session_id);
+            std::fs::create_dir_all(&dir)?;
+            let filepath = dir.join(filename);
+            std::fs::write(&filepath, &body)?;
             Ok(json!({
                 "url": url.as_str(),
                 "version": version,
@@ -175,62 +184,11 @@ impl Tool for WebFetchTool {
     }
 }
 
-fn is_replace_char(c: char) -> bool {
-    matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control()
-}
-
-/// Compute a save file name for the given URL
-fn file_name(url: &Url) -> String {
-    let segment = url
-        .path_segments()
-        .and_then(|segments| segments.filter(|s| !s.is_empty()).last());
-    let Some(segment) = segment else {
-        return "index".to_owned();
-    };
-    let decoded = percent_encoding::percent_decode_str(segment).decode_utf8_lossy();
-    let name: String = decoded.chars()
-        .map(|c| if is_replace_char(c) { '_' } else { c })
-        .collect();
-    if name.is_empty() || name == "." || name == ".." {
-        "index".to_owned()
-    } else {
-        name
-    }
-}
-
-/// Write a file to disk. If a file with that name already exists, appends
-/// (1), (2), ... to the filename until it succeeds.
-fn write_no_clobber(dir: &Path, name: &str, body: &str) -> AnyResult<PathBuf> {
-    let mut attempt = 0;
-    loop {
-        let path = dir.join(add_attempt_number(name, attempt));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                file.write_all(body.as_bytes())?;
-                return Ok(path);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => attempt += 1,
-            Err(e) => return Err(e.into()),
-        }
-    }
-}
-
-/// Add a suffix "(n)" to a filename.
-fn add_attempt_number(name: &str, n: u32) -> String {
-    if n == 0 {
-        return name.to_owned();
-    }
-    let path = Path::new(name);
-    match (path.file_stem(), path.extension()) {
-        (Some(stem), Some(extension)) => {
-            format!(
-                "{}({n}).{}",
-                stem.to_string_lossy(),
-                extension.to_string_lossy()
-            )
-        }
-        _ => format!("{name}({n})"),
-    }
+/// Whether `name` is a single, normal path component.
+fn is_valid_filename(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none()
 }
 
 fn get_header<'a>(output: &'a Value, name: &str) -> Option<&'a str> {
@@ -289,12 +247,12 @@ mod tests {
     use crate::request::DefaultClient;
     use crate::request::test_client::{Response, ResponseData};
 
-    fn input(url: &str) -> Value {
-        json!({ "url": url, "timeout": 30 })
+    fn input(url: &str, filename: &str) -> Value {
+        json!({ "url": url, "filename": filename, "timeout": 30 })
     }
 
-    fn get_filepath(output: &Value) -> PathBuf {
-        PathBuf::from(output["filepath"].as_str().unwrap())
+    fn get_filepath(output: &Value) -> &Path {
+        Path::new(output["filepath"].as_str().unwrap())
     }
 
     #[derive(Debug)]
@@ -316,6 +274,7 @@ mod tests {
         async fn fetch(
             &mut self,
             url: &str,
+            filename: &str,
             status: StatusCode,
             body: &str,
             headers: &[(&str, &str)],
@@ -333,29 +292,39 @@ mod tests {
                 headers: header_map,
             })));
             let context = ToolCallContext { session_id: 1 };
-            self.tool.call(&context, &input(url)).await
+            self.tool.call(&context, &input(url, filename)).await
         }
     }
 
     #[tokio::test]
     async fn test_success() {
         let mut f = Fixture::new();
+        let url = "https://example.com/";
         let headers = [("content-type", "text/plain"), ("content-length", "5")];
-        let output = f.fetch("https://example.com/", StatusCode::OK, "hello", &headers).await.unwrap();
+        let output = f.fetch(url, "index.html", StatusCode::OK, "hello", &headers).await.unwrap();
         assert_eq!(output.get("status"), Some(&Value::Number(200.into())));
-        assert_eq!(std::fs::read_to_string(&get_filepath(&output)).unwrap(), "hello");
+        assert_eq!(get_filepath(&output).file_name().unwrap().to_str().unwrap(), "index.html");
+        assert_eq!(std::fs::read_to_string(get_filepath(&output)).unwrap(), "hello");
     }
 
     #[tokio::test]
-    async fn test_file_name() {
+    async fn test_overwrite() {
         let mut f = Fixture::new();
         let url = "https://example.com/a.html";
         let headers = [("content-type", "text/plain"), ("content-length", "4")];
-        for expected in ["a.html", "a(1).html", "a(2).html"] {
-            let output = f.fetch(url, StatusCode::OK, "blah", &headers).await.unwrap();
-            let path = get_filepath(&output);
-            assert_eq!(path.file_name().unwrap().to_str().unwrap(), expected);
-            assert_eq!(std::fs::read_to_string(&path).unwrap(), "blah");
+        let first = f.fetch(url, "a.html", StatusCode::OK, "blah", &headers).await.unwrap();
+        let second = f.fetch(url, "a.html", StatusCode::OK, "blah", &headers).await.unwrap();
+        assert_eq!(get_filepath(&first), get_filepath(&second));
+        assert_eq!(std::fs::read_to_string(get_filepath(&second)).unwrap(), "blah");
+    }
+
+    #[tokio::test]
+    async fn test_invalid_filename() {
+        let mut f = Fixture::new();
+        let url = "https://example.com/";
+        for filename in ["", ".", "..", "a/b", "/a"] {
+            let result = f.fetch(url, filename, StatusCode::OK, "blah", &[]).await;
+            assert!(result.is_err(), "{filename:?} should be rejected");
         }
     }
 
@@ -363,9 +332,9 @@ mod tests {
     async fn test_content_size() {
         let mut f = Fixture::new();
         let url = "https://example.com/";
-        let input = input(url);
+        let input = input(url, "index.html");
         let headers = [("content-type", "text/plain"), ("content-length", "1234")];
-        let output = f.fetch(url, StatusCode::OK, "hello", &headers).await.unwrap();
+        let output = f.fetch(url, "index.html", StatusCode::OK, "hello", &headers).await.unwrap();
         let item = f.tool.render_to_ui(&input, &output).unwrap();
         assert_eq!(item.query("/type").unwrap(), json!("help"));
         assert_eq!(
@@ -374,7 +343,7 @@ mod tests {
         );
 
         let headers = [("content-type", "text/plain"), ("content-length", "10000")];
-        let output = f.fetch(url, StatusCode::OK, "hello", &headers).await.unwrap();
+        let output = f.fetch(url, "index.html", StatusCode::OK, "hello", &headers).await.unwrap();
         let item = f.tool.render_to_ui(&input, &output).unwrap();
         assert_eq!(item.query("/type").unwrap(), json!("help"));
         assert_eq!(
@@ -387,9 +356,9 @@ mod tests {
     async fn test_render_interface() {
         let mut f = Fixture::new();
         let url = "https://example.com/";
-        let input = input(url);
+        let input = input(url, "index.html");
         let headers = [("content-type", "text/plain"), ("content-length", "1234")];
-        let output = f.fetch(url, StatusCode::OK, "hello", &headers).await.unwrap();
+        let output = f.fetch(url, "index.html", StatusCode::OK, "hello", &headers).await.unwrap();
         let filepath = output["filepath"].as_str().unwrap();
         let result = f.tool.render_to_interface(&input, &output).unwrap();
         assert_eq!(
@@ -405,7 +374,7 @@ mod tests {
         );
 
         let headers = [("content-type", "text/plain"), ("content-length", "10000")];
-        let output = f.fetch(url, StatusCode::INTERNAL_SERVER_ERROR, "hello", &headers).await.unwrap();
+        let output = f.fetch(url, "index.html", StatusCode::INTERNAL_SERVER_ERROR, "hello", &headers).await.unwrap();
         let filepath = output["filepath"].as_str().unwrap();
         let result = f.tool.render_to_interface(&input, &output).unwrap();
         assert_eq!(
