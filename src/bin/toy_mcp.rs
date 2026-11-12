@@ -14,7 +14,8 @@ use hyper::header;
 use hyper::service::service_fn;
 use hyper::{Method, Request as HttpRequest, Response as HttpResponse, StatusCode};
 use hyper_util::rt::TokioIo;
-use serde::{Deserialize, Serialize, ser::SerializeMap};
+use nagai::json_rpc::{Error, Request, Response, ResponseBody};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -22,36 +23,6 @@ use tokio::net::TcpListener;
 const PROTOCOL_VERSION: &str = "2026-07-28";
 const SERVER_NAME: &str = "toy-mcp";
 const SERVER_VERSION: &str = "1.0.0";
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-struct Error {
-    code: i64,
-    message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<Value>,
-}
-
-impl<E> From<E> for Error
-    where E: std::error::Error
-{
-    fn from(value: E) -> Self {
-        Self {
-            code: -1,
-            message: value.to_string(),
-            data: None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
-struct Request {
-    jsonrpc: String,
-    method: String,
-    #[serde(default)]
-    params: Value,
-    #[serde(default)]
-    id: Option<Value>,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 struct ToolCall {
@@ -62,39 +33,8 @@ struct ToolCall {
 
 impl ToolCall {
     fn parse(params: &Value) -> Result<Self, Error> {
-        Self::deserialize(params).map_err(|error| invalid_params(error.to_string()))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ResponseBody {
-    Result(Value),
-    Error(Error),
-}
-
-impl From<Error> for ResponseBody {
-    fn from(value: Error) -> Self {
-        Self::Error(value)
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct Response {
-    jsonrpc: String,
-    body: ResponseBody,
-    id: Value,
-}
-
-impl Serialize for Response {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(3))?;
-        map.serialize_entry("jsonrpc", &self.jsonrpc)?;
-        match &self.body {
-            ResponseBody::Result(result) => map.serialize_entry("result", result)?,
-            ResponseBody::Error(error) => map.serialize_entry("error", error)?,
-        }
-        map.serialize_entry("id", &self.id)?;
-        map.end()
+        Self::deserialize(params)
+            .map_err(|error| Error::invalid_params(error.to_string()))
     }
 }
 
@@ -199,18 +139,10 @@ async fn call_tool(params: &Value) -> Result<Value, Error> {
         "abort" => std::process::exit(1),
         "error" => {
             let error = serde_json::from_value(call.arguments)
-                .map_err(|error| invalid_params(error.to_string()))?;
+                .map_err(|error| Error::invalid_params(error.to_string()))?;
             Err(error)
         }
-        name => Err(invalid_params(format!("unknown tool: {name}"))),
-    }
-}
-
-fn invalid_params(message: impl Into<String>) -> Error {
-    Error {
-        code: -32602,
-        message: message.into(),
-        data: None,
+        name => Err(Error::invalid_params(format!("unknown tool: {name}"))),
     }
 }
 
@@ -243,7 +175,6 @@ async fn respond(line: &str) -> Option<Response> {
         Ok(request) => request,
         Err(error) => {
             return Some(Response {
-                jsonrpc: "2.0".to_owned(),
                 body: ResponseBody::Error(Error {
                     code: -32700,
                     message: format!("parse error: {error}"),
@@ -259,7 +190,6 @@ async fn respond(line: &str) -> Option<Response> {
         Err(error) => ResponseBody::Error(error),
     };
     Some(Response {
-        jsonrpc: "2.0".to_owned(),
         body,
         id,
     })
@@ -368,11 +298,12 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use nagai::json_rpc::{Error, Request};
+
+use super::*;
 
     fn request(method: &str, params: Value) -> Request {
         Request {
-            jsonrpc: "2.0".to_owned(),
             method: method.to_owned(),
             params,
             id: Some(json!(1)),

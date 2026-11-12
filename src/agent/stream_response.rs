@@ -41,9 +41,9 @@ impl StreamResponse {
         let history = Item::list_by_session(context.connection()?, self.session.id)?;
         // TODO: This should be done once at session create time, *not* at inference time
         let system_prompt_parts = build_system_prompt(SystemPromptContext {
-            session: &self.session,
+            _session: &self.session,
             cwd: context.cwd(),
-            dirs: context.dirs(),
+            _dirs: context.dirs(),
         })?;
         let messages = build_history(
             context.tool_registry(),

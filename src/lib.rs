@@ -9,7 +9,7 @@ pub mod db;
 pub mod error;
 pub mod interface;
 pub mod item;
-pub mod ui;
+pub mod json_rpc;
 pub mod logging;
 pub mod model;
 pub mod provider;
@@ -25,6 +25,7 @@ pub mod terminal;
 #[cfg(test)]
 pub mod testing;
 pub mod tools;
+pub mod ui;
 mod util;
 
 #[cfg(test)]
