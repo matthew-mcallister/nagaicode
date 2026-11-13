@@ -11,6 +11,7 @@ pub mod interface;
 pub mod item;
 pub mod json_rpc;
 pub mod logging;
+pub(crate) mod mcp;
 pub mod model;
 pub mod provider;
 pub mod query;

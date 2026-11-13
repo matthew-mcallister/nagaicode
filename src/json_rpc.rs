@@ -32,13 +32,15 @@ impl Error {
     }
 }
 
+pub type RequestId = Value;
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 pub struct Request {
     pub method: String,
     #[serde(default)]
     pub params: Value,
     #[serde(default)]
-    pub id: Option<Value>,
+    pub id: Option<RequestId>,
 }
 
 impl Serialize for Request {
@@ -52,9 +54,11 @@ impl Serialize for Request {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ResponseBody {
+    #[serde(rename = "result")]
     Result(Value),
+    #[serde(rename = "error")]
     Error(Error),
 }
 
@@ -64,10 +68,11 @@ impl From<Error> for ResponseBody {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 pub struct Response {
+    #[serde(flatten)]
     pub body: ResponseBody,
-    pub id: Value,
+    pub id: RequestId,
 }
 
 impl Serialize for Response {
