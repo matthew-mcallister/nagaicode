@@ -2,7 +2,7 @@ use diesel::Connection;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
-use crate::item::{Item, ItemContent, NewItem, ToolOutputContent};
+use crate::item::{Item, ItemContent, NewItem, ToolCompletion, ToolOutputContent};
 use crate::task::{Task, TaskContext};
 use crate::tools::ToolCallContext;
 
@@ -20,13 +20,16 @@ impl ExecuteToolCall {
         let tool_context = ToolCallContext {
             session_id: self.item.session_id,
         };
-        let output = context
-            .tool_registry()
-            .call(&tool_context, &tc.tool_name, &tc.args)
-            .await;
+        let completion = ToolCompletion {
+            renderer: tc.tool_name.clone(),
+            output: context
+                .tool_registry()
+                .call(&tool_context, &tc.tool_name, &tc.args)
+                .await,
+        };
 
         let new_item = context.connection()?.transaction(|cxn| -> AnyResult<_> {
-            self.item.set_output(cxn, output.clone())?;
+            self.item.set_output(cxn, completion.clone())?;
             let new_item = Item::create(cxn, NewItem {
                 session_id: self.item.session_id,
                 turn_id: self.item.turn_id,
@@ -38,7 +41,7 @@ impl ExecuteToolCall {
                     tool_name: tc.tool_name,
                     call_id: tc.call_id,
                     args: tc.args,
-                    output,
+                    completion,
                 }),
             })?;
             Ok(new_item)
@@ -66,7 +69,7 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::db;
-    use crate::item::{ItemContent, ToolOutput};
+    use crate::item::{ItemContent, ToolCompletion, ToolOutput};
     use crate::query::DataQuery;
     use crate::testing::{normalize, session_turn, tool_call};
 
@@ -93,7 +96,7 @@ mod tests {
         let items = Item::list_by_session(&mut conn, session.id).unwrap();
         let outputs: Vec<_> = items
             .iter()
-            .map(|item| item.query("/content/output").unwrap())
+            .map(|item| item.query("/content/completion/output").unwrap())
             .collect();
 
         assert_eq!(outputs[0]["status"], json!("completed"));
@@ -160,8 +163,11 @@ mod tests {
                 tool_name: "no_such_tool".to_owned(),
                 call_id: "call5".to_owned(),
                 args: json!({}),
-                output: ToolOutput::Failed {
-                    error: "no such tool 'no_such_tool'".to_owned(),
+                completion: ToolCompletion {
+                    renderer: "no_such_tool".to_owned(),
+                    output: ToolOutput::Failed {
+                        error: "no such tool 'no_such_tool'".to_owned(),
+                    },
                 },
             }),
         );

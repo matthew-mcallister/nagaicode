@@ -1008,7 +1008,7 @@ mod tests {
 
     use std::fmt::Write;
 
-    use crate::item::{ItemContent, ToolCallContent, ToolOutput, ToolOutputContent};
+    use crate::item::{ItemContent, ToolCallContent, ToolCompletion, ToolOutput, ToolOutputContent};
     use crate::ui::canvas::render_canvas;
     use crate::ui::render_item::ResponseRenderItem;
     use crate::ui::style::{Style, THEME_DARK};
@@ -1370,7 +1370,7 @@ mod tests {
                 tool_name: name.to_owned(),
                 call_id: call_id.to_owned(),
                 args,
-                output: None,
+                completion: None,
             }),
         }
     }
@@ -1395,7 +1395,10 @@ mod tests {
                 tool_name: name.to_owned(),
                 call_id: call_id.to_owned(),
                 args,
-                output: ToolOutput::Completed { value: output },
+                completion: ToolCompletion {
+                    renderer: name.to_owned(),
+                    output: ToolOutput::Completed { value: output },
+                },
             }),
         }
     }

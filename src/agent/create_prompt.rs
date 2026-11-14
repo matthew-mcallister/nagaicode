@@ -80,7 +80,7 @@ mod tests {
                     tool_name: "read_file".to_owned(),
                     call_id: "call_1".to_owned(),
                     args: json!({}),
-                    output: None,
+                    completion: None,
                 }),
             },
         ).unwrap();

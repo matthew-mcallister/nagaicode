@@ -14,7 +14,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::app::AppEvent;
 use crate::task::{Task, TaskContext};
 use crate::tools::ToolRegistry;
-use crate::item::{Item, ItemContent, NewItem, ToolCallContent, ToolOutput};
+use crate::item::{Item, ItemContent, NewItem, ToolCallContent, ToolCompletion, ToolOutput};
 use crate::session::{Session, Turn, TurnType};
 use crate::ui::UiContext;
 
@@ -75,7 +75,10 @@ pub fn tool_call(
                 tool_name: name.to_owned(),
                 call_id: call_id.to_owned(),
                 args,
-                output,
+                completion: output.map(|output| ToolCompletion {
+                    renderer: name.to_owned(),
+                    output,
+                }),
             }),
         },
     ).unwrap()

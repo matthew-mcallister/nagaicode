@@ -146,6 +146,7 @@ impl<'a, S> StreamProcessor<'a, S> {
                 encrypted_text: None,
                 tool_args: added.tool_args.clone(),
                 tool_output: None,
+                tool_renderer: None,
                 seqno: Some(self.base_seqno + added.output_index),
                 raw_data: Some(&raw),
             },

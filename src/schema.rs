@@ -31,6 +31,7 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         tool_output -> Nullable<Text>,
+        tool_renderer -> Nullable<Text>,
     }
 }
 

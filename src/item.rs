@@ -112,6 +112,8 @@ pub struct DbItem {
     pub updated_at: NaiveDateTime,
     /// For tool calls, the JSON output of the call, if finished
     pub tool_output: Option<String>,
+    /// Renderer used to display the tool's output, if finished
+    pub tool_renderer: Option<String>,
 }
 
 #[derive(Debug, Default, Insertable)]
@@ -133,6 +135,7 @@ pub struct NewDbItem<'a> {
     pub encrypted_text: Option<&'a str>,
     pub tool_args: Option<String>,
     pub tool_output: Option<String>,
+    pub tool_renderer: Option<&'a str>,
     /// Explicit seqno, or `None` to autoincrement
     pub seqno: Option<i64>,
     pub raw_data: Option<&'a str>,
@@ -215,13 +218,17 @@ pub struct ReasoningContent {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ToolCompletion {
+    pub renderer: String,
+    pub output: ToolOutput,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ToolCallContent {
-    // TODO: Some day should add a data format version tag before every tool
-    // ends up suffixed with _v2
     pub tool_name: String,
     pub call_id: String,
     pub args: Value,
-    pub output: Option<ToolOutput>,
+    pub completion: Option<ToolCompletion>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -229,7 +236,7 @@ pub struct ToolOutputContent {
     pub tool_name: String,
     pub call_id: String,
     pub args: Value,
-    pub output: ToolOutput,
+    pub completion: ToolCompletion,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -245,7 +252,7 @@ impl ToolOutputContent {
             tool_name: self.tool_name,
             call_id: self.call_id,
             args: self.args,
-            output: Some(self.output),
+            completion: Some(self.completion),
         }
     }
 }
@@ -366,9 +373,12 @@ impl Item {
                 tool_name: require!(row.text)?.clone(),
                 call_id: require!(row.upstream_call_id)?.clone(),
                 args: require_json!(row.tool_args)?,
-                output: row.tool_output.as_ref().map(|s| {
+                completion: row.tool_output.as_ref().map(|s| {
                     validate_field!(row.tool_output, {
-                        decode_output(serde_json::from_str(s)?)
+                        Ok(ToolCompletion {
+                            renderer: require!(row.tool_renderer)?.clone(),
+                            output: decode_output(serde_json::from_str(s)?)?,
+                        })
                     })
                 }).transpose()?,
             }),
@@ -376,8 +386,11 @@ impl Item {
                 tool_name: require!(row.text)?.clone(),
                 call_id: require!(row.upstream_call_id)?.clone(),
                 args: require_json!(row.tool_args)?,
-                output: validate_field!(row.tool_output, {
-                    decode_output(serde_json::from_str(require(&row.tool_output)?)?)
+                completion: validate_field!(row.tool_output, {
+                    Ok(ToolCompletion {
+                        renderer: require!(row.tool_renderer)?.clone(),
+                        output: decode_output(serde_json::from_str(require(&row.tool_output)?)?)?,
+                    })
                 })?,
             }),
         };
@@ -453,6 +466,7 @@ impl Item {
             encrypted_text: None,
             tool_args: None,
             tool_output: None,
+            tool_renderer: None,
             seqno: new.seqno,
             raw_data: None,
         };
@@ -479,25 +493,27 @@ impl Item {
                 tool_name,
                 call_id,
                 args,
-                output,
+                completion,
             }) => {
                 row.ty = Some(ItemType::ToolCall);
                 row.text = Some(tool_name);
                 row.upstream_call_id = Some(call_id);
                 row.tool_args = Some(args.to_string());
-                row.tool_output = output.as_ref().map(encode_output);
+                row.tool_output = completion.as_ref().map(|c| encode_output(&c.output));
+                row.tool_renderer = completion.as_ref().map(|c| c.renderer.as_str());
             }
             ItemContent::ToolOutput(ToolOutputContent {
                 tool_name,
                 call_id,
                 args,
-                output,
+                completion,
             }) => {
                 row.ty = Some(ItemType::ToolOutput);
                 row.text = Some(tool_name);
                 row.upstream_call_id = Some(call_id);
                 row.tool_args = Some(args.to_string());
-                row.tool_output = Some(encode_output(&output));
+                row.tool_output = Some(encode_output(&completion.output));
+                row.tool_renderer = Some(completion.renderer.as_str());
             }
         }
         let row = DbItem::create(conn, row)?;
@@ -521,21 +537,26 @@ impl Item {
     /// Updates the output of a tool call.
     ///
     /// Panics if the item is not a tool call.
-    pub fn set_output(&mut self, conn: &mut SqliteConnection, output: ToolOutput) -> AnyResult<()> {
+    pub fn set_output(
+        &mut self,
+        conn: &mut SqliteConnection,
+        completion: ToolCompletion,
+    ) -> AnyResult<()> {
         let ItemContent::ToolCall(ToolCallContent {
-            output: slot, ..
+            completion: slot, ..
         }) = &mut self.content
         else {
             panic!("item {} is not a tool call", self.id);
         };
-        let encoded = encode_output(&output);
+        let encoded = encode_output(&completion.output);
         diesel::update(item::table.filter(item::id.eq(self.id)))
             .set((
                 item::tool_output.eq(&encoded),
+                item::tool_renderer.eq(&completion.renderer),
                 item::updated_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>("CURRENT_TIMESTAMP")),
             ))
             .execute(conn)?;
-        *slot = Some(output);
+        *slot = Some(completion);
         Ok(())
     }
 
@@ -617,21 +638,21 @@ impl DataQuery for ItemContent {
                 tool_name,
                 call_id,
                 args,
-                output,
+                completion,
             }) => match field {
                 "" => Ok(QueryField::Value(json!({
                     "type": self.query("/type")?,
                     "tool_name": self.query("/tool_name")?,
                     "call_id": self.query("/call_id")?,
                     "args": self.query("/args")?,
-                    "output": self.query("/output")?,
+                    "completion": self.query("/completion")?,
                 }))),
                 "type" => Ok(QueryField::Value(json!("tool_call"))),
                 "tool_name" => Ok(QueryField::Value(json!(tool_name))),
                 "call_id" => Ok(QueryField::Value(json!(call_id))),
                 "args" => Ok(QueryField::DataQuery(args)),
-                "output" => match output {
-                    Some(output) => Ok(QueryField::DataQuery(output)),
+                "completion" => match completion {
+                    Some(completion) => Ok(QueryField::DataQuery(completion)),
                     None => Ok(QueryField::Value(json!(null))),
                 },
                 _ => Err(QueryError::InvalidField(field.to_string())),
@@ -640,22 +661,36 @@ impl DataQuery for ItemContent {
                 tool_name,
                 call_id,
                 args,
-                output,
+                completion,
             }) => match field {
                 "" => Ok(QueryField::Value(json!({
                     "type": self.query("/type")?,
                     "tool_name": self.query("/tool_name")?,
                     "call_id": self.query("/call_id")?,
                     "args": self.query("/args")?,
-                    "output": self.query("/output")?,
+                    "completion": self.query("/completion")?,
                 }))),
                 "type" => Ok(QueryField::Value(json!("tool_output"))),
                 "tool_name" => Ok(QueryField::Value(json!(tool_name))),
                 "call_id" => Ok(QueryField::Value(json!(call_id))),
                 "args" => Ok(QueryField::DataQuery(args)),
-                "output" => Ok(QueryField::DataQuery(output)),
+                "completion" => Ok(QueryField::DataQuery(completion)),
                 _ => Err(QueryError::InvalidField(field.to_string())),
             },
+        }
+    }
+}
+
+impl DataQuery for ToolCompletion {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "renderer": self.query("/renderer")?,
+                "output": self.query("/output")?,
+            }))),
+            "renderer" => Ok(QueryField::Value(json!(self.renderer))),
+            "output" => Ok(QueryField::DataQuery(&self.output)),
+            _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
 }
@@ -810,7 +845,7 @@ mod tests {
     fn test_tool_call_content_query() {
         let mut conn = crate::db::open_new().unwrap();
         let (session, turn) = session_turn(&mut conn);
-        let mut create = |output| {
+        let mut create = |completion| {
             create_item(
                 &mut conn,
                 session.id,
@@ -820,7 +855,7 @@ mod tests {
                     tool_name: "read".to_owned(),
                     call_id: "call_1".to_owned(),
                     args: json!({ "path": "a.txt" }),
-                    output,
+                    completion,
                 }),
             ).unwrap()
         };
@@ -833,12 +868,28 @@ mod tests {
                 "tool_name": "read",
                 "call_id": "call_1",
                 "args": {"path": "a.txt"},
-                "output": null,
+                "completion": null,
             })
         );
         assert_eq!(pending.query("/content/args/path").unwrap(), json!("a.txt"));
         assert_eq!(pending.query("/content/call_id").unwrap(), json!("call_1"));
-        assert_eq!(pending.query("/content/output").unwrap(), json!(null));
+        assert_eq!(pending.query("/content/completion").unwrap(), json!(null));
+
+        let completed = create(Some(ToolCompletion {
+            renderer: "read".to_owned(),
+            output: ToolOutput::Completed { value: json!({ "contents": "hi" }) },
+        }));
+        assert_eq!(
+            completed.query("/content/completion").unwrap(),
+            json!({
+                "renderer": "read",
+                "output": {"status": "completed", "content": {"contents": "hi"}},
+            })
+        );
+        assert_eq!(
+            completed.query("/content/completion/output/content/contents").unwrap(),
+            json!("hi")
+        );
     }
 
     #[test]
@@ -883,13 +934,13 @@ mod tests {
 
     #[test]
     fn test_tool_output_round_trip() {
-        /// The tool call under test, with the given output.
-        fn call_with(output: Option<ToolOutput>) -> ItemContent {
+        /// The tool call under test, with the given completion.
+        fn call_with(completion: Option<ToolCompletion>) -> ItemContent {
             ItemContent::ToolCall(ToolCallContent {
                 tool_name: "read".to_owned(),
                 call_id: "call_1".to_owned(),
                 args: json!({ "path": "a.txt" }),
-                output,
+                completion,
             })
         }
 
@@ -901,16 +952,22 @@ mod tests {
         let mut call = create(call_with(None));
         assert_eq!(Item::get(&mut conn, call.id).unwrap().unwrap(), call);
 
-        let completed = ToolOutput::Completed {
-            value: json!({ "contents": "file contents" }),
+        let completed = ToolCompletion {
+            renderer: "read".to_owned(),
+            output: ToolOutput::Completed {
+                value: json!({ "contents": "file contents" }),
+            },
         };
         call.set_output(&mut conn, completed.clone())
             .unwrap();
         let reloaded = Item::get(&mut conn, call.id).unwrap().unwrap();
         assert_eq!(reloaded.content, call_with(Some(completed)));
 
-        let failed = ToolOutput::Failed {
-            error: "file not found".to_owned(),
+        let failed = ToolCompletion {
+            renderer: "read".to_owned(),
+            output: ToolOutput::Failed {
+                error: "file not found".to_owned(),
+            },
         };
         call.set_output(&mut conn, failed.clone()).unwrap();
         let reloaded = Item::get(&mut conn, call.id).unwrap().unwrap();

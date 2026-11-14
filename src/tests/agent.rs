@@ -589,9 +589,12 @@ async fn test_agent_tool_call_loop() {
             "tool_name": "sh",
             "call_id": "call_1",
             "args": { "command": "echo 3" },
-            "output": {
-                "status": "completed",
-                "content": { "stdout": "3\n", "stderr": "", "return_code": 0 },
+            "completion": {
+                "renderer": "sh",
+                "output": {
+                    "status": "completed",
+                    "content": { "stdout": "3\n", "stderr": "", "return_code": 0 },
+                },
             },
         })
     );
@@ -604,9 +607,12 @@ async fn test_agent_tool_call_loop() {
             "tool_name": "sh",
             "call_id": "call_1",
             "args": { "command": "echo 3" },
-            "output": {
-                "status": "completed",
-                "content": { "stdout": "3\n", "stderr": "", "return_code": 0 },
+            "completion": {
+                "renderer": "sh",
+                "output": {
+                    "status": "completed",
+                    "content": { "stdout": "3\n", "stderr": "", "return_code": 0 },
+                },
             },
         })
     );

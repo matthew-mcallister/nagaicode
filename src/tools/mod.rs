@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::{ToolInfo, ToolOutputContent as InterfaceToolOutputContent};
-use crate::item::{ToolCallContent, ToolOutput, ToolOutputContent};
+use crate::item::{ToolCallContent, ToolCompletion, ToolOutput, ToolOutputContent};
 use crate::query::DataQuery;
 use crate::request::DefaultClient;
 use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
@@ -172,7 +172,7 @@ impl ToolRegistry {
     /// errors. Returns `None` if the tool call has no output.
     pub fn render_to_ui(&self, content: &ToolOutputContent) -> Option<Box<dyn RenderItem>> {
         let tool_name = &content.tool_name;
-        Some(match &content.output {
+        Some(match &content.completion.output {
             ToolOutput::Completed { value } => {
                 let tools = self.tools.read().unwrap();
                 tools.get(tool_name)
@@ -190,8 +190,11 @@ impl ToolRegistry {
     /// all possible errors.
     pub fn render_to_interface(&self, content: &ToolCallContent) -> InterfaceToolOutput {
         let tool_name = &content.tool_name;
-        match &content.output {
-            Some(ToolOutput::Completed { value }) => {
+        match &content.completion {
+            Some(ToolCompletion {
+                output: ToolOutput::Completed { value },
+                ..
+            }) => {
                 let tools = self.tools.read().unwrap();
                 tools.get(tool_name)
                     .and_then(|tool| tool.render_to_interface(&content.args, value)
@@ -200,7 +203,10 @@ impl ToolRegistry {
                     )
                     .unwrap_or_else(Self::unknown_to_interface)
             }
-            Some(ToolOutput::Failed { error }) => Self::failure_to_interface(error),
+            Some(ToolCompletion {
+                output: ToolOutput::Failed { error },
+                ..
+            }) => Self::failure_to_interface(error),
             None => InterfaceToolOutput {
                 content: vec![InterfaceToolOutputContent::Text { text: "tool call interrupted".into() }],
             },
@@ -289,7 +295,11 @@ mod tests {
         let output = registry.call(&context, &tc.tool_name, &tc.args).await;
         let error = "invalid arguments for 'sh': expected {\"command\": \"...\"}";
         assert_eq!(output, ToolOutput::Failed { error: error.to_owned() });
-        item.set_output(&mut conn, output).unwrap();
+        let completion = ToolCompletion {
+            renderer: "sh".to_owned(),
+            output,
+        };
+        item.set_output(&mut conn, completion.clone()).unwrap();
 
         // Round trip gives expected results
         let item = Item::get(&mut conn, item.id).unwrap().unwrap();
@@ -299,7 +309,7 @@ mod tests {
                 tool_name: "sh".into(),
                 call_id: "call123".into(),
                 args: json!({ "command": 123 }),
-                output: Some(ToolOutput::Failed { error: error.into() }),
+                completion: Some(completion),
             },
         );
     }
@@ -327,7 +337,10 @@ mod tests {
             tool_name: "missing".into(),
             call_id: "call123".into(),
             args: json!({}),
-            output: ToolOutput::Completed { value: json!({}) },
+            completion: ToolCompletion {
+                renderer: "missing".into(),
+                output: ToolOutput::Completed { value: json!({}) },
+            },
         };
         let ui = registry.render_to_ui(&call).unwrap();
         assert_eq!(ui.query("/type").unwrap(), json!("help"));
@@ -343,7 +356,10 @@ mod tests {
             tool_name: "boom".into(),
             call_id: "call123".into(),
             args: json!({}),
-            output: ToolOutput::Failed { error: "boom".to_owned() },
+            completion: ToolCompletion {
+                renderer: "boom".into(),
+                output: ToolOutput::Failed { error: "boom".to_owned() },
+            },
         };
         let ui = registry.render_to_ui(&call).unwrap();
         assert_eq!(ui.query("/type").unwrap(), json!("error"));
