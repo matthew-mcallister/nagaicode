@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use fnv::FnvHashMap;
 use log::{trace, warn};
@@ -96,7 +96,7 @@ pub struct ToolCallContext {
 /// Maps tool names to tools.
 #[derive(Debug)]
 pub struct ToolRegistry {
-    tools: FnvHashMap<String, Box<dyn Tool>>,
+    tools: RwLock<FnvHashMap<String, Arc<dyn Tool>>>,
 }
 
 impl ToolRegistry {
@@ -108,31 +108,32 @@ impl ToolRegistry {
         // - edit
         // - glob
         // - web_fetch
-        let mut tools: FnvHashMap<String, Box<dyn Tool>> = FnvHashMap::default();
+        let mut tools: FnvHashMap<String, Arc<dyn Tool>> = FnvHashMap::default();
         let sh = sh::ShTool::new(args);
-        tools.insert(sh.name().to_owned(), Box::new(sh));
+        tools.insert(sh.name().to_owned(), Arc::new(sh));
         let read = read::ReadTool::new(args);
-        tools.insert(read.name().to_owned(), Box::new(read));
+        tools.insert(read.name().to_owned(), Arc::new(read));
         let edit = edit::EditTool::new(args);
-        tools.insert(edit.name().to_owned(), Box::new(edit));
+        tools.insert(edit.name().to_owned(), Arc::new(edit));
         let write = write::WriteTool::new(args);
-        tools.insert(write.name().to_owned(), Box::new(write));
+        tools.insert(write.name().to_owned(), Arc::new(write));
         let glob = glob::GlobTool::new(args);
-        tools.insert(glob.name().to_owned(), Box::new(glob));
+        tools.insert(glob.name().to_owned(), Arc::new(glob));
         let web_fetch = web_fetch::WebFetchTool::new(args);
-        tools.insert(web_fetch.name().to_owned(), Box::new(web_fetch));
-        Self { tools }
+        tools.insert(web_fetch.name().to_owned(), Arc::new(web_fetch));
+        Self { tools: RwLock::new(tools) }
     }
 
-    pub(crate) fn register(&mut self, tool: Box<dyn Tool>) {
+    pub(crate) fn register(&self, tool: Box<dyn Tool>) {
         let name = tool.name().to_owned();
-        let old = self.tools.insert(name.clone(), tool);
+        let mut tools = self.tools.write().unwrap();
+        let old = tools.insert(name.clone(), Arc::from(tool));
         if let Some(old) = old {
             warn!(
                 "duplicate tool registered: '{}' (old title: '{}', new title: '{}')",
                 name,
                 old.title(),
-                self.tools[&name].title(),
+                tools[&name].title(),
             );
         } else {
             trace!("registered tool '{}'", name);
@@ -140,13 +141,13 @@ impl ToolRegistry {
     }
 
     /// Lists tools available to the model.
-    pub fn list_tools(&self) -> impl Iterator<Item = &dyn Tool> {
-        self.tools.values().map(|t| t.as_ref()).filter(|t| t.is_visible())
+    pub fn list_tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.tools.read().unwrap().values().filter(|t| t.is_visible()).cloned().collect()
     }
 
     /// Describes every tool available to the model for the inference API.
     pub fn list_tool_infos(&self) -> Vec<ToolInfo> {
-        self.list_tools().map(|tool| tool.tool_info()).collect()
+        self.list_tools().iter().map(|tool| tool.tool_info()).collect()
     }
 
     /// Invokes the tool named by a tool call item. Handles all possible
@@ -157,7 +158,8 @@ impl ToolRegistry {
         tool_name: &str,
         input: &Value,
     ) -> ToolOutput {
-        let Some(tool) = self.tools.get(tool_name) else {
+        let tool = self.tools.read().unwrap().get(tool_name).cloned();
+        let Some(tool) = tool else {
             return ToolOutput::Failed { error: format!("no such tool '{}'", tool_name) };
         };
         match tool.call(context, input).await {
@@ -171,12 +173,15 @@ impl ToolRegistry {
     pub fn render_to_ui(&self, content: &ToolOutputContent) -> Option<Box<dyn RenderItem>> {
         let tool_name = &content.tool_name;
         Some(match &content.output {
-            ToolOutput::Completed { value } => self.tools.get(tool_name)
-                .and_then(|tool| tool.render_to_ui(&content.args, &value)
-                    .inspect_err(|e| warn!("tool output render error: {e}"))
-                    .ok()
-                )
-                .unwrap_or_else(|| Self::unknown_ui(tool_name)),
+            ToolOutput::Completed { value } => {
+                let tools = self.tools.read().unwrap();
+                tools.get(tool_name)
+                    .and_then(|tool| tool.render_to_ui(&content.args, value)
+                        .inspect_err(|e| warn!("tool output render error: {e}"))
+                        .ok()
+                    )
+                    .unwrap_or_else(|| Self::unknown_ui(tool_name))
+            }
             ToolOutput::Failed { error } => Self::failure_ui(tool_name, &error),
         })
     }
@@ -186,12 +191,15 @@ impl ToolRegistry {
     pub fn render_to_interface(&self, content: &ToolCallContent) -> InterfaceToolOutput {
         let tool_name = &content.tool_name;
         match &content.output {
-            Some(ToolOutput::Completed { value }) => self.tools.get(tool_name)
-                .and_then(|tool| tool.render_to_interface(&content.args, value)
-                    .inspect_err(|e| warn!("tool call parse error: {e}"))
-                    .ok()
-                )
-                .unwrap_or_else(Self::unknown_to_interface),
+            Some(ToolOutput::Completed { value }) => {
+                let tools = self.tools.read().unwrap();
+                tools.get(tool_name)
+                    .and_then(|tool| tool.render_to_interface(&content.args, value)
+                        .inspect_err(|e| warn!("tool call parse error: {e}"))
+                        .ok()
+                    )
+                    .unwrap_or_else(Self::unknown_to_interface)
+            }
             Some(ToolOutput::Failed { error }) => Self::failure_to_interface(error),
             None => InterfaceToolOutput {
                 content: vec![InterfaceToolOutputContent::Text { text: "tool call interrupted".into() }],
@@ -299,7 +307,7 @@ mod tests {
     #[test]
     fn test_list_tools() {
         let registry = registry();
-        let mut names: Vec<&str> = registry.list_tools().map(|t| t.name()).collect();
+        let mut names: Vec<String> = registry.list_tools().iter().map(|t| t.name().to_owned()).collect();
         names.sort();
         assert_eq!(names, ["edit", "glob", "read", "sh", "web_fetch", "write"]);
 

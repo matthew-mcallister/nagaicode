@@ -94,7 +94,7 @@ impl McpServer {
 
 pub(crate) async fn register_mcp_servers(
     config: &Config,
-    tools: &mut ToolRegistry,
+    tools: &ToolRegistry,
 ) {
     let servers: Vec<Arc<McpServer>> = config.mcp.server.iter()
         .filter(|config| config.enabled)
