@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use fnv::FnvHashMap;
 use serde::Deserialize;
 
 use crate::error::AnyResult;
@@ -90,21 +91,22 @@ impl Config {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
 pub(crate) struct McpConfig {
     #[serde(rename = "server", default)]
     pub(crate) server: Vec<McpServerConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub(crate) enum McpServerConfigType {
     Stdio,
     Http { url: String },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub(crate) struct McpServerConfig {
+    pub(crate) name: String,
     #[serde(flatten)]
     pub(crate) type_: McpServerConfigType,
     #[serde(default)]
@@ -112,7 +114,7 @@ pub(crate) struct McpServerConfig {
     #[serde(default)]
     pub(crate) command: Vec<String>,
     #[serde(default)]
-    pub(crate) include: Vec<String>,
+    pub(crate) include: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) exclude: Vec<String>,
 }
@@ -128,6 +130,7 @@ mod tests {
             dirs.data().join(CONFIG_FILE_NAME),
             r#"
                 [[mcp.server]]
+                name = "stdio"
                 type = "stdio"
                 command = ["/usr/bin/mcp-server", "--foo"]
                 enabled = true
@@ -135,6 +138,7 @@ mod tests {
                 exclude = ["fury"]
 
                 [[mcp.server]]
+                name = "http"
                 type = "http"
                 url = "http://localhost:1234"
             "#
@@ -146,16 +150,18 @@ mod tests {
 
         let mcp = &config.mcp.server[0];
         let McpServerConfigType::Stdio = mcp.type_ else { panic!() };
+        assert_eq!(mcp.name, "stdio");
         assert_eq!(&mcp.command, &["/usr/bin/mcp-server", "--foo"]);
         assert!(mcp.enabled);
-        assert_eq!(mcp.include, vec!["sound".to_string()]);
+        assert_eq!(mcp.include, Some(vec!["sound".to_string()]));
         assert_eq!(mcp.exclude, vec!["fury".to_string()]);
 
         let mcp = &config.mcp.server[1];
         let McpServerConfigType::Http { url } = &mcp.type_ else { panic!() };
+        assert_eq!(mcp.name, "http");
         assert_eq!(url, "http://localhost:1234");
         assert!(!mcp.enabled);
-        assert!(mcp.include.is_empty());
+        assert!(mcp.include.is_none());
         assert!(mcp.exclude.is_empty());
     }
 

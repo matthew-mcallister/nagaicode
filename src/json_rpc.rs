@@ -32,6 +32,17 @@ impl Error {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ErrorStd(pub Error);
+
+impl std::fmt::Display for ErrorStd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "code {}: {}", self.0.code, self.0.message)
+    }
+}
+
+impl std::error::Error for ErrorStd {}
+
 pub type RequestId = Value;
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]

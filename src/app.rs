@@ -860,7 +860,9 @@ pub async fn run() -> AnyResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::config::McpServerConfigType;
+
+use super::*;
 
     #[test]
     fn test_write_config() {
@@ -868,17 +870,15 @@ mod tests {
         env.write_config(
             r#"
             [[mcp.server]]
+            name = "http"
             type = "http"
             url = "http://localhost:1234"
             "#,
         ).unwrap();
         let config = Config::load(&env.dirs).unwrap();
         assert_eq!(config.mcp.server.len(), 1);
-        match &config.mcp.server[0].type_ {
-            crate::config::McpServerConfigType::Http { url } => {
-                assert_eq!(url, "http://localhost:1234")
-            }
-            other => panic!("unexpected server type: {other:?}"),
-        }
+        assert_eq!(config.mcp.server[0].name, "http");
+        let McpServerConfigType::Http { url } = &config.mcp.server[0].type_ else { panic!() };
+        assert_eq!(url, "http://localhost:1234")
     }
 }

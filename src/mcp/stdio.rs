@@ -10,7 +10,7 @@ use tokio::sync::mpsc::{UnboundedReceiver as Receiver, UnboundedSender as Sender
 use tokio::time::Instant;
 
 use crate::json_rpc::{Request, RequestId, Response, ResponseBody};
-use crate::mcp::transport::TransportError;
+use crate::mcp::transport::{Transport, TransportError};
 
 #[derive(Debug)]
 enum ReceiveError {
@@ -50,6 +50,16 @@ struct Process {
     stdin: BufWriter<ChildStdin>,
 }
 
+fn build_command(args: &[String]) -> Command {
+    let mut command = Command::new(&args[0]);
+    command.args(&args[1..])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .kill_on_drop(true);
+    command
+}
+
 /// Manages MCP stdio process lifetime and serves both requests and responses.
 #[derive(Debug)]
 struct StdioEventLoop {
@@ -68,11 +78,7 @@ impl Drop for StdioEventLoop {
 }
 
 impl StdioEventLoop {
-    fn new(name: String, mut command: Command) -> (Self, Sender<Message>) {
-        command.stdin(Stdio::piped())
-            .stderr(Stdio::null())
-            .stdout(Stdio::piped())
-            .kill_on_drop(true);
+    fn new(name: String, command: Command) -> (Self, Sender<Message>) {
         let (sender, request_channel) = unbounded_channel::<Message>();
         let ev = Self {
             name,
@@ -247,31 +253,34 @@ impl StdioConnection {
 }
 
 #[derive(Debug)]
-struct StdioTransport {
+pub(crate) struct StdioTransport {
     sender: Sender<Message>,
 }
 
 impl StdioTransport {
-    pub(crate) async fn new(
+    pub(crate) fn new(
         name: String,
-        command: Command,
+        command: &[String],
     ) -> Self {
+        let command = build_command(&command);
         let (event_loop, sender) = StdioEventLoop::new(name, command);
         tokio::task::spawn(event_loop.run());
         Self {
             sender,
         }
     }
+}
 
-    pub(crate) async fn request(
+impl Transport for StdioTransport {
+    fn request(
         &self,
         request: Request,
         timeout: Duration,
-    ) -> Result<ResponseBody, TransportError> {
-        StdioConnection::new(
+    ) -> Box<dyn Future<Output = Result<ResponseBody, TransportError>>> {
+        Box::new(StdioConnection::new(
             self.sender.clone(),
             request,
             timeout,
-        ).recv().await
+        ).recv())
     }
 }

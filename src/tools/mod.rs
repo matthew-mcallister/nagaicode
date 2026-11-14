@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use fnv::FnvHashMap;
-use log::warn;
+use log::{trace, warn};
 use futures::future::BoxFuture;
 use serde_json::Value;
 
@@ -27,6 +27,11 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
     /// unique.
     fn name(&self) -> &str;
 
+    /// Human-readable name.
+    fn title(&self) -> &str {
+        self.name()
+    }
+
     /// Description provided to the agent.
     fn description(&self) -> &str;
 
@@ -46,12 +51,17 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
         input: &'a Value,
     ) -> BoxFuture<'a, AnyResult<Value>>;
 
-    // XXX: Should remove AnyResult from signature and force implementors to
-    // be liberal in what they accept.
+    // FIXME: Didn't have MCP fully thought out when designing this.
+    // Rendering must be decoupled from tool to support MCP correctly.
+    // 
+    // MCP tools have varying names but all use the same renderer. If
+    // the MCP server is disconnected then tool output will be treated
+    // as unrenderable because the tool is no longer registered.
     /// Builds a renderable item from the tool's output.
     fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>>;
 
-    // XXX: Same as above.
+    // XXX: Same concerns as above.
+    // XXX: Should rename "render_to_model" or something
     /// Builds inference call inputs from the tool's output.
     fn render_to_interface(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput>;
 
@@ -112,6 +122,21 @@ impl ToolRegistry {
         let web_fetch = web_fetch::WebFetchTool::new(args);
         tools.insert(web_fetch.name().to_owned(), Box::new(web_fetch));
         Self { tools }
+    }
+
+    pub(crate) fn register(&mut self, tool: Box<dyn Tool>) {
+        let name = tool.name().to_owned();
+        let old = self.tools.insert(name.clone(), tool);
+        if let Some(old) = old {
+            warn!(
+                "duplicate tool registered: '{}' (old title: '{}', new title: '{}')",
+                name,
+                old.title(),
+                self.tools[&name].title(),
+            );
+        } else {
+            trace!("registered tool '{}'", name);
+        }
     }
 
     /// Lists tools available to the model.
@@ -180,6 +205,7 @@ impl ToolRegistry {
     }
 
     fn unknown_to_interface() -> InterfaceToolOutput {
+        // FIXME: should render raw JSON instead of a useless error message
         InterfaceToolOutput {
             content: vec![InterfaceToolOutputContent::Text {
                 text: Cow::Owned("error: could not parse output".into()),
