@@ -2,6 +2,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use fnv::FnvHashMap;
+use futures::future::BoxFuture;
 use log::{debug, error};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -276,8 +277,8 @@ impl Transport for StdioTransport {
         &self,
         request: Request,
         timeout: Duration,
-    ) -> Box<dyn Future<Output = Result<ResponseBody, TransportError>>> {
-        Box::new(StdioConnection::new(
+    ) -> BoxFuture<'static, Result<ResponseBody, TransportError>> {
+        Box::pin(StdioConnection::new(
             self.sender.clone(),
             request,
             timeout,

@@ -65,7 +65,7 @@ fn get_dirs() -> AnyResult<Dirs> {
     })
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct Config {
     #[serde(default)]
     pub(crate) mcp: McpConfig,

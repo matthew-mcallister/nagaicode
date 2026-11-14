@@ -12,6 +12,7 @@ use crate::error::AnyResult;
 use crate::json_rpc::{ErrorStd, Request, ResponseBody};
 use crate::mcp::tool::{McpTool, McpToolDef};
 use crate::mcp::transport::{Transport, TransportError, make_transport};
+use crate::task::{Task, TaskContext};
 use crate::tools::ToolRegistry;
 
 mod stdio;
@@ -59,7 +60,7 @@ impl McpServer {
             id: Some(json!(id)),
         };
         let future = self.transport.request(request, TIMEOUT);
-        Box::into_pin(future).await
+        future.await
     }
 
     async fn list_tools(&self) -> AnyResult<ToolsListResult> {
@@ -92,6 +93,9 @@ impl McpServer {
     }
 }
 
+/// Registers MCP servers. Servers will be queries in parallel, but results are
+/// processed in the order in which the appear in the configuration file so the
+/// results are deterministic.
 pub(crate) async fn register_mcp_servers(
     config: &Config,
     tools: &ToolRegistry,
@@ -110,5 +114,25 @@ pub(crate) async fn register_mcp_servers(
             },
             Err(e) => error!("mcp server '{}': {e}", server.config.name),
         }
+    }
+}
+
+/// Background task that registers tools from configured MCP servers.
+#[derive(Debug)]
+pub(crate) struct RegisterMcpServers {
+    config: Config,
+}
+
+impl RegisterMcpServers {
+    pub(crate) fn new(config: Config) -> Self {
+        Self { config }
+    }
+}
+
+impl Task for RegisterMcpServers {
+    type Output = ();
+
+    async fn run(self, context: &mut TaskContext) {
+        register_mcp_servers(&self.config, context.tool_registry()).await
     }
 }

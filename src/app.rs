@@ -29,6 +29,7 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::item::Item;
 use crate::item::ItemContent;
+use crate::mcp::RegisterMcpServers;
 use crate::model::Model;
 use crate::model::RevalidateModelsTask;
 use crate::provider::Provider;
@@ -130,7 +131,6 @@ impl Environment {
 }
 
 pub struct App {
-    #[allow(dead_code)]
     config: Config,
     terminal: DefaultTerminal,
     terminal_captured: bool,
@@ -395,6 +395,11 @@ impl App {
         self.spawn_background(RevalidateModelsTask::new(self.client.clone()));
     }
 
+    /// Spawns a background task to register tools from configured MCP servers.
+    pub fn spawn_register_mcp_servers(&mut self) {
+        self.spawn_background(RegisterMcpServers::new(self.config.clone()));
+    }
+
     async fn run_event_loop(&mut self) -> AnyResult<()> {
         'top: while !self.quit {
             self.render()?;
@@ -441,6 +446,7 @@ impl App {
     /// Runs the main event loop.
     pub async fn run(&mut self) -> AnyResult<()> {
         self.spawn_revalidate_models();
+        self.spawn_register_mcp_servers();
         self.capture_terminal()?;
         self.run_event_loop().await?;
         self.release_terminal()?;

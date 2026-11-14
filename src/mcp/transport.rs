@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use futures::future::BoxFuture;
+
 use crate::{config::{McpServerConfig, McpServerConfigType}, json_rpc::{Request, ResponseBody}, mcp::stdio::StdioTransport};
 
 #[derive(Debug)]
@@ -33,7 +35,7 @@ pub(crate) trait Transport: std::fmt::Debug + Send + Sync {
         &self,
         request: Request,
         timeout: Duration,
-    ) -> Box<dyn Future<Output = Result<ResponseBody, TransportError>>>;
+    ) -> BoxFuture<'static, Result<ResponseBody, TransportError>>;
 }
 
 pub(crate) fn make_transport(config: &McpServerConfig) -> Box<dyn Transport> {
