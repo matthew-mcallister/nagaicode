@@ -10,13 +10,14 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
 use crate::ui::render_item::{SystemRenderItem, RenderItem};
 
 /// Creates or overwrites a text file with the given content.
 #[derive(Debug)]
 pub struct WriteTool {
     cwd: Arc<Cwd>,
+    renderer: WriteRenderer,
     input_schema: Value,
 }
 
@@ -26,6 +27,7 @@ impl WriteTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             cwd: Arc::clone(args.cwd),
+            renderer: WriteRenderer::new(args),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -45,9 +47,11 @@ impl DataQuery for WriteTool {
             "" => Ok(QueryField::Value(json!({
                 "name": self.name(),
                 "is_visible": self.is_visible(),
+                "renderer": self.query("/renderer")?,
             }))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
             "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
+            "renderer" => Ok(QueryField::DataQuery(self.renderer())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -64,6 +68,10 @@ impl Tool for WriteTool {
 
     fn input_schema(&self) -> &Value {
         &self.input_schema
+    }
+
+    fn renderer(&self) -> &dyn ToolRenderer {
+        &self.renderer
     }
 
     fn call<'a>(
@@ -92,6 +100,35 @@ impl Tool for WriteTool {
             Ok(json!({ "created": created, "num_bytes": content.len() }))
         })
     }
+}
+
+#[derive(Debug)]
+pub struct WriteRenderer {
+    cwd: Arc<Cwd>,
+}
+
+impl WriteRenderer {
+    pub fn new(args: &ToolCreateArgs<'_>) -> Self {
+        Self { cwd: Arc::clone(args.cwd) }
+    }
+}
+
+impl DataQuery for WriteRenderer {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "name": self.name(),
+            }))),
+            "name" => Ok(QueryField::Value(json!(self.name()))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+impl ToolRenderer for WriteRenderer {
+    fn name(&self) -> &str {
+        "write"
+    }
 
     fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
         let filepath = input
@@ -111,7 +148,7 @@ impl Tool for WriteTool {
         Ok(Box::new(SystemRenderItem::new(message)))
     }
 
-    fn render_to_interface(
+    fn render_to_model(
         &self,
         input: &Value,
         output: &Value,

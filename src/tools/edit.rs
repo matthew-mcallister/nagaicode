@@ -11,7 +11,7 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::{ErrorRenderItem, RenderItem};
 use crate::ui::style::{Style, Theme};
@@ -71,6 +71,7 @@ impl Default for LineEnding {
 #[derive(Debug)]
 pub struct EditTool {
     cwd: Arc<Cwd>,
+    renderer: EditRenderer,
     input_schema: Value,
 }
 
@@ -78,6 +79,7 @@ impl EditTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             cwd: Arc::clone(args.cwd),
+            renderer: EditRenderer::new(args),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -99,9 +101,11 @@ impl DataQuery for EditTool {
             "" => Ok(QueryField::Value(json!({
                 "name": self.name(),
                 "is_visible": self.is_visible(),
+                "renderer": self.query("/renderer")?,
             }))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
             "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
+            "renderer" => Ok(QueryField::DataQuery(self.renderer())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -119,6 +123,10 @@ impl Tool for EditTool {
 
     fn input_schema(&self) -> &Value {
         &self.input_schema
+    }
+
+    fn renderer(&self) -> &dyn ToolRenderer {
+        &self.renderer
     }
 
     fn call<'a>(
@@ -194,6 +202,35 @@ impl Tool for EditTool {
             }))
         })
     }
+}
+
+#[derive(Debug)]
+pub struct EditRenderer {
+    cwd: Arc<Cwd>,
+}
+
+impl EditRenderer {
+    pub fn new(args: &ToolCreateArgs<'_>) -> Self {
+        Self { cwd: Arc::clone(args.cwd) }
+    }
+}
+
+impl DataQuery for EditRenderer {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "name": self.name(),
+            }))),
+            "name" => Ok(QueryField::Value(json!(self.name()))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+impl ToolRenderer for EditRenderer {
+    fn name(&self) -> &str {
+        "edit"
+    }
 
     fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
         if let Some(error) = output.get("error").and_then(Value::as_str) {
@@ -214,7 +251,7 @@ impl Tool for EditTool {
         }))
     }
 
-    fn render_to_interface(
+    fn render_to_model(
         &self,
         _input: &Value,
         output: &Value,
@@ -749,9 +786,17 @@ mod tests {
     fn test_query() {
         let app = App::new().unwrap();
         let tool = EditTool::new(&app.tool_create_args());
-        assert_eq!(tool.query("/").unwrap(), json!({ "name": "edit", "is_visible": true }));
+        assert_eq!(
+            tool.query("/").unwrap(),
+            json!({
+                "name": "edit",
+                "is_visible": true,
+                "renderer": { "name": "edit" },
+            })
+        );
         assert_eq!(tool.query("/name").unwrap(), json!("edit"));
         assert_eq!(tool.query("/is_visible").unwrap(), json!(true));
+        assert_eq!(tool.query("/renderer/name").unwrap(), json!("edit"));
         assert!(matches!(tool.query("/missing"), Err(QueryError::InvalidField(_))));
 
         let item = EditRenderItem {

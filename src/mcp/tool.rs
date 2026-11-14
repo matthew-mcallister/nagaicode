@@ -1,11 +1,14 @@
-
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{error::AnyResult, mcp::McpServer, query::{DataQuery, QueryError, QueryField}, tools::{InterfaceToolOutput, Tool, ToolCallContext}, ui::render_item::{RenderItem, SystemRenderItem}};
+use crate::error::AnyResult;
+use crate::mcp::McpServer;
+use crate::query::{DataQuery, QueryError, QueryField};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolRenderer};
+use crate::ui::render_item::{RenderItem, SystemRenderItem};
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,29 +46,71 @@ impl DataQuery for McpToolDef {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct McpRenderer {
+    title: String,
+}
+
+impl McpRenderer {
+    fn new(def: &McpToolDef) -> Self {
+        Self { title: def.title.as_deref().unwrap_or(&def.name).to_owned() }
+    }
+}
+
+impl DataQuery for McpRenderer {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "name": self.name(),
+                "title": self.title.clone(),
+            }))),
+            "name" => Ok(QueryField::Value(json!(self.name()))),
+            "title" => Ok(QueryField::Value(json!(self.title.clone()))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+impl ToolRenderer for McpRenderer {
+    fn name(&self) -> &str {
+        "mcp"
+    }
+
+    fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
+        Ok(Box::new(SystemRenderItem::new(format!("Called '{}'", &self.title))))
+    }
+
+    fn render_to_model(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput> {
+        todo!()
+    }
+}
+
 /// Tool exposed by an MCP server, implemented via JSON-RPC call.
 #[derive(Debug)]
 pub(crate) struct McpTool {
     server: Arc<McpServer>,
     def: McpToolDef,
+    renderer: McpRenderer,
 }
 
 impl McpTool {
     pub(crate) fn new(server: Arc<McpServer>, def: McpToolDef) -> Self {
+        let renderer = McpRenderer::new(&def);
         Self {
             server,
             def,
+            renderer,
         }
-    }
-    
-    pub(crate) fn title(&self) -> &str {
-        self.def.title.as_deref().unwrap_or(self.name())
     }
 }
 
 impl Tool for McpTool {
     fn name(&self) -> &str {
         &self.def.name
+    }
+
+    fn title(&self) -> &str {
+        &self.renderer.title
     }
 
     fn description(&self) -> &str {
@@ -76,6 +121,10 @@ impl Tool for McpTool {
         &self.def.input_schema
     }
 
+    fn renderer(&self) -> &dyn ToolRenderer {
+        &self.renderer
+    }
+
     fn call<'a>(
         &'a self,
         context: &'a ToolCallContext,
@@ -83,18 +132,18 @@ impl Tool for McpTool {
     ) -> BoxFuture<'a, AnyResult<Value>> {
         todo!()
     }
-
-    fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
-        Ok(Box::new(SystemRenderItem::new(format!("Called '{}'", &self.title()))))
-    }
-
-    fn render_to_interface(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput> {
-        todo!()
-    }
 }
 
 impl DataQuery for McpTool {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
-        self.def.query_field(field)
+        match field {
+            "renderer" => Ok(QueryField::DataQuery(&self.renderer)),
+            "" => {
+                let mut value = self.def.query("")?;
+                value["renderer"] = self.query("/renderer")?;
+                Ok(QueryField::Value(value))
+            }
+            field => self.def.query_field(field),
+        }
     }
 }

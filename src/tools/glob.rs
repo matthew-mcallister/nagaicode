@@ -12,13 +12,14 @@ use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
 use crate::ui::render_item::{SystemRenderItem, RenderItem};
 
 /// Searches for files and directories using glob patterns.
 #[derive(Debug)]
 pub struct GlobTool {
     cwd: Arc<Cwd>,
+    renderer: GlobRenderer,
     input_schema: Value,
 }
 
@@ -28,6 +29,7 @@ impl GlobTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             cwd: Arc::clone(args.cwd),
+            renderer: GlobRenderer,
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -48,9 +50,11 @@ impl DataQuery for GlobTool {
             "" => Ok(QueryField::Value(json!({
                 "name": self.name(),
                 "is_visible": self.is_visible(),
+                "renderer": self.query("/renderer")?,
             }))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
             "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
+            "renderer" => Ok(QueryField::DataQuery(self.renderer())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -72,6 +76,10 @@ impl Tool for GlobTool {
 
     fn input_schema(&self) -> &Value {
         &self.input_schema
+    }
+
+    fn renderer(&self) -> &dyn ToolRenderer {
+        &self.renderer
     }
 
     fn call<'a>(
@@ -149,6 +157,27 @@ impl Tool for GlobTool {
             Ok(output)
         })
     }
+}
+
+#[derive(Debug)]
+pub struct GlobRenderer;
+
+impl DataQuery for GlobRenderer {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "name": self.name(),
+            }))),
+            "name" => Ok(QueryField::Value(json!(self.name()))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+impl ToolRenderer for GlobRenderer {
+    fn name(&self) -> &str {
+        "glob"
+    }
 
     fn render_to_ui(&self, input: &Value, _output: &Value) -> AnyResult<Box<dyn RenderItem>> {
         let pattern = input
@@ -169,7 +198,7 @@ impl Tool for GlobTool {
     // error: Error 2
     // truncated at 7 results
     // ```
-    fn render_to_interface(
+    fn render_to_model(
         &self,
         input: &Value,
         output: &Value,

@@ -21,10 +21,21 @@ pub mod sh;
 pub mod web_fetch;
 pub mod write;
 
+pub trait ToolRenderer: std::fmt::Debug + DataQuery + Send + Sync {
+    /// Name used to identify, must be unique
+    fn name(&self) -> &str;
+
+    /// Builds a renderable item from the tool's output.
+    fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>>;
+
+    /// Builds inference call inputs from the tool's output.
+    fn render_to_model(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput>;
+}
+
 /// Interfaces for interacting with tools and rendering their output.
 pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
-    /// Name provided to the agent and persisted to the database. Must be
-    /// unique.
+    /// Name provided to the agent and persisted to the database. When multiple
+    /// tools have the same name, the tool loaded last shadows the other tools.
     fn name(&self) -> &str;
 
     /// Human-readable name.
@@ -34,6 +45,9 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
 
     /// Description provided to the agent.
     fn description(&self) -> &str;
+
+    /// The renderer to use for this tool's outputs.
+    fn renderer(&self) -> &dyn ToolRenderer;
 
     /// Whether the tool is advertised to the model.
     fn is_visible(&self) -> bool {
@@ -58,12 +72,16 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
     // the MCP server is disconnected then tool output will be treated
     // as unrenderable because the tool is no longer registered.
     /// Builds a renderable item from the tool's output.
-    fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>>;
+    fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
+        self.renderer().render_to_ui(input, output)
+    }
 
     // XXX: Same concerns as above.
     // XXX: Should rename "render_to_model" or something
     /// Builds inference call inputs from the tool's output.
-    fn render_to_interface(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput>;
+    fn render_to_interface(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput> {
+        self.renderer().render_to_model(input, output)
+    }
 
     /// Describes the tool for the inference API.
     fn tool_info(&self) -> ToolInfo {

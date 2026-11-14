@@ -12,7 +12,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::{Client, DefaultClient, Response as ResponseTrait};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
 use crate::tools::read::paginate;
 use crate::ui::render_item::{RenderItem, SystemRenderItem};
 
@@ -32,6 +32,7 @@ const MAX_CONTENT_LENGTH: u64 = 1_000_000;
 #[derive(Debug)]
 pub struct WebFetchTool {
     client: DefaultClient,
+    renderer: WebFetchRenderer,
     input_schema: Value,
 }
 
@@ -40,6 +41,7 @@ impl WebFetchTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             client: args.client.clone(),
+            renderer: WebFetchRenderer,
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -60,9 +62,11 @@ impl DataQuery for WebFetchTool {
             "" => Ok(QueryField::Value(json!({
                 "name": self.name(),
                 "is_visible": self.is_visible(),
+                "renderer": self.query("/renderer")?,
             }))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
             "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
+            "renderer" => Ok(QueryField::DataQuery(self.renderer())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -81,6 +85,10 @@ impl Tool for WebFetchTool {
 
     fn input_schema(&self) -> &Value {
         &self.input_schema
+    }
+
+    fn renderer(&self) -> &dyn ToolRenderer {
+        &self.renderer
     }
 
     fn call<'a>(
@@ -166,6 +174,27 @@ impl Tool for WebFetchTool {
             Ok(output)
         })
     }
+}
+
+#[derive(Debug)]
+pub struct WebFetchRenderer;
+
+impl DataQuery for WebFetchRenderer {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "name": self.name(),
+            }))),
+            "name" => Ok(QueryField::Value(json!(self.name()))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+impl ToolRenderer for WebFetchRenderer {
+    fn name(&self) -> &str {
+        "web_fetch"
+    }
 
     fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
         let url = input
@@ -180,7 +209,7 @@ impl Tool for WebFetchTool {
         Ok(Box::new(SystemRenderItem::new(message)))
     }
 
-    fn render_to_interface(
+    fn render_to_model(
         &self,
         _input: &Value,
         output: &Value,

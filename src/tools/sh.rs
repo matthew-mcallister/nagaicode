@@ -10,7 +10,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::shell;
-use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::RenderItem;
 use crate::ui::style::{Style, Theme};
@@ -21,6 +21,7 @@ use crate::ui::text::{Row, SPACES, ellipsize, wrap_line_naive};
 #[derive(Debug)]
 pub struct ShTool {
     cwd: Arc<Cwd>,
+    renderer: ShRenderer,
     input_schema: Value,
 }
 
@@ -36,6 +37,7 @@ impl ShTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             cwd: Arc::clone(args.cwd),
+            renderer: ShRenderer,
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -54,9 +56,11 @@ impl DataQuery for ShTool {
             "" => Ok(QueryField::Value(json!({
                 "name": self.name(),
                 "is_visible": self.is_visible(),
+                "renderer": self.query("/renderer")?,
             }))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
             "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
+            "renderer" => Ok(QueryField::DataQuery(self.renderer())),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -73,6 +77,10 @@ impl Tool for ShTool {
 
     fn input_schema(&self) -> &Value {
         &self.input_schema
+    }
+
+    fn renderer(&self) -> &dyn ToolRenderer {
+        &self.renderer
     }
 
     fn call<'a>(
@@ -100,12 +108,33 @@ impl Tool for ShTool {
             }))
         })
     }
+}
+
+#[derive(Debug)]
+pub struct ShRenderer;
+
+impl DataQuery for ShRenderer {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "name": self.name(),
+            }))),
+            "name" => Ok(QueryField::Value(json!(self.name()))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+impl ToolRenderer for ShRenderer {
+    fn name(&self) -> &str {
+        "sh"
+    }
 
     fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
         Ok(Box::new(ShRenderItem::from_output(input, output)?))
     }
 
-    fn render_to_interface(
+    fn render_to_model(
         &self,
         _input: &Value,
         output: &Value,
