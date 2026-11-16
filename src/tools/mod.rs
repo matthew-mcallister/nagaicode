@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use fnv::FnvHashMap;
 use log::{trace, warn};
 use futures::future::BoxFuture;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
@@ -12,7 +12,7 @@ use crate::interface::{ToolInfo, ToolOutputContent as InterfaceToolOutputContent
 use crate::item::{
     ToolCallContent, ToolCompletion, ToolOutput, ToolOutputContent, ToolRenderInfo,
 };
-use crate::query::DataQuery;
+use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::DefaultClient;
 use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
 
@@ -32,6 +32,52 @@ pub trait ToolRenderer: std::fmt::Debug + DataQuery + Send + Sync {
 
     /// Builds inference call inputs from the tool's output.
     fn render_to_model(&self, info: &ToolRenderInfo) -> AnyResult<InterfaceToolOutput>;
+}
+
+/// Renderer used when no renderer is available for a tool's output.
+#[derive(Debug)]
+pub struct UnknownRenderer;
+
+impl UnknownRenderer {
+    fn render_ui(tool_name: &str) -> Box<dyn RenderItem> {
+        let tool_name = if tool_name.is_empty() { "<missing name>" } else { tool_name };
+        Box::new(SystemRenderItem::new(format!("Called '{}'", tool_name)))
+    }
+
+    fn render_model() -> InterfaceToolOutput {
+        // FIXME: should render raw JSON instead of a useless error message
+        InterfaceToolOutput {
+            content: vec![InterfaceToolOutputContent::Text {
+                text: Cow::Owned("error: could not parse output".into()),
+            }],
+        }
+    }
+}
+
+impl DataQuery for UnknownRenderer {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "name": self.name(),
+            }))),
+            "name" => Ok(QueryField::Value(json!(self.name()))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
+impl ToolRenderer for UnknownRenderer {
+    fn name(&self) -> &str {
+        "unknown"
+    }
+
+    fn render_to_ui(&self, info: &ToolRenderInfo) -> AnyResult<Box<dyn RenderItem>> {
+        Ok(Self::render_ui(info.tool_name))
+    }
+
+    fn render_to_model(&self, _info: &ToolRenderInfo) -> AnyResult<InterfaceToolOutput> {
+        Ok(Self::render_model())
+    }
 }
 
 /// Interfaces for interacting with tools and rendering their output.
@@ -178,12 +224,13 @@ impl ToolRegistry {
                     output: value,
                 };
                 let tools = self.tools.read().unwrap();
-                tools.get(tool_name)
-                    .and_then(|tool| tool.renderer().render_to_ui(&info)
-                        .inspect_err(|e| warn!("tool output render error: {e}"))
-                        .ok()
-                    )
-                    .unwrap_or_else(|| Self::unknown_ui(tool_name))
+                let renderer: &dyn ToolRenderer = match tools.get(tool_name) {
+                    Some(tool) => tool.renderer(),
+                    None => &UnknownRenderer,
+                };
+                renderer.render_to_ui(&info)
+                    .inspect_err(|e| warn!("tool output render error: {e}"))
+                    .unwrap_or_else(|_| UnknownRenderer::render_ui(tool_name))
             }
             ToolOutput::Failed { error } => Self::failure_ui(tool_name, &error),
         })
@@ -204,12 +251,13 @@ impl ToolRegistry {
                     output: value,
                 };
                 let tools = self.tools.read().unwrap();
-                tools.get(tool_name)
-                    .and_then(|tool| tool.renderer().render_to_model(&info)
-                        .inspect_err(|e| warn!("tool call parse error: {e}"))
-                        .ok()
-                    )
-                    .unwrap_or_else(Self::unknown_to_interface)
+                let renderer: &dyn ToolRenderer = match tools.get(tool_name) {
+                    Some(tool) => tool.renderer(),
+                    None => &UnknownRenderer,
+                };
+                renderer.render_to_model(&info)
+                    .inspect_err(|e| warn!("tool call parse error: {e}"))
+                    .unwrap_or_else(|_| UnknownRenderer::render_model())
             }
             Some(ToolCompletion {
                 output: ToolOutput::Failed { error },
@@ -218,20 +266,6 @@ impl ToolRegistry {
             None => InterfaceToolOutput {
                 content: vec![InterfaceToolOutputContent::Text { text: "tool call interrupted".into() }],
             },
-        }
-    }
-
-    fn unknown_ui(tool_name: &str) -> Box<dyn RenderItem> {
-        let tool_name = if tool_name.is_empty() { "<missing name>" } else { tool_name };
-        Box::new(SystemRenderItem::new(format!("Called '{}'", tool_name)))
-    }
-
-    fn unknown_to_interface() -> InterfaceToolOutput {
-        // FIXME: should render raw JSON instead of a useless error message
-        InterfaceToolOutput {
-            content: vec![InterfaceToolOutputContent::Text {
-                text: Cow::Owned("error: could not parse output".into()),
-            }],
         }
     }
 

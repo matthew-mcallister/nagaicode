@@ -48,25 +48,15 @@ impl DataQuery for McpToolDef {
 }
 
 #[derive(Debug)]
-pub(crate) struct McpRenderer {
-    title: String,
-}
-
-impl McpRenderer {
-    fn new(def: &McpToolDef) -> Self {
-        Self { title: def.title.as_deref().unwrap_or(&def.name).to_owned() }
-    }
-}
+pub(crate) struct McpRenderer;
 
 impl DataQuery for McpRenderer {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "" => Ok(QueryField::Value(json!({
                 "name": self.name(),
-                "title": self.title.clone(),
             }))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
-            "title" => Ok(QueryField::Value(json!(self.title.clone()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -77,8 +67,8 @@ impl ToolRenderer for McpRenderer {
         "mcp"
     }
 
-    fn render_to_ui(&self, _info: &ToolRenderInfo) -> AnyResult<Box<dyn RenderItem>> {
-        Ok(Box::new(SystemRenderItem::new(format!("Called '{}'", &self.title))))
+    fn render_to_ui(&self, info: &ToolRenderInfo) -> AnyResult<Box<dyn RenderItem>> {
+        Ok(Box::new(SystemRenderItem::new(format!("Called '{}'", info.tool_name))))
     }
 
     fn render_to_model(&self, _info: &ToolRenderInfo) -> AnyResult<InterfaceToolOutput> {
@@ -91,17 +81,11 @@ impl ToolRenderer for McpRenderer {
 pub(crate) struct McpTool {
     server: Arc<McpServer>,
     def: McpToolDef,
-    renderer: McpRenderer,
 }
 
 impl McpTool {
     pub(crate) fn new(server: Arc<McpServer>, def: McpToolDef) -> Self {
-        let renderer = McpRenderer::new(&def);
-        Self {
-            server,
-            def,
-            renderer,
-        }
+        Self { server, def }
     }
 }
 
@@ -119,7 +103,7 @@ impl Tool for McpTool {
     }
 
     fn renderer(&self) -> &dyn ToolRenderer {
-        &self.renderer
+        &McpRenderer
     }
 
     fn call<'a>(
@@ -134,7 +118,7 @@ impl Tool for McpTool {
 impl DataQuery for McpTool {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
-            "renderer" => Ok(QueryField::DataQuery(&self.renderer)),
+            "renderer" => Ok(QueryField::DataQuery(&McpRenderer)),
             "" => {
                 let mut value = self.def.query("")?;
                 value["renderer"] = self.query("/renderer")?;
