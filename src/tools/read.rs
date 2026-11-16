@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
+use crate::item::ToolRenderInfo;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
 use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
@@ -155,7 +156,9 @@ impl ToolRenderer for ReadRenderer {
         "read"
     }
 
-    fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
+    fn render_to_ui(&self, info: &ToolRenderInfo) -> AnyResult<Box<dyn RenderItem>> {
+        let input = info.args;
+        let output = info.output;
         if let Some(error) = output.get("error").and_then(Value::as_str) {
             return Ok(Box::new(ErrorRenderItem::new(error.to_owned())));
         }
@@ -177,11 +180,8 @@ impl ToolRenderer for ReadRenderer {
         Ok(Box::new(SystemRenderItem::new(message)))
     }
 
-    fn render_to_model(
-        &self,
-        _input: &Value,
-        output: &Value,
-    ) -> AnyResult<InterfaceToolOutput> {
+    fn render_to_model(&self, info: &ToolRenderInfo) -> AnyResult<InterfaceToolOutput> {
+        let output = info.output;
         if let Some(error) = output.get("error").and_then(Value::as_str) {
             return Ok(InterfaceToolOutput {
                 content: vec![ToolOutputContent::Text {
@@ -298,6 +298,10 @@ mod tests {
         let path = dir.path().join(name);
         std::fs::write(&path, contents).expect("write file");
         path.to_string_lossy().into_owned()
+    }
+
+    fn info<'a>(args: &'a Value, output: &'a Value) -> ToolRenderInfo<'a> {
+        ToolRenderInfo { tool_name: "read", args, output }
     }
 
     fn read_content(output: &Value) -> String {
@@ -475,11 +479,11 @@ mod tests {
     fn test_read_render_ui() {
         let app = App::new().unwrap();
         let dir = Arc::clone(app.cwd());
-        let tool = ReadTool::new(&app.tool_create_args());
+        let renderer = ReadRenderer::new(&app.tool_create_args());
         let theme = &THEME_DARK;
 
         let render = |input: &Value, output: &Value| -> String {
-            let item = tool.render_to_ui(input, output).expect("render item");
+            let item = renderer.render_to_ui(&info(input, output)).expect("render item");
             let (mut lines, _) = item.render(theme, 20, Default::default());
             render_canvas(&mut lines[..])
         };
@@ -487,7 +491,7 @@ mod tests {
         // Paths under cwd are rendered relative to it.
         let input = json!({ "filepath": dir.path().join("a.txt").to_string_lossy(), "start_line": 1, "max_lines": 10 });
         let output = json!({ "content": "", "num_lines": 3 });
-        let item = tool.render_to_ui(&input, &output).unwrap();
+        let item = renderer.render_to_ui(&info(&input, &output)).unwrap();
         assert_eq!(item.query("/type").unwrap(), json!("help"));
         assert_eq!(item.query("/value").unwrap(), json!("Read a.txt (3 lines)"));
         let mut expected = render_help(theme, 20, "Read a.txt (3 lines)");
@@ -510,27 +514,27 @@ mod tests {
 
         // Errors render as error messages.
         let error_output = json!({ "error": "no such file" });
-        let item = tool.render_to_ui(&input, &error_output).unwrap();
+        let item = renderer.render_to_ui(&info(&input, &error_output)).unwrap();
         assert_eq!(item.query("/type").unwrap(), json!("error"));
         let (mut lines, _) = item.render(theme, 20, Default::default());
         let mut expected = render_error(theme, 20, "no such file");
         assert_eq!(render_canvas(&mut lines[..]), render_canvas(&mut expected[..]));
 
         // Incomplete input or output is rejected.
-        assert!(tool.render_to_ui(&json!({}), &output).is_err());
-        assert!(tool.render_to_ui(&input, &json!({})).is_err());
+        assert!(renderer.render_to_ui(&info(&json!({}), &output)).is_err());
+        assert!(renderer.render_to_ui(&info(&input, &json!({}))).is_err());
     }
 
     #[test]
     fn test_read_render_interface() {
         let app = App::new().unwrap();
         let dir = Arc::clone(app.cwd());
-        let tool = ReadTool::new(&app.tool_create_args());
+        let renderer = ReadRenderer::new(&app.tool_create_args());
         let path = dir.path().join("a.txt").to_string_lossy().into_owned();
 
         let input = json!({ "filepath": path, "start_line": 1, "max_lines": 2 });
         let output = json!({ "content": "one\ntwo\n", "num_lines": 2, "next_line": 3 });
-        let result = tool.render_to_interface(&input, &output).unwrap();
+        let result = renderer.render_to_model(&info(&input, &output)).unwrap();
         assert_eq!(
             result.content,
             vec![
@@ -541,7 +545,7 @@ mod tests {
 
         // Reaching EOF is reported instead of a next line.
         let output = json!({ "content": "", "num_lines": 2 });
-        let result = tool.render_to_interface(&input, &output).unwrap();
+        let result = renderer.render_to_model(&info(&input, &output)).unwrap();
         assert_eq!(
             result.content,
             vec![
@@ -551,13 +555,15 @@ mod tests {
         );
 
         // Errors render as a single text item.
-        let result = tool.render_to_interface(&input, &json!({ "error": "no such file" })).unwrap();
+        let result = renderer
+            .render_to_model(&info(&input, &json!({ "error": "no such file" })))
+            .unwrap();
         assert_eq!(
             result.content,
             vec![ToolOutputContent::Text { text: Cow::Owned("error: no such file".into()) }]
         );
 
-        assert!(tool.render_to_interface(&input, &json!({})).is_err());
+        assert!(renderer.render_to_model(&info(&input, &json!({}))).is_err());
     }
 
     #[test]

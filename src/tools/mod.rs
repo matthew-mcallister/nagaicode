@@ -9,7 +9,9 @@ use serde_json::Value;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::{ToolInfo, ToolOutputContent as InterfaceToolOutputContent};
-use crate::item::{ToolCallContent, ToolCompletion, ToolOutput, ToolOutputContent};
+use crate::item::{
+    ToolCallContent, ToolCompletion, ToolOutput, ToolOutputContent, ToolRenderInfo,
+};
 use crate::query::DataQuery;
 use crate::request::DefaultClient;
 use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
@@ -26,10 +28,10 @@ pub trait ToolRenderer: std::fmt::Debug + DataQuery + Send + Sync {
     fn name(&self) -> &str;
 
     /// Builds a renderable item from the tool's output.
-    fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>>;
+    fn render_to_ui(&self, info: &ToolRenderInfo) -> AnyResult<Box<dyn RenderItem>>;
 
     /// Builds inference call inputs from the tool's output.
-    fn render_to_model(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput>;
+    fn render_to_model(&self, info: &ToolRenderInfo) -> AnyResult<InterfaceToolOutput>;
 }
 
 /// Interfaces for interacting with tools and rendering their output.
@@ -41,6 +43,12 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
     /// Description provided to the agent.
     fn description(&self) -> &str;
 
+    // FIXME: Didn't have MCP fully thought out when designing this.
+    // Rendering must be decoupled from tool to support MCP correctly.
+    // 
+    // MCP tools have varying names but all use the same renderer. If
+    // the MCP server is disconnected then tool output will be treated
+    // as unrenderable because the tool is no longer registered.
     /// The renderer to use for this tool's outputs.
     fn renderer(&self) -> &dyn ToolRenderer;
 
@@ -59,24 +67,6 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
         context: &'a ToolCallContext,
         input: &'a Value,
     ) -> BoxFuture<'a, AnyResult<Value>>;
-
-    // FIXME: Didn't have MCP fully thought out when designing this.
-    // Rendering must be decoupled from tool to support MCP correctly.
-    // 
-    // MCP tools have varying names but all use the same renderer. If
-    // the MCP server is disconnected then tool output will be treated
-    // as unrenderable because the tool is no longer registered.
-    /// Builds a renderable item from the tool's output.
-    fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
-        self.renderer().render_to_ui(input, output)
-    }
-
-    // XXX: Same concerns as above.
-    // XXX: Should rename "render_to_model" or something
-    /// Builds inference call inputs from the tool's output.
-    fn render_to_interface(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput> {
-        self.renderer().render_to_model(input, output)
-    }
 
     /// Describes the tool for the inference API.
     fn tool_info(&self) -> ToolInfo {
@@ -182,9 +172,14 @@ impl ToolRegistry {
         let tool_name = &content.tool_name;
         Some(match &content.completion.output {
             ToolOutput::Completed { value } => {
+                let info = ToolRenderInfo {
+                    tool_name,
+                    args: &content.args,
+                    output: value,
+                };
                 let tools = self.tools.read().unwrap();
                 tools.get(tool_name)
-                    .and_then(|tool| tool.render_to_ui(&content.args, value)
+                    .and_then(|tool| tool.renderer().render_to_ui(&info)
                         .inspect_err(|e| warn!("tool output render error: {e}"))
                         .ok()
                     )
@@ -203,9 +198,14 @@ impl ToolRegistry {
                 output: ToolOutput::Completed { value },
                 ..
             }) => {
+                let info = ToolRenderInfo {
+                    tool_name,
+                    args: &content.args,
+                    output: value,
+                };
                 let tools = self.tools.read().unwrap();
                 tools.get(tool_name)
-                    .and_then(|tool| tool.render_to_interface(&content.args, value)
+                    .and_then(|tool| tool.renderer().render_to_model(&info)
                         .inspect_err(|e| warn!("tool call parse error: {e}"))
                         .ok()
                     )

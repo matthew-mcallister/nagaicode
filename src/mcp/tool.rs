@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::error::AnyResult;
+use crate::item::ToolRenderInfo;
 use crate::mcp::McpServer;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolRenderer};
@@ -76,11 +77,11 @@ impl ToolRenderer for McpRenderer {
         "mcp"
     }
 
-    fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
+    fn render_to_ui(&self, _info: &ToolRenderInfo) -> AnyResult<Box<dyn RenderItem>> {
         Ok(Box::new(SystemRenderItem::new(format!("Called '{}'", &self.title))))
     }
 
-    fn render_to_model(&self, input: &Value, output: &Value) -> AnyResult<InterfaceToolOutput> {
+    fn render_to_model(&self, _info: &ToolRenderInfo) -> AnyResult<InterfaceToolOutput> {
         todo!()
     }
 }

@@ -500,10 +500,10 @@ mod tests {
     fn test_render_item_query() {
         use super::*;
 
-        use crate::app::App;
+        use crate::item::ToolRenderInfo;
         use crate::query::QueryError;
-        use crate::tools::Tool;
-        use crate::tools::sh::ShTool;
+        use crate::tools::ToolRenderer;
+        use crate::tools::sh::ShRenderer;
 
         let user = UserRenderItem::new("hello");
         assert_eq!(user.query("/").unwrap(), json!({"type": "user", "value": "hello"}));
@@ -516,12 +516,14 @@ mod tests {
         assert_eq!(command.query("/").unwrap(), json!({"type": "command_prompt", "value": "!foo"}));
         assert!(!command.trailing_padding());
 
-        let app = App::new().unwrap();
-        let tool = ShTool::new(&app.tool_create_args());
-        let item = tool.render_to_ui(
-            &json!({"command": "echo hi"}),
-            &json!({"stdout": "hi\n", "stderr": "", "return_code": 0}),
-        ).unwrap();
+        let input = json!({"command": "echo hi"});
+        let output = json!({"stdout": "hi\n", "stderr": "", "return_code": 0});
+        let info = ToolRenderInfo {
+            tool_name: "sh",
+            args: &input,
+            output: &output,
+        };
+        let item = ShRenderer.render_to_ui(&info).unwrap();
         assert_eq!(
             item.query("/").unwrap(),
             json!({"type": "sh", "cmd_line": "echo hi", "stdout": "hi\n"})

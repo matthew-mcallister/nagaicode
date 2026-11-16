@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
+use crate::item::ToolRenderInfo;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
 use crate::ui::render_item::{SystemRenderItem, RenderItem};
@@ -179,7 +180,8 @@ impl ToolRenderer for GlobRenderer {
         "glob"
     }
 
-    fn render_to_ui(&self, input: &Value, _output: &Value) -> AnyResult<Box<dyn RenderItem>> {
+    fn render_to_ui(&self, info: &ToolRenderInfo) -> AnyResult<Box<dyn RenderItem>> {
+        let input = info.args;
         let pattern = input
             .get("pattern")
             .and_then(Value::as_str)
@@ -198,11 +200,9 @@ impl ToolRenderer for GlobRenderer {
     // error: Error 2
     // truncated at 7 results
     // ```
-    fn render_to_model(
-        &self,
-        input: &Value,
-        output: &Value,
-    ) -> AnyResult<InterfaceToolOutput> {
+    fn render_to_model(&self, info: &ToolRenderInfo) -> AnyResult<InterfaceToolOutput> {
+        let input = info.args;
+        let output = info.output;
         let results = output
             .get("results")
             .and_then(Value::as_array)

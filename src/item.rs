@@ -223,6 +223,13 @@ pub struct ToolCompletion {
     pub output: ToolOutput,
 }
 
+#[derive(Debug)]
+pub struct ToolRenderInfo<'a> {
+    pub tool_name: &'a str,
+    pub args: &'a Value,
+    pub output: &'a Value,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ToolCallContent {
     pub tool_name: String,

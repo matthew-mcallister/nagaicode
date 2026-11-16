@@ -10,6 +10,7 @@ use similar::TextDiff;
 use crate::cwd::Cwd;
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
+use crate::item::ToolRenderInfo;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
 use crate::ui::markdown::ResumePoint;
@@ -232,7 +233,9 @@ impl ToolRenderer for EditRenderer {
         "edit"
     }
 
-    fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
+    fn render_to_ui(&self, info: &ToolRenderInfo) -> AnyResult<Box<dyn RenderItem>> {
+        let input = info.args;
+        let output = info.output;
         if let Some(error) = output.get("error").and_then(Value::as_str) {
             return Ok(Box::new(ErrorRenderItem::new(error.to_owned())));
         }
@@ -251,11 +254,8 @@ impl ToolRenderer for EditRenderer {
         }))
     }
 
-    fn render_to_model(
-        &self,
-        _input: &Value,
-        output: &Value,
-    ) -> AnyResult<InterfaceToolOutput> {
+    fn render_to_model(&self, info: &ToolRenderInfo) -> AnyResult<InterfaceToolOutput> {
+        let output = info.output;
         if let Some(error) = output.get("error").and_then(Value::as_str) {
             return Ok(InterfaceToolOutput {
                 content: vec![ToolOutputContent::Text {
@@ -434,8 +434,12 @@ mod tests {
         futures::executor::block_on(tool.call(&context, input))
     }
 
-    fn render(tool: &EditTool, width: usize, input: &Value, output: &Value) -> AnyResult<String> {
-        let item = tool.render_to_ui(input, output)?;
+    fn info<'a>(args: &'a Value, output: &'a Value) -> ToolRenderInfo<'a> {
+        ToolRenderInfo { tool_name: "edit", args, output }
+    }
+
+    fn render(tool: &EditRenderer, width: usize, input: &Value, output: &Value) -> AnyResult<String> {
+        let item = tool.render_to_ui(&info(input, output))?;
         let (mut lines, _) = item.render(&THEME_DARK, width, Default::default());
         Ok(render_canvas(&mut lines[..]))
     }
@@ -663,19 +667,19 @@ mod tests {
     fn test_edit_render_ui() {
         let app = App::new().unwrap();
         let dir = Arc::clone(app.cwd());
-        let tool = EditTool::new(&app.tool_create_args());
+        let renderer = EditRenderer::new(&app.tool_create_args());
         let style = Style::new(THEME_DARK.text_base, THEME_DARK.bg_prompt);
 
         let input = json!({ "filepath": dir.path().join("a.txt").to_string_lossy() });
         let output = json!({ "matches": 1, "diff": "-two\n+TWO\n" });
 
         // Paths under cwd are rendered relative to it.
-        let item = tool.render_to_ui(&input, &output).unwrap();
+        let item = renderer.render_to_ui(&info(&input, &output)).unwrap();
         assert_eq!(item.query("/type").unwrap(), json!("edit"));
         assert_eq!(item.query("/header").unwrap(), json!("Edited a.txt"));
         assert_eq!(item.query("/diff").unwrap(), json!("-two\n+TWO\n"));
         assert_eq!(
-            render(&tool, 14, &input, &output).unwrap(),
+            render(&renderer, 14, &input, &output).unwrap(),
             [
                 format!("{style}              "),
                 format!("{style}  Edited a.t  "),
@@ -688,13 +692,13 @@ mod tests {
 
         // Paths outside cwd are rendered as-is.
         let input = json!({ "filepath": "/elsewhere/b.txt" });
-        let item = tool.render_to_ui(&input, &output).unwrap();
+        let item = renderer.render_to_ui(&info(&input, &output)).unwrap();
         assert_eq!(item.query("/header").unwrap(), json!("Edited /elsewhere/b.txt"));
 
         // An empty diff renders only the header row.
         let empty = json!({ "matches": 0, "diff": "" });
         assert_eq!(
-            render(&tool, 20, &input, &empty).unwrap(),
+            render(&renderer, 20, &input, &empty).unwrap(),
             [
                 format!("{style}                    "),
                 format!("{style}  Edited /elsewher  "),
@@ -704,25 +708,25 @@ mod tests {
         );
 
         // Narrow widths render nothing.
-        assert_eq!(render(&tool, 7, &input, &output).unwrap(), "");
+        assert_eq!(render(&renderer, 7, &input, &output).unwrap(), "");
 
         // Errors render as error messages.
         let error_output = json!({ "error": "boom" });
-        let item = tool.render_to_ui(&input, &error_output).unwrap();
+        let item = renderer.render_to_ui(&info(&input, &error_output)).unwrap();
         assert_eq!(item.query("/type").unwrap(), json!("error"));
         let (mut lines, _) = item.render(&THEME_DARK, 20, Default::default());
         let mut expected = render_error(&THEME_DARK, 20, "boom");
         assert_eq!(render_canvas(&mut lines[..]), render_canvas(&mut expected[..]));
 
         // Incomplete input or output is rejected.
-        assert!(tool.render_to_ui(&json!({}), &output).is_err());
-        assert!(tool.render_to_ui(&input, &json!({})).is_err());
+        assert!(renderer.render_to_ui(&info(&json!({}), &output)).is_err());
+        assert!(renderer.render_to_ui(&info(&input, &json!({}))).is_err());
     }
 
     #[test]
     fn test_edit_render_long_diff() {
         let app = App::new().unwrap();
-        let tool = EditTool::new(&app.tool_create_args());
+        let renderer = EditRenderer::new(&app.tool_create_args());
         let style = Style::new(THEME_DARK.text_base, THEME_DARK.bg_prompt);
         let ellipsis_style = Style::new(THEME_DARK.text_subtle, THEME_DARK.bg_prompt);
 
@@ -730,7 +734,7 @@ mod tests {
         let output = json!({ "matches": 1, "diff": format!("{}\n", "x".repeat(200)) });
         let line = || format!("{style}  xxxxxxxxxx  ");
         assert_eq!(
-            render(&tool, 14, &input, &output).unwrap(),
+            render(&renderer, 14, &input, &output).unwrap(),
             [
                 format!("{style}              "),
                 format!("{style}  Edited a.t  "),
@@ -747,11 +751,11 @@ mod tests {
     fn test_edit_render_interface() {
         let app = App::new().unwrap();
         let dir = Arc::clone(app.cwd());
-        let tool = EditTool::new(&app.tool_create_args());
+        let renderer = EditRenderer::new(&app.tool_create_args());
         let input = json!({ "filepath": dir.path().join("a.txt").to_string_lossy() });
 
         let output = json!({ "matches": 3, "line_ending": "crlf", "diff": "-two\n+TWO\n" });
-        let result = tool.render_to_interface(&input, &output).unwrap();
+        let result = renderer.render_to_model(&info(&input, &output)).unwrap();
         assert_eq!(
             result.content,
             vec![ToolOutputContent::Text {
@@ -760,8 +764,8 @@ mod tests {
         );
 
         // Zero matches is reported to the model.
-        let result = tool
-            .render_to_interface(&input, &json!({ "matches": 0, "line_ending": "lf", "diff": "" }))
+        let result = renderer
+            .render_to_model(&info(&input, &json!({ "matches": 0, "line_ending": "lf", "diff": "" })))
             .unwrap();
         assert_eq!(
             result.content,
@@ -771,15 +775,15 @@ mod tests {
         );
 
         // Errors render as a single text item.
-        let result = tool
-            .render_to_interface(&input, &json!({ "error": "boom" }))
+        let result = renderer
+            .render_to_model(&info(&input, &json!({ "error": "boom" })))
             .unwrap();
         assert_eq!(
             result.content,
             vec![ToolOutputContent::Text { text: Cow::Owned("error: boom".into()) }]
         );
 
-        assert!(tool.render_to_interface(&input, &json!({})).is_err());
+        assert!(renderer.render_to_model(&info(&input, &json!({}))).is_err());
     }
 
     #[test]

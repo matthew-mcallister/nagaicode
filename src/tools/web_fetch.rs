@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
+use crate::item::ToolRenderInfo;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::{Client, DefaultClient, Response as ResponseTrait};
 use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
@@ -196,12 +197,13 @@ impl ToolRenderer for WebFetchRenderer {
         "web_fetch"
     }
 
-    fn render_to_ui(&self, input: &Value, output: &Value) -> AnyResult<Box<dyn RenderItem>> {
+    fn render_to_ui(&self, info: &ToolRenderInfo) -> AnyResult<Box<dyn RenderItem>> {
+        let input = info.args;
         let url = input
             .get("url")
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("invalid tool input"))?;
-        let message = match get_content_length(output) {
+        let message = match get_content_length(info.output) {
             Some(length) => format!("Fetched {url} ({})", format_content_length(length)),
             None => format!("Fetched {url}"),
         };
@@ -209,11 +211,8 @@ impl ToolRenderer for WebFetchRenderer {
         Ok(Box::new(SystemRenderItem::new(message)))
     }
 
-    fn render_to_model(
-        &self,
-        _input: &Value,
-        output: &Value,
-    ) -> AnyResult<InterfaceToolOutput> {
+    fn render_to_model(&self, info: &ToolRenderInfo) -> AnyResult<InterfaceToolOutput> {
+        let output = info.output;
         let status = output
             .get("status")
             .and_then(Value::as_u64)
@@ -349,6 +348,10 @@ mod tests {
         json!({ "url": url, "start_line": 1, "max_lines": 10 })
     }
 
+    fn info<'a>(args: &'a Value, output: &'a Value) -> ToolRenderInfo<'a> {
+        ToolRenderInfo { tool_name: "web_fetch", args, output }
+    }
+
     #[derive(Debug)]
     struct Fixture {
         client: DefaultClient,
@@ -447,7 +450,7 @@ mod tests {
         let input = input(url);
         let headers = [("content-type", "text/plain"), ("content-length", "1234")];
         let output = f.fetch(url, StatusCode::OK, "hello", &headers).await.unwrap();
-        let item = f.tool.render_to_ui(&input, &output).unwrap();
+        let item = WebFetchRenderer.render_to_ui(&info(&input, &output)).unwrap();
         assert_eq!(item.query("/type").unwrap(), json!("help"));
         assert_eq!(
             item.query("/value").unwrap(),
@@ -456,7 +459,7 @@ mod tests {
 
         let headers = [("content-type", "text/plain"), ("content-length", "10000")];
         let output = f.fetch(url, StatusCode::OK, "hello", &headers).await.unwrap();
-        let item = f.tool.render_to_ui(&input, &output).unwrap();
+        let item = WebFetchRenderer.render_to_ui(&info(&input, &output)).unwrap();
         assert_eq!(item.query("/type").unwrap(), json!("help"));
         assert_eq!(
             item.query("/value").unwrap(),
@@ -471,7 +474,7 @@ mod tests {
         let input = input(url);
         let headers = [("content-type", "text/plain"), ("content-length", "1234")];
         let output = f.fetch(url, StatusCode::OK, "hello", &headers).await.unwrap();
-        let result = f.tool.render_to_interface(&input, &output).unwrap();
+        let result = WebFetchRenderer.render_to_model(&info(&input, &output)).unwrap();
         assert_eq!(
             result.content,
             vec![
@@ -492,7 +495,7 @@ mod tests {
 
         let headers = [("content-type", "text/plain"), ("content-length", "10000")];
         let output = f.fetch(url, StatusCode::INTERNAL_SERVER_ERROR, "hello", &headers).await.unwrap();
-        let result = f.tool.render_to_interface(&input, &output).unwrap();
+        let result = WebFetchRenderer.render_to_model(&info(&input, &output)).unwrap();
         assert_eq!(
             result.content,
             vec![
