@@ -245,6 +245,79 @@ pub enum ToolOutput {
     Failed { error: String },
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ToolCall<'a> {
+    pub tool_name: &'a str,
+    pub call_id: &'a str,
+    pub args: &'a Value,
+    pub completion: Option<&'a ToolCompletion>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CompletedToolCall<'a> {
+    pub tool_name: &'a str,
+    pub call_id: &'a str,
+    pub args: &'a Value,
+    pub completion: &'a ToolCompletion,
+}
+
+impl<'a> ToolCall<'a> {
+    pub fn as_call(&self) -> ToolCall<'_> {
+        *self
+    }
+}
+
+impl<'a> CompletedToolCall<'a> {
+    pub fn as_call(&self) -> ToolCall<'_> {
+        ToolCall {
+            tool_name: self.tool_name,
+            call_id: self.call_id,
+            args: self.args,
+            completion: Some(self.completion),
+        }
+    }
+}
+
+impl ToolCallContent {
+    pub fn as_call(&self) -> ToolCall<'_> {
+        ToolCall {
+            tool_name: &self.tool_name,
+            call_id: &self.call_id,
+            args: &self.args,
+            completion: self.completion.as_ref(),
+        }
+    }
+
+    pub fn as_completed(&self) -> Option<CompletedToolCall<'_>> {
+        Some(CompletedToolCall {
+            tool_name: &self.tool_name,
+            call_id: &self.call_id,
+            args: &self.args,
+            completion: self.completion.as_ref()?,
+        })
+    }
+}
+
+impl ToolOutputContent {
+    pub fn as_call(&self) -> ToolCall<'_> {
+        ToolCall {
+            tool_name: &self.tool_name,
+            call_id: &self.call_id,
+            args: &self.args,
+            completion: Some(&self.completion),
+        }
+    }
+
+    pub fn as_completed(&self) -> CompletedToolCall<'_> {
+        CompletedToolCall {
+            tool_name: &self.tool_name,
+            call_id: &self.call_id,
+            args: &self.args,
+            completion: &self.completion,
+        }
+    }
+}
+
 #[cfg(test)]
 impl ToolOutputContent {
     pub(crate) fn into_call(self) -> ToolCallContent {
