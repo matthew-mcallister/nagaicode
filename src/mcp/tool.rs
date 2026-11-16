@@ -109,10 +109,6 @@ impl Tool for McpTool {
         &self.def.name
     }
 
-    fn title(&self) -> &str {
-        &self.renderer.title
-    }
-
     fn description(&self) -> &str {
         self.def.description.as_deref().unwrap_or("")
     }

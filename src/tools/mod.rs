@@ -38,11 +38,6 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
     /// tools have the same name, the tool loaded last shadows the other tools.
     fn name(&self) -> &str;
 
-    /// Human-readable name.
-    fn title(&self) -> &str {
-        self.name()
-    }
-
     /// Description provided to the agent.
     fn description(&self) -> &str;
 
@@ -146,13 +141,8 @@ impl ToolRegistry {
         let name = tool.name().to_owned();
         let mut tools = self.tools.write().unwrap();
         let old = tools.insert(name.clone(), Arc::from(tool));
-        if let Some(old) = old {
-            warn!(
-                "duplicate tool registered: '{}' (old title: '{}', new title: '{}')",
-                name,
-                old.title(),
-                tools[&name].title(),
-            );
+        if old.is_some() {
+            warn!("duplicate tool registered: '{}'", name);
         } else {
             trace!("registered tool '{}'", name);
         }
