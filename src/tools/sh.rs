@@ -22,7 +22,6 @@ use crate::ui::text::{Row, SPACES, ellipsize, wrap_line_naive};
 #[derive(Debug)]
 pub struct ShTool {
     cwd: Arc<Cwd>,
-    renderer: ShRenderer,
     input_schema: Value,
 }
 
@@ -38,7 +37,6 @@ impl ShTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             cwd: Arc::clone(args.cwd),
-            renderer: ShRenderer,
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -61,7 +59,7 @@ impl DataQuery for ShTool {
             }))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
             "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
-            "renderer" => Ok(QueryField::DataQuery(self.renderer())),
+            "renderer" => Ok(QueryField::Value(json!(self.renderer()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -80,8 +78,8 @@ impl Tool for ShTool {
         &self.input_schema
     }
 
-    fn renderer(&self) -> &dyn ToolRenderer {
-        &self.renderer
+    fn renderer(&self) -> &str {
+        "sh"
     }
 
     fn call<'a>(

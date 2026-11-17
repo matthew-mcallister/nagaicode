@@ -72,7 +72,6 @@ impl Default for LineEnding {
 #[derive(Debug)]
 pub struct EditTool {
     cwd: Arc<Cwd>,
-    renderer: EditRenderer,
     input_schema: Value,
 }
 
@@ -80,7 +79,6 @@ impl EditTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             cwd: Arc::clone(args.cwd),
-            renderer: EditRenderer::new(args),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -106,7 +104,7 @@ impl DataQuery for EditTool {
             }))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
             "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
-            "renderer" => Ok(QueryField::DataQuery(self.renderer())),
+            "renderer" => Ok(QueryField::Value(json!(self.renderer()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -126,8 +124,8 @@ impl Tool for EditTool {
         &self.input_schema
     }
 
-    fn renderer(&self) -> &dyn ToolRenderer {
-        &self.renderer
+    fn renderer(&self) -> &str {
+        "edit"
     }
 
     fn call<'a>(
@@ -795,12 +793,12 @@ mod tests {
             json!({
                 "name": "edit",
                 "is_visible": true,
-                "renderer": { "name": "edit" },
+                "renderer": "edit",
             })
         );
         assert_eq!(tool.query("/name").unwrap(), json!("edit"));
         assert_eq!(tool.query("/is_visible").unwrap(), json!(true));
-        assert_eq!(tool.query("/renderer/name").unwrap(), json!("edit"));
+        assert_eq!(tool.query("/renderer").unwrap(), json!("edit"));
         assert!(matches!(tool.query("/missing"), Err(QueryError::InvalidField(_))));
 
         let item = EditRenderItem {

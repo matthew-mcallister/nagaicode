@@ -2,7 +2,7 @@ use diesel::Connection;
 
 use crate::app::AppEvent;
 use crate::error::AnyResult;
-use crate::item::{Item, ItemContent, NewItem, ToolCompletion, ToolOutputContent};
+use crate::item::{Item, ItemContent, NewItem, ToolOutputContent};
 use crate::task::{Task, TaskContext};
 use crate::tools::ToolCallContext;
 
@@ -20,13 +20,10 @@ impl ExecuteToolCall {
         let tool_context = ToolCallContext {
             session_id: self.item.session_id,
         };
-        let completion = ToolCompletion {
-            renderer: tc.tool_name.clone(),
-            output: context
-                .tool_registry()
-                .call(&tool_context, &tc.tool_name, &tc.args)
-                .await,
-        };
+        let completion = context
+            .tool_registry()
+            .call(&tool_context, &tc.tool_name, &tc.args)
+            .await;
 
         let new_item = context.connection()?.transaction(|cxn| -> AnyResult<_> {
             self.item.set_output(cxn, completion.clone())?;
@@ -164,7 +161,7 @@ mod tests {
                 call_id: "call5".to_owned(),
                 args: json!({}),
                 completion: ToolCompletion {
-                    renderer: "no_such_tool".to_owned(),
+                    renderer: "unknown".to_owned(),
                     output: ToolOutput::Failed {
                         error: "no such tool 'no_such_tool'".to_owned(),
                     },

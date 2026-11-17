@@ -23,7 +23,6 @@ const TRUNCATION_SUFFIX: &str = "... (truncated at 2000 bytes)";
 #[derive(Debug)]
 pub struct ReadTool {
     cwd: Arc<Cwd>,
-    renderer: ReadRenderer,
     input_schema: Value,
 }
 
@@ -33,7 +32,6 @@ impl ReadTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             cwd: Arc::clone(args.cwd),
-            renderer: ReadRenderer::new(args),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -58,7 +56,7 @@ impl DataQuery for ReadTool {
             }))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
             "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
-            "renderer" => Ok(QueryField::DataQuery(self.renderer())),
+            "renderer" => Ok(QueryField::Value(json!(self.renderer()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -79,8 +77,8 @@ impl Tool for ReadTool {
         &self.input_schema
     }
 
-    fn renderer(&self) -> &dyn ToolRenderer {
-        &self.renderer
+    fn renderer(&self) -> &str {
+        "read"
     }
 
     fn call<'a>(
@@ -575,12 +573,12 @@ mod tests {
             json!({
                 "name": "read",
                 "is_visible": true,
-                "renderer": { "name": "read" },
+                "renderer": "read",
             })
         );
         assert_eq!(tool.query("/name").unwrap(), json!("read"));
         assert_eq!(tool.query("/is_visible").unwrap(), json!(true));
-        assert_eq!(tool.query("/renderer/name").unwrap(), json!("read"));
+        assert_eq!(tool.query("/renderer").unwrap(), json!("read"));
         assert!(matches!(tool.query("/missing"), Err(QueryError::InvalidField(_))));
     }
 }

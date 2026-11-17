@@ -16,7 +16,7 @@ use crate::task::{Task, TaskContext};
 use crate::tools::ToolRegistry;
 
 mod stdio;
-mod tool;
+pub(crate) mod tool;
 mod transport;
 
 const TIMEOUT: Duration = Duration::from_secs(30);

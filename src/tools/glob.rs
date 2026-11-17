@@ -20,7 +20,6 @@ use crate::ui::render_item::{SystemRenderItem, RenderItem};
 #[derive(Debug)]
 pub struct GlobTool {
     cwd: Arc<Cwd>,
-    renderer: GlobRenderer,
     input_schema: Value,
 }
 
@@ -30,7 +29,6 @@ impl GlobTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             cwd: Arc::clone(args.cwd),
-            renderer: GlobRenderer,
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -55,7 +53,7 @@ impl DataQuery for GlobTool {
             }))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
             "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
-            "renderer" => Ok(QueryField::DataQuery(self.renderer())),
+            "renderer" => Ok(QueryField::Value(json!(self.renderer()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -79,8 +77,8 @@ impl Tool for GlobTool {
         &self.input_schema
     }
 
-    fn renderer(&self) -> &dyn ToolRenderer {
-        &self.renderer
+    fn renderer(&self) -> &str {
+        "glob"
     }
 
     fn call<'a>(

@@ -102,8 +102,8 @@ impl Tool for McpTool {
         &self.def.input_schema
     }
 
-    fn renderer(&self) -> &dyn ToolRenderer {
-        &McpRenderer
+    fn renderer(&self) -> &str {
+        "mcp"
     }
 
     fn call<'a>(
@@ -118,7 +118,7 @@ impl Tool for McpTool {
 impl DataQuery for McpTool {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
-            "renderer" => Ok(QueryField::DataQuery(&McpRenderer)),
+            "renderer" => Ok(QueryField::Value(json!(self.renderer()))),
             "" => {
                 let mut value = self.def.query("")?;
                 value["renderer"] = self.query("/renderer")?;

@@ -12,6 +12,7 @@ use crate::interface::{ToolInfo, ToolOutputContent as InterfaceToolOutputContent
 use crate::item::{
     ToolCallContent, ToolCompletion, ToolOutput, ToolOutputContent, ToolRenderInfo,
 };
+use crate::mcp::tool::McpRenderer;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::DefaultClient;
 use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
@@ -37,6 +38,8 @@ pub trait ToolRenderer: std::fmt::Debug + DataQuery + Send + Sync {
 /// Renderer used when no renderer is available for a tool's output.
 #[derive(Debug)]
 pub struct UnknownRenderer;
+
+const UNKNOWN_RENDERER: UnknownRenderer = UnknownRenderer;
 
 impl UnknownRenderer {
     fn render_ui(tool_name: &str) -> Box<dyn RenderItem> {
@@ -89,14 +92,8 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
     /// Description provided to the agent.
     fn description(&self) -> &str;
 
-    // FIXME: Didn't have MCP fully thought out when designing this.
-    // Rendering must be decoupled from tool to support MCP correctly.
-    // 
-    // MCP tools have varying names but all use the same renderer. If
-    // the MCP server is disconnected then tool output will be treated
-    // as unrenderable because the tool is no longer registered.
-    /// The renderer to use for this tool's outputs.
-    fn renderer(&self) -> &dyn ToolRenderer;
+    /// Name of the renderer used for this tool's outputs.
+    fn renderer(&self) -> &str;
 
     /// Whether the tool is advertised to the model.
     fn is_visible(&self) -> bool {
@@ -146,31 +143,49 @@ pub struct ToolCallContext {
 #[derive(Debug)]
 pub struct ToolRegistry {
     tools: RwLock<FnvHashMap<String, Arc<dyn Tool>>>,
+    renderers: FnvHashMap<String, Box<dyn ToolRenderer>>,
 }
 
 impl ToolRegistry {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
+        let mut this = Self {
+            tools: Default::default(),
+            renderers: Default::default(),
+        };
+        
         // Builtin tools
-        // - sh
-        // - read
-        // - write
-        // - edit
-        // - glob
-        // - web_fetch
-        let mut tools: FnvHashMap<String, Arc<dyn Tool>> = FnvHashMap::default();
-        let sh = sh::ShTool::new(args);
-        tools.insert(sh.name().to_owned(), Arc::new(sh));
-        let read = read::ReadTool::new(args);
-        tools.insert(read.name().to_owned(), Arc::new(read));
-        let edit = edit::EditTool::new(args);
-        tools.insert(edit.name().to_owned(), Arc::new(edit));
-        let write = write::WriteTool::new(args);
-        tools.insert(write.name().to_owned(), Arc::new(write));
-        let glob = glob::GlobTool::new(args);
-        tools.insert(glob.name().to_owned(), Arc::new(glob));
-        let web_fetch = web_fetch::WebFetchTool::new(args);
-        tools.insert(web_fetch.name().to_owned(), Arc::new(web_fetch));
-        Self { tools: RwLock::new(tools) }
+        this.register(Box::new(sh::ShTool::new(args)));
+        this.register(Box::new(read::ReadTool::new(args)));
+        this.register(Box::new(edit::EditTool::new(args)));
+        this.register(Box::new(write::WriteTool::new(args)));
+        this.register(Box::new(glob::GlobTool::new(args)));
+        this.register(Box::new(web_fetch::WebFetchTool::new(args)));
+
+        // Builtin renderers
+        this.register_renderer(Box::new(UnknownRenderer));
+        this.register_renderer(Box::new(sh::ShRenderer));
+        this.register_renderer(Box::new(read::ReadRenderer::new(args)));
+        this.register_renderer(Box::new(edit::EditRenderer::new(args)));
+        this.register_renderer(Box::new(write::WriteRenderer::new(args)));
+        this.register_renderer(Box::new(glob::GlobRenderer));
+        this.register_renderer(Box::new(web_fetch::WebFetchRenderer));
+        this.register_renderer(Box::new(McpRenderer));
+
+        this
+    }
+
+    fn register_renderer(&mut self, renderer: Box<dyn ToolRenderer>) {
+        let name = renderer.name().to_owned();
+        self.renderers.insert(name.clone(), renderer).expect("duplicate renderer");
+    }
+
+    /// Looks up the renderer with the given name, falling back on
+    /// `UnknownRenderer` if there is no such renderer.
+    pub fn get_renderer(&self, name: &str) -> &dyn ToolRenderer {
+        match self.renderers.get(name) {
+            Some(renderer) => &**renderer,
+            None => &UNKNOWN_RENDERER,
+        }
     }
 
     pub(crate) fn register(&self, tool: Box<dyn Tool>) {
@@ -201,15 +216,22 @@ impl ToolRegistry {
         context: &ToolCallContext,
         tool_name: &str,
         input: &Value,
-    ) -> ToolOutput {
+    ) -> ToolCompletion {
         let tool = self.tools.read().unwrap().get(tool_name).cloned();
         let Some(tool) = tool else {
-            return ToolOutput::Failed { error: format!("no such tool '{}'", tool_name) };
+            return ToolCompletion {
+                renderer: UNKNOWN_RENDERER.name().to_owned(),
+                output: ToolOutput::Failed {
+                    error: format!("no such tool '{}'", tool_name),
+                },
+            };
         };
-        match tool.call(context, input).await {
+        let renderer = tool.renderer().to_owned();
+        let output = match tool.call(context, input).await {
             Ok(value) => ToolOutput::Completed { value },
             Err(e) => ToolOutput::Failed { error: e.to_string() },
-        }
+        };
+        ToolCompletion { renderer, output }
     }
 
     /// Builds a render item to display a tool call. Handles all possible
@@ -223,12 +245,8 @@ impl ToolRegistry {
                     args: &content.args,
                     output: value,
                 };
-                let tools = self.tools.read().unwrap();
-                let renderer: &dyn ToolRenderer = match tools.get(tool_name) {
-                    Some(tool) => tool.renderer(),
-                    None => &UnknownRenderer,
-                };
-                renderer.render_to_ui(&info)
+                self.get_renderer(&content.completion.renderer)
+                    .render_to_ui(&info)
                     .inspect_err(|e| warn!("tool output render error: {e}"))
                     .unwrap_or_else(|_| UnknownRenderer::render_ui(tool_name))
             }
@@ -242,20 +260,16 @@ impl ToolRegistry {
         let tool_name = &content.tool_name;
         match &content.completion {
             Some(ToolCompletion {
+                renderer,
                 output: ToolOutput::Completed { value },
-                ..
             }) => {
                 let info = ToolRenderInfo {
                     tool_name,
                     args: &content.args,
                     output: value,
                 };
-                let tools = self.tools.read().unwrap();
-                let renderer: &dyn ToolRenderer = match tools.get(tool_name) {
-                    Some(tool) => tool.renderer(),
-                    None => &UnknownRenderer,
-                };
-                renderer.render_to_model(&info)
+                self.get_renderer(renderer)
+                    .render_to_model(&info)
                     .inspect_err(|e| warn!("tool call parse error: {e}"))
                     .unwrap_or_else(|_| UnknownRenderer::render_model())
             }
@@ -300,11 +314,12 @@ mod tests {
         let registry = registry();
         let context = ToolCallContext { session_id: 1 };
 
-        let output = registry
+        let completion = registry
             .call(&context, "sh", &json!({ "command": "echo hi" }))
             .await;
-        let ToolOutput::Completed { value } = &output else {
-            panic!("expected a completed call, got {output:?}");
+        assert_eq!(completion.renderer, "sh");
+        let ToolOutput::Completed { value } = &completion.output else {
+            panic!("expected a completed call, got {completion:?}");
         };
         assert_eq!(value["return_code"], json!(0));
         assert_eq!(value["stderr"], json!(""));
@@ -313,14 +328,20 @@ mod tests {
         // Failed calls record their error.
         assert_eq!(
             registry.call(&context, "sh", &json!({ "dnammoc": 123 })).await,
-            ToolOutput::Failed {
-                error: "invalid arguments for 'sh': expected {\"command\": \"...\"}".to_owned(),
+            ToolCompletion {
+                renderer: "sh".to_owned(),
+                output: ToolOutput::Failed {
+                    error: "invalid arguments for 'sh': expected {\"command\": \"...\"}".to_owned(),
+                },
             }
         );
 
         assert_eq!(
             registry.call(&context, "missing", &json!({})).await,
-            ToolOutput::Failed { error: "no such tool 'missing'".to_owned() },
+            ToolCompletion {
+                renderer: "unknown".to_owned(),
+                output: ToolOutput::Failed { error: "no such tool 'missing'".to_owned() },
+            },
         );
     }
 
@@ -334,13 +355,15 @@ mod tests {
         // Tool call expects a string
         let mut item = tool_call(&mut conn, &turn, "sh", "call123", json!({ "command": 123 }), None);
         let tc = item.content.as_tool_call().unwrap();
-        let output = registry.call(&context, &tc.tool_name, &tc.args).await;
+        let completion = registry.call(&context, &tc.tool_name, &tc.args).await;
         let error = "invalid arguments for 'sh': expected {\"command\": \"...\"}";
-        assert_eq!(output, ToolOutput::Failed { error: error.to_owned() });
-        let completion = ToolCompletion {
-            renderer: "sh".to_owned(),
-            output,
-        };
+        assert_eq!(
+            completion,
+            ToolCompletion {
+                renderer: "sh".to_owned(),
+                output: ToolOutput::Failed { error: error.to_owned() },
+            }
+        );
         item.set_output(&mut conn, completion.clone()).unwrap();
 
         // Round trip gives expected results

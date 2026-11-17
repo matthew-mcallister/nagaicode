@@ -33,7 +33,6 @@ const MAX_CONTENT_LENGTH: u64 = 1_000_000;
 #[derive(Debug)]
 pub struct WebFetchTool {
     client: DefaultClient,
-    renderer: WebFetchRenderer,
     input_schema: Value,
 }
 
@@ -42,7 +41,6 @@ impl WebFetchTool {
     pub fn new(args: &ToolCreateArgs<'_>) -> Self {
         Self {
             client: args.client.clone(),
-            renderer: WebFetchRenderer,
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -67,7 +65,7 @@ impl DataQuery for WebFetchTool {
             }))),
             "name" => Ok(QueryField::Value(json!(self.name()))),
             "is_visible" => Ok(QueryField::Value(json!(self.is_visible()))),
-            "renderer" => Ok(QueryField::DataQuery(self.renderer())),
+            "renderer" => Ok(QueryField::Value(json!(self.renderer()))),
             _ => Err(QueryError::InvalidField(field.to_string())),
         }
     }
@@ -88,8 +86,8 @@ impl Tool for WebFetchTool {
         &self.input_schema
     }
 
-    fn renderer(&self) -> &dyn ToolRenderer {
-        &self.renderer
+    fn renderer(&self) -> &str {
+        "web_fetch"
     }
 
     fn call<'a>(
