@@ -4,7 +4,7 @@ use crate::app::AppEvent;
 use crate::error::AnyResult;
 use crate::item::{Item, ItemContent, NewItem, ToolOutputContent};
 use crate::task::{Task, TaskContext};
-use crate::tools::ToolCallContext;
+use crate::tools::ToolCallInfo;
 
 pub struct ExecuteToolCall {
     item: Item,
@@ -17,12 +17,13 @@ impl ExecuteToolCall {
 
     async fn process(mut self, context: &mut TaskContext) -> AnyResult<()> {
         let tc = self.item.content.as_tool_call().unwrap().clone();
-        let tool_context = ToolCallContext {
-            session_id: self.item.session_id,
-        };
         let completion = context
             .tool_registry()
-            .call(&tool_context, &tc.tool_name, &tc.args)
+            .call(ToolCallInfo {
+                session_id: self.item.session_id,
+                tool_name: &tc.tool_name,
+                input: &tc.args,
+            })
             .await;
 
         let new_item = context.connection()?.transaction(|cxn| -> AnyResult<_> {

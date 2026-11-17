@@ -12,7 +12,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::item::ToolRenderInfo;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallInfo, ToolCreateArgs, ToolRenderer};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::{ErrorRenderItem, RenderItem};
 use crate::ui::style::{Style, Theme};
@@ -130,10 +130,10 @@ impl Tool for EditTool {
 
     fn call<'a>(
         &'a self,
-        _context: &'a ToolCallContext,
-        input: &'a Value,
+        info: ToolCallInfo<'a>,
     ) -> BoxFuture<'a, AnyResult<Value>> {
         Box::pin(async move {
+            let input = info.input;
             let invalid = || anyhow!("arguments don't match schema");
             let filepath = input
                 .get("filepath")
@@ -428,8 +428,11 @@ mod tests {
 
     fn call(app: &App, input: &Value) -> anyhow::Result<Value> {
         let tool = EditTool::new(&app.tool_create_args());
-        let context = ToolCallContext { session_id: 1 };
-        futures::executor::block_on(tool.call(&context, input))
+        futures::executor::block_on(tool.call(ToolCallInfo {
+            session_id: 1,
+            tool_name: "edit",
+            input,
+        }))
     }
 
     fn info<'a>(args: &'a Value, output: &'a Value) -> ToolRenderInfo<'a> {

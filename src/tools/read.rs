@@ -13,7 +13,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::item::ToolRenderInfo;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallInfo, ToolCreateArgs, ToolRenderer};
 use crate::ui::render_item::{ErrorRenderItem, SystemRenderItem, RenderItem};
 
 const MAX_LINE_BYTES: usize = 2000;
@@ -83,10 +83,10 @@ impl Tool for ReadTool {
 
     fn call<'a>(
         &'a self,
-        _context: &'a ToolCallContext,
-        input: &'a Value,
+        info: ToolCallInfo<'a>,
     ) -> BoxFuture<'a, AnyResult<Value>> {
         Box::pin(async move {
+            let input = info.input;
             let invalid = || anyhow!("arguments don't match schema");
             let filepath = input
                 .get("filepath")
@@ -319,7 +319,6 @@ mod tests {
         let dir = Arc::clone(app.cwd());
         let path = write(&dir, "a.txt", "one\ntwo\nthree\n");
         let tool = ReadTool::new(&app.tool_create_args());
-        let context = ToolCallContext { session_id: 1 };
 
         assert_eq!(tool.name(), "read");
         assert!(tool.is_visible());
@@ -338,7 +337,7 @@ mod tests {
         );
 
         // Whole file: no next_line since the last line was read.
-        let out = tool.call(&context, &json!({ "filepath": path, "start_line": 1, "max_lines": 10 }))
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": path, "start_line": 1, "max_lines": 10 }) })
             .await
             .unwrap();
         assert_eq!(read_content(&out), "one\ntwo\nthree\n");
@@ -346,14 +345,14 @@ mod tests {
         assert_eq!(out.get("next_line"), None);
 
         // Pagination reports the line after the last line read.
-        let out = tool.call(&context, &json!({ "filepath": path, "start_line": 1, "max_lines": 2 }))
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": path, "start_line": 1, "max_lines": 2 }) })
             .await
             .unwrap();
         assert_eq!(read_content(&out), "one\ntwo\n");
         assert_eq!(out["num_lines"], json!(2));
         assert_eq!(out["next_line"], json!(3));
 
-        let out = tool.call(&context, &json!({ "filepath": path, "start_line": 3, "max_lines": 2 }))
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": path, "start_line": 3, "max_lines": 2 }) })
             .await
             .unwrap();
         assert_eq!(read_content(&out), "three\n");
@@ -361,7 +360,7 @@ mod tests {
         assert_eq!(out.get("next_line"), None);
 
         // The final line is reported as EOF, not as another line to read.
-        let out = tool.call(&context, &json!({ "filepath": path, "start_line": 2, "max_lines": 2 }))
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": path, "start_line": 2, "max_lines": 2 }) })
             .await
             .unwrap();
         assert_eq!(read_content(&out), "two\nthree\n");
@@ -369,7 +368,7 @@ mod tests {
 
         // A missing trailing newline is added to the output.
         let no_newline = write(&dir, "b.txt", "x\ny");
-        let out = tool.call(&context, &json!({ "filepath": no_newline, "start_line": 1, "max_lines": 5 }))
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": no_newline, "start_line": 1, "max_lines": 5 }) })
             .await
             .unwrap();
         assert_eq!(read_content(&out), "x\ny");
@@ -378,7 +377,7 @@ mod tests {
 
         // Empty files read as zero lines.
         let empty = write(&dir, "empty.txt", "");
-        let out = tool.call(&context, &json!({ "filepath": empty, "start_line": 1, "max_lines": 5 }))
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": empty, "start_line": 1, "max_lines": 5 }) })
             .await
             .unwrap();
         assert_eq!(read_content(&out), "");
@@ -386,24 +385,24 @@ mod tests {
         assert_eq!(out.get("next_line"), None);
 
         // Reading past EOF is an error, but starting at the end is not.
-        assert!(tool.call(&context, &json!({ "filepath": path, "start_line": 5, "max_lines": 2 })).await.is_err());
-        assert!(tool.call(&context, &json!({ "filepath": empty, "start_line": 2, "max_lines": 2 })).await.is_err());
+        assert!(tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": path, "start_line": 5, "max_lines": 2 }) }).await.is_err());
+        assert!(tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": empty, "start_line": 2, "max_lines": 2 }) }).await.is_err());
 
         // Start line 0 is treated as the first line.
-        let out = tool.call(&context, &json!({ "filepath": path, "start_line": 0, "max_lines": 1 }))
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": path, "start_line": 0, "max_lines": 1 }) })
             .await
             .unwrap();
         assert_eq!(read_content(&out), "one\n");
         assert_eq!(out["next_line"], json!(2));
 
         // Invalid arguments and unreadable files are errors.
-        assert!(tool.call(&context, &json!({})).await.is_err());
-        assert!(tool.call(&context, &json!({ "filepath": path, "start_line": "1", "max_lines": 1 })).await.is_err());
-        assert!(tool.call(&context, &json!({ "filepath": path, "start_line": 1, "max_lines": 0 })).await.is_err());
-        assert!(tool.call(&context, &json!({ "filepath": dir.path().join("missing.txt"), "start_line": 1, "max_lines": 1 })).await.is_err());
+        assert!(tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({}) }).await.is_err());
+        assert!(tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": path, "start_line": "1", "max_lines": 1 }) }).await.is_err());
+        assert!(tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": path, "start_line": 1, "max_lines": 0 }) }).await.is_err());
+        assert!(tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": dir.path().join("missing.txt"), "start_line": 1, "max_lines": 1 }) }).await.is_err());
 
         let binary = write(&dir, "bin.txt", [0x00, 0xff, 0xfe]);
-        let error = tool.call(&context, &json!({ "filepath": binary, "start_line": 1, "max_lines": 1 }))
+        let error = tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": binary, "start_line": 1, "max_lines": 1 }) })
             .await
             .expect_err("invalid utf-8");
         assert!(error.to_string().contains("stream did not contain valid UTF-8"), "{}", error.to_string());
@@ -413,12 +412,11 @@ mod tests {
     async fn test_relative_filepaths() {
         let app = App::new().unwrap();
         let dir = Arc::clone(app.cwd());
-        let context = ToolCallContext { session_id: 1 };
         let write = WriteTool::new(&app.tool_create_args());
         let tool = ReadTool::new(&app.tool_create_args());
 
         let out = write
-            .call(&context, &json!({ "filepath": "nested/a.txt", "content": "one\ntwo\n" }))
+            .call(ToolCallInfo { session_id: 1, tool_name: "write", input: &json!({ "filepath": "nested/a.txt", "content": "one\ntwo\n" }) })
             .await
             .unwrap();
         assert_eq!(out["created"], json!(true));
@@ -428,7 +426,7 @@ mod tests {
         );
 
         let out = tool
-            .call(&context, &json!({ "filepath": "nested/a.txt", "start_line": 1, "max_lines": 10 }))
+            .call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": "nested/a.txt", "start_line": 1, "max_lines": 10 }) })
             .await
             .unwrap();
         assert_eq!(read_content(&out), "one\ntwo\n");
@@ -439,11 +437,10 @@ mod tests {
         let app = App::new().unwrap();
         let dir = Arc::clone(app.cwd());
         let tool = ReadTool::new(&app.tool_create_args());
-        let context = ToolCallContext { session_id: 1 };
 
         // Long lines are truncated at a byte boundary.
         let path = write(&dir, "long.txt", long_line(MAX_LINE_BYTES + 1000));
-        let out = tool.call(&context, &json!({ "filepath": path, "start_line": 1, "max_lines": 1 }))
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": path, "start_line": 1, "max_lines": 1 }) })
             .await
             .unwrap();
         let content = read_content(&out);
@@ -457,7 +454,7 @@ mod tests {
         let multibyte = format!("{}あ{}", long_line(MAX_LINE_BYTES - 2), long_line(10));
         assert!(!multibyte.is_char_boundary(MAX_LINE_BYTES));
         let path = write(&dir, "multibyte.txt", &multibyte);
-        let out = tool.call(&context, &json!({ "filepath": path, "start_line": 1, "max_lines": 1 }))
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": path, "start_line": 1, "max_lines": 1 }) })
             .await
             .unwrap();
         assert_eq!(
@@ -467,7 +464,7 @@ mod tests {
 
         // Lines exactly at the limit are not truncated.
         let path = write(&dir, "exact.txt", long_line(MAX_LINE_BYTES));
-        let out = tool.call(&context, &json!({ "filepath": path, "start_line": 1, "max_lines": 1 }))
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "read", input: &json!({ "filepath": path, "start_line": 1, "max_lines": 1 }) })
             .await
             .unwrap();
         assert_eq!(read_content(&out), format!("{}", long_line(MAX_LINE_BYTES)));

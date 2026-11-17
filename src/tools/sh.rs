@@ -11,7 +11,7 @@ use crate::interface::ToolOutputContent;
 use crate::item::ToolRenderInfo;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::shell;
-use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallInfo, ToolCreateArgs, ToolRenderer};
 use crate::ui::markdown::ResumePoint;
 use crate::ui::render_item::RenderItem;
 use crate::ui::style::{Style, Theme};
@@ -84,10 +84,10 @@ impl Tool for ShTool {
 
     fn call<'a>(
         &'a self,
-        _context: &'a ToolCallContext,
-        input: &'a Value,
+        info: ToolCallInfo<'a>,
     ) -> BoxFuture<'a, AnyResult<Value>> {
         Box::pin(async move {
+            let input = info.input;
             let cmd = input
                 .get("command")
                 .and_then(Value::as_str)
@@ -374,7 +374,6 @@ mod tests {
         let app = App::new().unwrap();
         let dir = Arc::clone(app.cwd());
         let tool = ShTool::new(&app.tool_create_args());
-        let context = ToolCallContext { session_id: 1 };
 
         assert_eq!(tool.name(), "sh");
         assert_eq!(
@@ -387,20 +386,20 @@ mod tests {
             })
         );
 
-        assert!(tool.call(&context, &json!({})).await.is_err());
-        assert!(tool.call(&context, &json!({"command": 123})).await.is_err());
+        assert!(tool.call(ToolCallInfo { session_id: 1, tool_name: "sh", input: &json!({}) }).await.is_err());
+        assert!(tool.call(ToolCallInfo { session_id: 1, tool_name: "sh", input: &json!({"command": 123}) }).await.is_err());
 
-        let out = tool.call(&context, &json!({"command": "echo hello"})).await.unwrap();
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "sh", input: &json!({"command": "echo hello"}) }).await.unwrap();
         assert_eq!(out["stderr"], json!(""));
         assert_eq!(out["return_code"], json!(0));
         assert_eq!(normalize(out["stdout"].as_str().unwrap()), "hello\n");
 
-        let out = tool.call(&context, &json!({"command": "no_such_command_xyz"})).await.unwrap();
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "sh", input: &json!({"command": "no_such_command_xyz"}) }).await.unwrap();
         assert_ne!(out["return_code"], json!(0));
         assert!(!out["stderr"].as_str().unwrap().is_empty());
 
         // Commands run within the tool's cwd.
-        let out = tool.call(&context, &json!({"command": "echo hi > out.txt"})).await.unwrap();
+        let out = tool.call(ToolCallInfo { session_id: 1, tool_name: "sh", input: &json!({"command": "echo hi > out.txt"}) }).await.unwrap();
         assert_eq!(out["return_code"], json!(0));
         assert!(dir.path().join("out.txt").exists());
 

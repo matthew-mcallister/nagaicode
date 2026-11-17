@@ -8,7 +8,7 @@ use crate::error::AnyResult;
 use crate::item::ToolRenderInfo;
 use crate::mcp::McpServer;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolRenderer};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallInfo, ToolRenderer};
 use crate::ui::render_item::{RenderItem, SystemRenderItem};
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -108,8 +108,7 @@ impl Tool for McpTool {
 
     fn call<'a>(
         &'a self,
-        context: &'a ToolCallContext,
-        input: &'a Value,
+        _info: ToolCallInfo<'a>,
     ) -> BoxFuture<'a, AnyResult<Value>> {
         todo!()
     }

@@ -13,7 +13,7 @@ use crate::interface::ToolOutputContent;
 use crate::item::ToolRenderInfo;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::request::{Client, DefaultClient, Response as ResponseTrait};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallInfo, ToolCreateArgs, ToolRenderer};
 use crate::tools::read::paginate;
 use crate::ui::render_item::{RenderItem, SystemRenderItem};
 
@@ -92,10 +92,10 @@ impl Tool for WebFetchTool {
 
     fn call<'a>(
         &'a self,
-        _context: &'a ToolCallContext,
-        input: &'a Value,
+        info: ToolCallInfo<'a>,
     ) -> BoxFuture<'a, AnyResult<Value>> {
         Box::pin(async move {
+            let input = info.input;
             let invalid = || anyhow!("arguments don't match schema");
             let url = input
                 .get("url")
@@ -397,8 +397,13 @@ mod tests {
                 status,
                 headers: header_map,
             })));
-            let context = ToolCallContext { session_id: 1 };
-            self.tool.call(&context, input).await
+            self.tool
+                .call(ToolCallInfo {
+                    session_id: 1,
+                    tool_name: "web_fetch",
+                    input,
+                })
+                .await
         }
     }
 

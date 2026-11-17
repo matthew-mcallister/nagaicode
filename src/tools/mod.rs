@@ -105,11 +105,7 @@ pub trait Tool: std::fmt::Debug + DataQuery + Send + Sync {
     fn input_schema(&self) -> &Value;
 
     /// Invokes the tool on input.
-    fn call<'a>(
-        &'a self,
-        context: &'a ToolCallContext,
-        input: &'a Value,
-    ) -> BoxFuture<'a, AnyResult<Value>>;
+    fn call<'a>(&'a self, info: ToolCallInfo<'a>) -> BoxFuture<'a, AnyResult<Value>>;
 
     /// Describes the tool for the inference API.
     fn tool_info(&self) -> ToolInfo {
@@ -135,8 +131,10 @@ pub struct ToolCreateArgs<'a> {
 }
 
 #[derive(Debug)]
-pub struct ToolCallContext {
+pub struct ToolCallInfo<'a> {
     pub session_id: i32,
+    pub tool_name: &'a str,
+    pub input: &'a Value,
 }
 
 /// Maps tool names to tools.
@@ -176,7 +174,7 @@ impl ToolRegistry {
 
     fn register_renderer(&mut self, renderer: Box<dyn ToolRenderer>) {
         let name = renderer.name().to_owned();
-        self.renderers.insert(name.clone(), renderer).expect("duplicate renderer");
+        assert!(self.renderers.insert(name.clone(), renderer).is_none(), "duplicate renderer");
     }
 
     /// Looks up the renderer with the given name, falling back on
@@ -211,23 +209,18 @@ impl ToolRegistry {
 
     /// Invokes the tool named by a tool call item. Handles all possible
     /// errors. Makes no DB queries.
-    pub async fn call(
-        &self,
-        context: &ToolCallContext,
-        tool_name: &str,
-        input: &Value,
-    ) -> ToolCompletion {
-        let tool = self.tools.read().unwrap().get(tool_name).cloned();
+    pub async fn call(&self, info: ToolCallInfo<'_>) -> ToolCompletion {
+        let tool = self.tools.read().unwrap().get(info.tool_name).cloned();
         let Some(tool) = tool else {
             return ToolCompletion {
                 renderer: UNKNOWN_RENDERER.name().to_owned(),
                 output: ToolOutput::Failed {
-                    error: format!("no such tool '{}'", tool_name),
+                    error: format!("no such tool '{}'", info.tool_name),
                 },
             };
         };
         let renderer = tool.renderer().to_owned();
-        let output = match tool.call(context, input).await {
+        let output = match tool.call(info).await {
             Ok(value) => ToolOutput::Completed { value },
             Err(e) => ToolOutput::Failed { error: e.to_string() },
         };
@@ -312,10 +305,13 @@ mod tests {
     #[tokio::test]
     async fn test_call_tool() {
         let registry = registry();
-        let context = ToolCallContext { session_id: 1 };
 
         let completion = registry
-            .call(&context, "sh", &json!({ "command": "echo hi" }))
+            .call(ToolCallInfo {
+                session_id: 1,
+                tool_name: "sh",
+                input: &json!({ "command": "echo hi" }),
+            })
             .await;
         assert_eq!(completion.renderer, "sh");
         let ToolOutput::Completed { value } = &completion.output else {
@@ -327,7 +323,13 @@ mod tests {
 
         // Failed calls record their error.
         assert_eq!(
-            registry.call(&context, "sh", &json!({ "dnammoc": 123 })).await,
+            registry
+                .call(ToolCallInfo {
+                    session_id: 1,
+                    tool_name: "sh",
+                    input: &json!({ "dnammoc": 123 }),
+                })
+                .await,
             ToolCompletion {
                 renderer: "sh".to_owned(),
                 output: ToolOutput::Failed {
@@ -337,7 +339,13 @@ mod tests {
         );
 
         assert_eq!(
-            registry.call(&context, "missing", &json!({})).await,
+            registry
+                .call(ToolCallInfo {
+                    session_id: 1,
+                    tool_name: "missing",
+                    input: &json!({}),
+                })
+                .await,
             ToolCompletion {
                 renderer: "unknown".to_owned(),
                 output: ToolOutput::Failed { error: "no such tool 'missing'".to_owned() },
@@ -350,12 +358,17 @@ mod tests {
         let registry = registry();
         let mut conn = crate::db::open_new().unwrap();
         let (session, turn) = session_turn(&mut conn);
-        let context = ToolCallContext { session_id: session.id };
 
         // Tool call expects a string
         let mut item = tool_call(&mut conn, &turn, "sh", "call123", json!({ "command": 123 }), None);
         let tc = item.content.as_tool_call().unwrap();
-        let completion = registry.call(&context, &tc.tool_name, &tc.args).await;
+        let completion = registry
+            .call(ToolCallInfo {
+                session_id: session.id,
+                tool_name: &tc.tool_name,
+                input: &tc.args,
+            })
+            .await;
         let error = "invalid arguments for 'sh': expected {\"command\": \"...\"}";
         assert_eq!(
             completion,

@@ -13,7 +13,7 @@ use crate::error::AnyResult;
 use crate::interface::ToolOutputContent;
 use crate::item::ToolRenderInfo;
 use crate::query::{DataQuery, QueryError, QueryField};
-use crate::tools::{InterfaceToolOutput, Tool, ToolCallContext, ToolCreateArgs, ToolRenderer};
+use crate::tools::{InterfaceToolOutput, Tool, ToolCallInfo, ToolCreateArgs, ToolRenderer};
 use crate::ui::render_item::{SystemRenderItem, RenderItem};
 
 /// Searches for files and directories using glob patterns.
@@ -83,10 +83,10 @@ impl Tool for GlobTool {
 
     fn call<'a>(
         &'a self,
-        _context: &'a ToolCallContext,
-        input: &'a Value,
+        info: ToolCallInfo<'a>,
     ) -> BoxFuture<'a, AnyResult<Value>> {
         Box::pin(async move {
+            let input = info.input;
             let invalid = || anyhow!("arguments don't match schema");
             let pattern = input
                 .get("pattern")
@@ -263,9 +263,12 @@ mod tests {
     }
 
     async fn glob_paths(tool: &GlobTool, match_type: &str) -> Vec<String> {
-        let context = ToolCallContext { session_id: 1 };
         let out = tool
-            .call(&context, &json!({ "pattern": "**", "match": match_type, "max_results": 100 }))
+            .call(ToolCallInfo {
+                session_id: 1,
+                tool_name: "glob",
+                input: &json!({ "pattern": "**", "match": match_type, "max_results": 100 }),
+            })
             .await
             .unwrap();
         let mut paths: Vec<String> = out["results"]
