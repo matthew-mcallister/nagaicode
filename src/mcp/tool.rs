@@ -1,10 +1,14 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use futures::future::BoxFuture;
+use log::warn;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::error::AnyResult;
+use crate::interface::ToolOutputContent as InterfaceToolOutputContent;
 use crate::item::ToolRenderInfo;
 use crate::mcp::McpServer;
 use crate::query::{DataQuery, QueryError, QueryField};
@@ -62,6 +66,43 @@ impl DataQuery for McpRenderer {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum UnstructuredContent {
+    Text {
+        text: String,
+    },
+    Image,
+    Audio,
+    ResourceLink,
+    Resource,
+}
+
+fn render_unstructured(content: &[UnstructuredContent]) -> AnyResult<InterfaceToolOutput> {
+    let mut output = Vec::with_capacity(content.len());
+    for content in content {
+        match content {
+            UnstructuredContent::Text { text } => {
+                output.push(InterfaceToolOutputContent::Text { text: Cow::Owned(text.clone()) });
+            }
+            UnstructuredContent::Image => warn!("unsupported MCP content type: image"),
+            UnstructuredContent::Audio => warn!("unsupported MCP content type: audio"),
+            UnstructuredContent::ResourceLink => warn!("unsupported MCP content type: resource_link"),
+            UnstructuredContent::Resource => warn!("unsupported MCP content type: resource"),
+        }
+    }
+    Ok(InterfaceToolOutput { content: output })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct McpToolResult {
+    result_type: Option<String>,
+    content: Option<Vec<UnstructuredContent>>,
+    structured_content: Option<Value>,
+    is_error: Option<bool>,
+}
+
 impl ToolRenderer for McpRenderer {
     fn name(&self) -> &str {
         "mcp"
@@ -71,8 +112,30 @@ impl ToolRenderer for McpRenderer {
         Ok(Box::new(SystemRenderItem::new(format!("Called '{}'", info.tool_name))))
     }
 
-    fn render_to_model(&self, _info: &ToolRenderInfo) -> AnyResult<InterfaceToolOutput> {
-        todo!()
+    fn render_to_model(&self, info: &ToolRenderInfo) -> AnyResult<InterfaceToolOutput> {
+        let result: McpToolResult = serde_json::from_value(info.output.clone())
+            .map_err(|e| anyhow!("invalid MCP tool result: {e}"))?;
+        if let Some(result_type) = &result.result_type && result_type != "complete" {
+            warn!("unexpected MCP result type: {result_type}");
+        }
+        if let Some(content) = &result.content {
+            let output = render_unstructured(content)?;
+            if !output.content.is_empty() {
+                return Ok(output);
+            }
+        }
+        if let Some(structured) = &result.structured_content {
+            return Ok(InterfaceToolOutput {
+                content: vec![InterfaceToolOutputContent::Text {
+                    text: Cow::Owned(structured.to_string()),
+                }],
+            });
+        }
+        Ok(InterfaceToolOutput {
+            content: vec![InterfaceToolOutputContent::Text {
+                text: Cow::Borrowed("tool call produced no output."),
+            }],
+        })
     }
 }
 
@@ -125,5 +188,82 @@ impl DataQuery for McpTool {
             }
             field => self.def.query_field(field),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info<'a>(args: &'a Value, output: &'a Value) -> ToolRenderInfo<'a> {
+        ToolRenderInfo { tool_name: "mcp__test", args, output }
+    }
+
+    fn text(text: &str) -> InterfaceToolOutputContent<'static> {
+        InterfaceToolOutputContent::Text { text: Cow::Owned(text.to_owned()) }
+    }
+
+    fn render(output: &Value) -> AnyResult<Vec<InterfaceToolOutputContent<'static>>> {
+        let args = json!({});
+        let info = info(&args, output);
+        McpRenderer.render_to_model(&info).map(|output| output.content)
+    }
+
+    #[test]
+    fn test_render_model_unstructured() {
+        let output = json!({
+            "resultType": "complete",
+            "content": [
+                { "type": "text", "text": "Found 2 users" },
+                { "type": "resource_link", "uri": "file://a", "name": "a" },
+                { "type": "resource", "resource": { "uri": "file://b", "text": "b" } },
+                { "type": "audio", "data": "", "mimeType": "audio/wav" },
+                { "type": "image", "data": "", "mimeType": "image/png" },
+                { "type": "text", "text": "Done." },
+            ],
+            "structuredContent": { "ignored": true },
+        });
+        assert_eq!(render(&output).unwrap(), vec![text("Found 2 users"), text("Done.")]);
+    }
+
+    #[test]
+    fn test_render_model_structured_fallback() {
+        let output = json!({
+            "resultType": "complete",
+            "content": [
+                { "type": "resource", "resource": { "uri": "file://b", "text": "b" } },
+            ],
+            "structuredContent": [
+                { "id": "1", "name": "Alice" },
+                { "id": "2", "name": "Bob" },
+            ],
+        });
+        assert_eq!(
+            render(&output).unwrap(),
+            vec![text(r#"[{"id":"1","name":"Alice"},{"id":"2","name":"Bob"}]"#)]
+        );
+
+        let output = json!({ "structuredContent": { "id": "1" } });
+        assert_eq!(render(&output).unwrap(), vec![text(r#"{"id":"1"}"#)]);
+    }
+
+    #[test]
+    fn test_render_model_empty() {
+        assert_eq!(render(&json!({})).unwrap(), vec![text("tool call produced no output.")]);
+        assert_eq!(render(&json!({ "content": [] })).unwrap(), vec![text("tool call produced no output.")]);
+        assert_eq!(
+            render(&json!({
+                "content": [{ "type": "audio", "data": "", "mimeType": "audio/wav" }],
+            }))
+            .unwrap(),
+            vec![text("tool call produced no output.")]
+        );
+    }
+
+    #[test]
+    fn test_render_model_invalid() {
+        assert!(render(&json!({ "content": [{ "type": "bogus" }] })).is_err());
+        assert!(render(&json!({ "content": "not a list" })).is_err());
+        assert!(render(&json!("not an object")).is_err());
     }
 }
