@@ -104,10 +104,10 @@ impl StdioEventLoop {
     }
 
     async fn run(mut self) {
-        loop {
+        'outer: loop {
             for _ in 0..MAX_PIPE_FAILS {
                 match self.attempt_select().await {
-                    Ok(_) => break, // Reset pipe fail counter
+                    Ok(_) => continue 'outer, // Reset pipe fail counter
                     Err(ReceiveError::Temporary(e)) => {
                         error!("mcp server '{}': {}", self.name, e);
                     },
@@ -167,7 +167,9 @@ impl StdioEventLoop {
     async fn forward_request(&mut self, request: &Request) -> std::io::Result<()> {
         let mut bytes = serde_json::to_vec(&request).unwrap();
         bytes.push('\n' as u8);
-        self.process.as_mut().unwrap().stdin.write_all(&bytes).await?;
+        let stdin = &mut self.process.as_mut().unwrap().stdin;
+        stdin.write_all(&bytes).await?;
+        stdin.flush().await?;
         Ok(())
     }
 

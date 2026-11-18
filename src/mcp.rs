@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures::future::join_all;
-use log::{error, trace};
+use log::{error, debug};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -94,9 +94,9 @@ impl McpServer {
                 skip = true;
             }
             if skip {
-                trace!("mcp server '{}': ignored tool '{}'", self.config.name, tool.name);
+                debug!("mcp server '{}': ignored tool '{}'", self.config.name, tool.name);
             } else {
-                trace!("mcp server '{}': discovered tool '{}'", self.config.name, tool.name);
+                debug!("mcp server '{}': discovered tool '{}'", self.config.name, tool.name);
                 filtered_tools.push(tool);
             }
         }
