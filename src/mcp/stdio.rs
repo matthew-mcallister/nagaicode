@@ -72,12 +72,6 @@ struct StdioEventLoop {
     response_channels: FnvHashMap<RequestId, OneshotSender<ResponseMessage>>,
 }
 
-impl Drop for StdioEventLoop {
-    fn drop(&mut self) {
-        todo!()
-    }
-}
-
 impl StdioEventLoop {
     fn new(name: String, command: Command) -> (Self, Sender<Message>) {
         let (sender, request_channel) = unbounded_channel::<Message>();
