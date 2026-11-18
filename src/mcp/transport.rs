@@ -4,7 +4,7 @@ use futures::future::BoxFuture;
 
 use crate::{config::{McpServerConfig, McpServerConfigType}, json_rpc::{Request, ResponseBody}, mcp::stdio::StdioTransport};
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TransportError {
     /// Request timed out
     Timeout,

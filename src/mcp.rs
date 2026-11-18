@@ -15,11 +15,13 @@ use crate::mcp::transport::{Transport, TransportError, make_transport};
 use crate::task::{Task, TaskContext};
 use crate::tools::ToolRegistry;
 
+#[cfg(test)]
+mod mock;
 mod stdio;
 pub(crate) mod tool;
 mod transport;
 
-const TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +39,7 @@ pub(crate) struct McpServer {
     config: McpServerConfig,
     transport: Box<dyn Transport>,
     request_id: AtomicU64,
+    timeout: Duration,
 }
 
 impl McpServer {
@@ -45,13 +48,15 @@ impl McpServer {
             transport: make_transport(&config),
             config,
             request_id: AtomicU64::new(0),
+            timeout: DEFAULT_TIMEOUT,
         }
     }
 
-    async fn request(
+    async fn request_timeout(
         &self,
         method: impl Into<String>,
         params: impl Into<Value>,
+        timeout: Duration,
     ) -> Result<ResponseBody, TransportError> {
         let id = self.request_id.fetch_add(1, Ordering::Relaxed);
         let request = Request {
@@ -59,8 +64,16 @@ impl McpServer {
             params: params.into(),
             id: Some(json!(id)),
         };
-        let future = self.transport.request(request, TIMEOUT);
+        let future = self.transport.request(request, timeout);
         future.await
+    }
+
+    async fn request(
+        &self,
+        method: impl Into<String>,
+        params: impl Into<Value>,
+    ) -> Result<ResponseBody, TransportError> {
+        self.request_timeout(method, params, self.timeout).await
     }
 
     async fn list_tools(&self) -> AnyResult<ToolsListResult> {

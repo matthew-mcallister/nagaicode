@@ -193,7 +193,89 @@ impl DataQuery for McpTool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicU64;
+use std::time::Duration;
+
+    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+
     use super::*;
+    use crate::config::{McpServerConfig, McpServerConfigType};
+    use crate::json_rpc::{Error as JsonRpcError, Request as JsonRpcRequest, ResponseBody};
+    use crate::mcp::mock::MockTransport;
+    use crate::mcp::transport::TransportError;
+
+    fn mock_server() -> (
+        McpServer,
+        UnboundedSender<Result<ResponseBody, TransportError>>,
+        UnboundedReceiver<JsonRpcRequest>,
+    ) {
+        let (request_sender, request_receiver) = unbounded_channel();
+        let (response_sender, response_receiver) = unbounded_channel();
+        let config = McpServerConfig {
+            name: "mock".to_owned(),
+            type_: McpServerConfigType::Stdio,
+            enabled: true,
+            command: Vec::new(),
+            include: None,
+            exclude: Vec::new(),
+        };
+        let server = McpServer {
+            config,
+            transport: Box::new(MockTransport::new(response_receiver, request_sender)),
+            request_id: AtomicU64::new(0),
+            timeout: Duration::from_millis(100),
+        };
+        (server, response_sender, request_receiver)
+    }
+
+    #[tokio::test]
+    async fn test_server_request() {
+        let (server, responses, mut requests) = mock_server();
+
+        responses.send(Ok(ResponseBody::Result(json!({ "tools": [] })))).unwrap();
+        assert_eq!(
+            server.request("tools/list", json!({})).await.unwrap(),
+            ResponseBody::Result(json!({ "tools": [] }))
+        );
+        let request = requests.recv().await.unwrap();
+        assert_eq!(request.method, "tools/list");
+        assert_eq!(request.params, json!({}));
+
+        let response = ResponseBody::Error(JsonRpcError {
+            code: -32602,
+            message: "bad params".to_owned(),
+            data: None,
+        });
+        responses.send(Ok(response.clone())).unwrap();
+        assert_eq!(
+            server.request("tools/call", json!({ "name": "echo" })).await.unwrap(),
+            response,
+        );
+        let request = requests.recv().await.unwrap();
+        assert_eq!(request.method, "tools/call");
+        assert_eq!(request.params, json!({ "name": "echo" }));
+    }
+
+    #[tokio::test]
+    async fn test_server_timeout() {
+        // No responses on channel -> timeout
+        let (server, responses, mut requests) = mock_server();
+        assert_eq!(
+            server.request("tools/list", json!({})).await.unwrap_err(),
+            TransportError::Timeout,
+        );
+        let request = requests.recv().await.unwrap();
+        assert_eq!(request.method, "tools/list");
+
+        // Channel closed -> unrecoverable
+        std::mem::drop(responses);
+        assert_eq!(
+            server.request("tools/list", json!({})).await.unwrap_err(),
+            TransportError::Unrecoverable,
+        );
+        let request = requests.recv().await.unwrap();
+        assert_eq!(request.method, "tools/list");
+    }
 
     fn info<'a>(args: &'a Value, output: &'a Value) -> ToolRenderInfo<'a> {
         ToolRenderInfo { tool_name: "mcp__test", args, output }
