@@ -689,8 +689,6 @@ fn push_flow_node(flow: &mut FlowBuilder<'_>, node: &Node) {
         Node::Root(root) => push_flow_children(flow, true, &root.children),
 
         Node::Table(table) => push_table(flow, table),
-        Node::TableRow(_)
-        | Node::TableCell(_) => {}, // TODO!
 
         Node::Paragraph(paragraph) => push_phrasing(flow, &paragraph.children),
         Node::Blockquote(quote) => blockquote(flow, quote),
@@ -706,6 +704,9 @@ fn push_flow_node(flow: &mut FlowBuilder<'_>, node: &Node) {
         }
         Node::List(l) => list(flow, l),
 
+        // Table nodes
+        | Node::TableRow(_)
+        | Node::TableCell(_)
         // Phrasing nodes
         | Node::Break(_)
         | Node::InlineCode(_)

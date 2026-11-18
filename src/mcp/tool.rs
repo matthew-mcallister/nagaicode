@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use crate::error::AnyResult;
 use crate::interface::ToolOutputContent as InterfaceToolOutputContent;
 use crate::item::ToolRenderInfo;
+use crate::json_rpc::{ErrorStd, ResponseBody};
 use crate::mcp::McpServer;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::{InterfaceToolOutput, Tool, ToolCallInfo, ToolRenderer};
@@ -153,6 +154,7 @@ impl McpTool {
 }
 
 impl Tool for McpTool {
+    // TODO: optional automatic tool namespacing
     fn name(&self) -> &str {
         &self.def.name
     }
@@ -171,9 +173,18 @@ impl Tool for McpTool {
 
     fn call<'a>(
         &'a self,
-        _info: ToolCallInfo<'a>,
+        info: ToolCallInfo<'a>,
     ) -> BoxFuture<'a, AnyResult<Value>> {
-        todo!()
+        Box::pin(async move {
+            let params = json!({
+                "name": self.def.name,
+                "arguments": info.input,
+            });
+            match self.server.request("tools/call", params).await? {
+                ResponseBody::Result(result) => Ok(result),
+                ResponseBody::Error(e) => Err(ErrorStd(e).into()),
+            }
+        })
     }
 }
 
@@ -194,7 +205,7 @@ impl DataQuery for McpTool {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicU64;
-use std::time::Duration;
+    use std::time::Duration;
 
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
@@ -226,6 +237,65 @@ use std::time::Duration;
             timeout: Duration::from_millis(100),
         };
         (server, response_sender, request_receiver)
+    }
+
+    fn mock_tool(server: McpServer) -> McpTool {
+        McpTool::new(
+            Arc::new(server),
+            McpToolDef {
+                name: "echo".to_owned(),
+                title: None,
+                description: None,
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn test_tool_call() {
+        let (server, responses, mut requests) = mock_server();
+        let tool = mock_tool(server);
+        let input = json!({ "text": "hello" });
+        let result = json!({
+            "content": [{ "type": "text", "text": "hello" }],
+            "isError": false,
+        });
+        responses.send(Ok(ResponseBody::Result(result.clone()))).unwrap();
+        let output = tool
+            .call(ToolCallInfo { session_id: 1, tool_name: "echo", input: &input })
+            .await
+            .unwrap();
+        assert_eq!(output, result);
+        let request = requests.recv().await.unwrap();
+        assert_eq!(request.method, "tools/call");
+        assert_eq!(
+            request.params,
+            json!({ "name": "echo", "arguments": { "text": "hello" } })
+        );
+        assert!(request.id.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_error() {
+        let (server, responses, mut requests) = mock_server();
+        let tool = mock_tool(server);
+        let input = json!({});
+        responses
+            .send(Ok(ResponseBody::Error(JsonRpcError {
+                code: -32602,
+                message: "bad params".to_owned(),
+                data: None,
+            })))
+            .unwrap();
+        let error = tool
+            .call(ToolCallInfo { session_id: 1, tool_name: "echo", input: &input })
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "code -32602: bad params");
+        let request = requests.recv().await.unwrap();
+        assert_eq!(request.method, "tools/call");
+        assert_eq!(request.params, json!({ "name": "echo", "arguments": {} }));
     }
 
     #[tokio::test]
