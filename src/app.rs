@@ -808,6 +808,7 @@ impl DataQuery for App {
                 "selected_model": self.query("/selected_model")?,
                 "db_url": self.query("/db_url")?,
                 "session": self.query("/session")?,
+                "tool_registry": self.query("/tool_registry")?,
                 "current_task": self.query("/current_task")?,
                 "task_count": self.query("/task_count")?,
                 "command_history": self.query("/command_history")?,
@@ -824,6 +825,7 @@ impl DataQuery for App {
                 Some(session) => Ok(QueryField::DataQuery(session)),
                 None => Ok(QueryField::Value(json!(null))),
             },
+            "tool_registry" => Ok(QueryField::DataQuery(&*self.tool_registry)),
             "current_task" => Ok(QueryField::Value(json!(
                 self.current_task.as_ref().map(|t| t.tid())
             ))),

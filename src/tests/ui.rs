@@ -521,6 +521,16 @@ async fn test_app_query() {
         json!("command_editor")
     );
 
+    let expected_tool_registry = app.query("/tool_registry").unwrap();
+    assert_eq!(
+        app.query("/tool_registry/tools/sh/name").unwrap(),
+        json!("sh")
+    );
+    assert_eq!(
+        app.query("/tool_registry/renderers/sh/name").unwrap(),
+        json!("sh")
+    );
+
     assert_eq!(
         app.query("/").unwrap(),
         json!({
@@ -528,6 +538,7 @@ async fn test_app_query() {
             "selected_model": null,
             "db_url": db_url,
             "session": null,
+            "tool_registry": expected_tool_registry,
             "current_task": null,
             "task_count": 0,
             "command_history": [],

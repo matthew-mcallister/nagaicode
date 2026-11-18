@@ -192,9 +192,11 @@ impl DataQuery for McpTool {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "renderer" => Ok(QueryField::Value(json!(self.renderer()))),
+            "def" => Ok(QueryField::DataQuery(&self.def)),
             "" => {
                 let mut value = self.def.query("")?;
                 value["renderer"] = self.query("/renderer")?;
+                value["def"] = self.query("/def")?;
                 Ok(QueryField::Value(value))
             }
             field => self.def.query_field(field),

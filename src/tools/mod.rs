@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use fnv::FnvHashMap;
 use log::{trace, warn};
@@ -289,6 +289,74 @@ impl ToolRegistry {
     }
 }
 
+/// Helper which implements DataQuery for `ToolRegistry.tools`. It can fetch a
+/// single tool or all tools at once by iteration.
+#[derive(Debug)]
+struct ToolsQuery<'a> {
+    tools: RwLockReadGuard<'a, FnvHashMap<String, Arc<dyn Tool>>>,
+}
+
+impl DataQuery for ToolsQuery<'_> {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => {
+                let mut map = serde_json::Map::new();
+                for (name, tool) in self.tools.iter() {
+                    map.insert(name.clone(), tool.query("")?);
+                }
+                Ok(QueryField::Value(Value::Object(map)))
+            }
+            name => match self.tools.get(name) {
+                Some(tool) => Ok(QueryField::DataQuery(&**tool)),
+                None => Err(QueryError::InvalidField(field.to_string())),
+            },
+        }
+    }
+}
+
+/// Helper which implements DataQuery for `ToolRegistry.renderers`. It can
+/// fetch a single renderer or all renderers at once by iteration.
+#[derive(Debug)]
+struct RenderersQuery<'a> {
+    renderers: &'a FnvHashMap<String, Box<dyn ToolRenderer>>,
+}
+
+impl DataQuery for RenderersQuery<'_> {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => {
+                let mut map = serde_json::Map::new();
+                for (name, renderer) in self.renderers.iter() {
+                    map.insert(name.clone(), renderer.query("")?);
+                }
+                Ok(QueryField::Value(Value::Object(map)))
+            }
+            name => match self.renderers.get(name) {
+                Some(renderer) => Ok(QueryField::DataQuery(&**renderer)),
+                None => Err(QueryError::InvalidField(field.to_string())),
+            },
+        }
+    }
+}
+
+impl DataQuery for ToolRegistry {
+    fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
+        match field {
+            "" => Ok(QueryField::Value(json!({
+                "tools": self.query("/tools")?,
+                "renderers": self.query("/renderers")?,
+            }))),
+            "tools" => Ok(QueryField::Boxed(Box::new(ToolsQuery {
+                tools: self.tools.read().unwrap(),
+            }))),
+            "renderers" => Ok(QueryField::Boxed(Box::new(RenderersQuery {
+                renderers: &self.renderers,
+            }))),
+            _ => Err(QueryError::InvalidField(field.to_string())),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +473,30 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(names, &["edit", "glob", "read", "sh", "web_fetch", "write"]);
+    }
+
+    #[test]
+    fn test_query_registry() {
+        let registry = registry();
+
+        let tools = registry.query("/tools").unwrap();
+        let mut names: Vec<&str> = tools.as_object().unwrap().keys().map(|s| s.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["edit", "glob", "read", "sh", "web_fetch", "write"]);
+
+        assert_eq!(registry.query("/tools/sh/name").unwrap(), json!("sh"));
+        assert_eq!(registry.query("/tools/sh/renderer").unwrap(), json!("sh"));
+        assert_eq!(registry.query("query://tools/write/name").unwrap(), json!("write"));
+
+        let renderers = registry.query("/renderers").unwrap();
+        let mut names: Vec<&str> = renderers.as_object().unwrap().keys().map(|s| s.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["edit", "glob", "mcp", "read", "sh", "unknown", "web_fetch", "write"]);
+        assert_eq!(registry.query("/renderers/sh/name").unwrap(), json!("sh"));
+
+        assert!(matches!(registry.query("/tools/missing"), Err(QueryError::InvalidField(_))));
+        assert!(matches!(registry.query("/renderers/missing"), Err(QueryError::InvalidField(_))));
+        assert!(matches!(registry.query("/missing"), Err(QueryError::InvalidField(_))));
     }
 
     #[test]
