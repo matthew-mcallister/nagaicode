@@ -219,6 +219,7 @@ impl ToolRegistry {
                 },
             };
         };
+        trace!("calling tool: '{}'", info.tool_name);
         let renderer = tool.renderer().to_owned();
         let output = match tool.call(info).await {
             Ok(value) => ToolOutput::Completed { value },

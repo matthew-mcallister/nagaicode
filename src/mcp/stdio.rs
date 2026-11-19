@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use fnv::FnvHashMap;
 use futures::future::BoxFuture;
-use log::{debug, error};
+use log::{debug, error, trace};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::oneshot::{Receiver as OneshotReceiver, Sender as OneshotSender, channel};
@@ -112,7 +112,7 @@ impl StdioEventLoop {
                         error!("mcp server '{}': {}", self.name, e);
                     },
                     Err(ReceiveError::Terminated) => {
-                        debug!("mcp server '{}': terminated", self.name);
+                        debug!("mcp server '{}': shutting down", self.name);
                         return;
                     }
                 }
@@ -123,7 +123,7 @@ impl StdioEventLoop {
         }
     }
 
-    // Returns `Ok(())` after successfully handling a request or response.
+    // Returns `Ok(())` after successfully receiving a response.
     async fn attempt_select(&mut self) -> Result<(), ReceiveError> {
         self.spawn().await?;
         let mut line = String::new();
@@ -138,13 +138,7 @@ impl StdioEventLoop {
                 message = self.request_channel.recv() => {
                     // If None, channel is permanently closed
                     let message = message.ok_or(ReceiveError::Terminated)?;
-                    let is_request = matches!(message, Message::Opened { .. });
                     self.handle_message(message).await?;
-                    if is_request {
-                        return Ok(());
-                    } else {
-                        continue;
-                    }
                 },
             }
         }
@@ -184,6 +178,7 @@ impl StdioEventLoop {
 
 /// Resubmits a request to the event loop until timeout is reached or the event
 /// loop dies.
+// TODO maybe: Exponential backoff + jitter
 #[derive(Debug)]
 struct StdioConnection {
     expire_at: Instant,

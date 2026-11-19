@@ -19,7 +19,7 @@ fn create_app_dir(base_dir: &Path) -> AnyResult<PathBuf> {
 }
 
 #[derive(Debug)]
-pub(crate) struct Dirs {
+pub struct Dirs {
     data: AppDir,
     temp: AppDir,
     // TODO
@@ -27,7 +27,7 @@ pub(crate) struct Dirs {
 }
 
 impl Dirs {
-    pub(crate) fn new() -> AnyResult<Self> {
+    pub fn new() -> AnyResult<Self> {
         get_dirs()
     }
     

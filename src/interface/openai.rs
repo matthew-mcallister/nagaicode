@@ -1,5 +1,5 @@
 use futures::{Stream, StreamExt};
-use log::{debug, error};
+use log::{trace, error};
 use reqwest_eventsource::{Error as EventSourceError, Event};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -47,12 +47,12 @@ impl Client {
             .get(url.clone())
             .bearer_auth(&self.api_key)
             .build()?;
-        debug!("GET {}", request.url());
+        trace!("GET {}", request.url());
         let response = self.inner.execute(request).await?;
         let response = response.error_for_status()?;
         let status = response.status();
         let body = response.text().await?;
-        debug!("GET {url} -> {status} {body}");
+        trace!("GET {url} -> {status} {body}");
         Ok(serde_json::from_str::<T>(&body)?)
     }
 
@@ -70,7 +70,7 @@ impl Client {
             .json(body)
             .build()?;
         let request_body = request.body().and_then(|b| b.as_bytes()).unwrap_or(&[]);
-        debug!(
+        trace!(
             "POST {} {}",
             request.url(),
             String::from_utf8(request_body.to_vec())?,
@@ -481,7 +481,7 @@ impl OpenaiInterface {
                         if trimmed == "[DONE]" {
                             return;
                         }
-                        debug!("SSE event {}", trimmed);
+                        trace!("SSE event {}", trimmed);
                         let raw_event: serde_json::Value = serde_json::from_str(trimmed)?;
                         let event: ResponseStreamEvent =
                             serde_json::from_value(raw_event.clone())?;

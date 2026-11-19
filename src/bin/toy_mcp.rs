@@ -4,16 +4,20 @@
 
 use std::convert::Infallible;
 use std::net::Ipv4Addr;
+use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
 use bytes::Bytes;
 use chrono::{SecondsFormat, Utc};
+use futures::FutureExt;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::header;
 use hyper::service::service_fn;
 use hyper::{Method, Request as HttpRequest, Response as HttpResponse, StatusCode};
 use hyper_util::rt::TokioIo;
+use log::{info, trace};
+use nagai::config::Dirs;
 use nagai::json_rpc::{Error, Request, Response, ResponseBody};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -86,7 +90,7 @@ fn list_tools() -> Result<Value, Error> {
             },
             {
                 "name": "panic",
-                "description": "Causes the server to panic",
+                "description": "Causes an internal server error",
                 "inputSchema": {
                     "type": "object",
                     "additionalProperties": false,
@@ -103,6 +107,14 @@ fn list_tools() -> Result<Value, Error> {
             {
                 "name": "abort",
                 "description": "Causes the server to exit with code 1",
+                "inputSchema": {
+                    "type": "object",
+                    "additionalProperties": false,
+                },
+            },
+            {
+                "name": "abort_flaky",
+                "description": "Causes the server to exit with code 1 about half the time",
                 "inputSchema": {
                     "type": "object",
                     "additionalProperties": false,
@@ -137,6 +149,7 @@ async fn call_tool(params: &Value) -> Result<Value, Error> {
             }
         }
         "abort" => std::process::exit(1),
+        "abort_flaky" => Ok(abort_flaky()),
         "error" => {
             let error = serde_json::from_value(call.arguments)
                 .map_err(|error| Error::invalid_params(error.to_string()))?;
@@ -146,13 +159,13 @@ async fn call_tool(params: &Value) -> Result<Value, Error> {
     }
 }
 
-fn tool_result(text: String, structured_content: Value) -> Value {
+fn tool_result(text: impl Into<String>, structured_content: Value) -> Value {
     json!({
         "resultType": "complete",
         "content": [
             {
                 "type": "text",
-                "text": text,
+                "text": text.into(),
             },
         ],
         "structuredContent": structured_content,
@@ -170,6 +183,14 @@ fn echo(arguments: Value) -> Value {
     tool_result(text, arguments)
 }
 
+fn abort_flaky() -> Value {
+    if Utc::now().timestamp_subsec_millis() % 2 == 0 {
+        std::process::abort();
+    } else {
+        tool_result("call succeeded", json!({}))
+    }
+}
+
 async fn respond(line: &str) -> Option<Response> {
     let request = match serde_json::from_str::<Request>(line) {
         Ok(request) => request,
@@ -185,9 +206,14 @@ async fn respond(line: &str) -> Option<Response> {
         }
     };
     let id = request.id.clone()?;
-    let body = match handle(request).await {
-        Ok(result) => ResponseBody::Result(result),
-        Err(error) => ResponseBody::Error(error),
+    let body = match AssertUnwindSafe(handle(request)).catch_unwind().await {
+        Ok(Ok(result)) => ResponseBody::Result(result),
+        Ok(Err(error)) => ResponseBody::Error(error),
+        Err(_) => ResponseBody::Error(Error {
+            code: -32603,
+            message: format!("internal server error"),
+            data: None,
+        }),
     };
     Some(Response {
         body,
@@ -196,9 +222,11 @@ async fn respond(line: &str) -> Option<Response> {
 }
 
 async fn serve_stdio() -> Result<(), Error> {
+    info!("listening on stdin");
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();
     while let Some(line) = lines.next_line().await? {
+        trace!("got request: {line}");
         if line.trim().is_empty() {
             continue;
         }
@@ -206,6 +234,7 @@ async fn serve_stdio() -> Result<(), Error> {
             continue;
         };
         let response = serde_json::to_string(&response)?;
+        trace!("response: {response}");
         stdout.write_all(response.as_bytes()).await?;
         stdout.write_all(b"\n").await?;
         stdout.flush().await?;
@@ -221,7 +250,7 @@ const HTTP_PATH: &str = "/mcp";
 async fn serve_http(port: u16) -> Result<(), Error> {
     let listener = TcpListener::bind((HTTP_HOST, port)).await?;
     let addr = listener.local_addr()?;
-    eprintln!("listening on http://{addr}{HTTP_PATH}");
+    info!("listening on http://{addr}{HTTP_PATH}");
     loop {
         let (stream, _) = listener.accept().await?;
         tokio::spawn(async move {
@@ -283,6 +312,7 @@ fn parse_port(value: Option<&str>) -> u16 {
 
 #[tokio::main]
 async fn main() {
+    nagai::logging::init_logging(&Dirs::new().unwrap()).unwrap();
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("stdio") => serve_stdio().await.unwrap(),

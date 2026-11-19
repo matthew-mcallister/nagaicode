@@ -1,11 +1,12 @@
 #[cfg(not(test))]
-pub(crate) use self::real::init_logging;
+pub use self::real::init_logging;
 #[cfg(test)]
-pub(crate) use self::mock::init_logging;
+pub use self::mock::init_logging;
 
 #[cfg(not(test))]
 mod real {
     use std::io::Write;
+    use std::path::Path;
     use std::sync::OnceLock;
 
     use chrono::Local;
@@ -13,8 +14,6 @@ mod real {
 
     use crate::config::Dirs;
     use crate::error::AnyResult;
-
-    const LOG_FILE_PREFIX: &str = "nagai";
 
     static INIT: OnceLock<()> = OnceLock::new();
 
@@ -25,12 +24,18 @@ mod real {
         dir.push("log");
         std::fs::create_dir_all(&dir)?;
         let timestamp = Local::now().format("%Y-%m-%dT%H%M%S");
-        let path = dir.join(format!("{LOG_FILE_PREFIX}-{timestamp}.log"));
+        let prefix = (|| -> Option<String> {
+            let path = std::env::args().next()?;
+            Some(Path::new(&path).file_stem()?.to_str()?.to_owned())
+        })().unwrap_or("nagai".to_owned());
+        let path = dir.join(format!("{prefix}-{timestamp}.log"));
         Ok(path.to_str().unwrap().to_string())
     }
 
     /// Configures the global logger to write to a timestamped file.
-    pub(crate) fn init_logging(dirs: &Dirs) -> AnyResult<()> {
+    // FIXME: Logs aren't being written until after the app closes, but the
+    // env_logger crate does appear to flush after each write
+    pub fn init_logging(dirs: &Dirs) -> AnyResult<()> {
         if INIT.get().is_some() {
             return Ok(());
         }
@@ -59,7 +64,7 @@ mod mock {
     use crate::error::AnyResult;
 
     /// No-op in tests so log output never touches the filesystem.
-    pub(crate) fn init_logging(_dirs: &Dirs) -> AnyResult<()> {
+    pub fn init_logging(_dirs: &Dirs) -> AnyResult<()> {
         Ok(())
     }
 }

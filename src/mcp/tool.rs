@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use futures::future::BoxFuture;
@@ -15,6 +16,8 @@ use crate::mcp::McpServer;
 use crate::query::{DataQuery, QueryError, QueryField};
 use crate::tools::{InterfaceToolOutput, Tool, ToolCallInfo, ToolRenderer};
 use crate::ui::render_item::{RenderItem, SystemRenderItem};
+
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -145,11 +148,16 @@ impl ToolRenderer for McpRenderer {
 pub(crate) struct McpTool {
     server: Arc<McpServer>,
     def: McpToolDef,
+    timeout: Duration,
 }
 
 impl McpTool {
     pub(crate) fn new(server: Arc<McpServer>, def: McpToolDef) -> Self {
-        Self { server, def }
+        Self {
+            server,
+            def,
+            timeout: DEFAULT_TIMEOUT,
+        }
     }
 }
 
@@ -180,7 +188,7 @@ impl Tool for McpTool {
                 "name": self.def.name,
                 "arguments": info.input,
             });
-            match self.server.request("tools/call", params).await? {
+            match self.server.request_timeout("tools/call", params, self.timeout).await? {
                 ResponseBody::Result(result) => Ok(result),
                 ResponseBody::Error(e) => Err(ErrorStd(e).into()),
             }
@@ -192,11 +200,9 @@ impl DataQuery for McpTool {
     fn query_field<'a>(&'a self, field: &str) -> Result<QueryField<'a>, QueryError> {
         match field {
             "renderer" => Ok(QueryField::Value(json!(self.renderer()))),
-            "def" => Ok(QueryField::DataQuery(&self.def)),
             "" => {
                 let mut value = self.def.query("")?;
                 value["renderer"] = self.query("/renderer")?;
-                value["def"] = self.query("/def")?;
                 Ok(QueryField::Value(value))
             }
             field => self.def.query_field(field),
@@ -242,16 +248,17 @@ mod tests {
     }
 
     fn mock_tool(server: McpServer) -> McpTool {
-        McpTool::new(
-            Arc::new(server),
-            McpToolDef {
+        McpTool {
+            server: Arc::new(server),
+            def: McpToolDef {
                 name: "echo".to_owned(),
                 title: None,
                 description: None,
                 input_schema: json!({ "type": "object" }),
                 output_schema: None,
             },
-        )
+            timeout: Duration::from_millis(100),
+        }
     }
 
     #[tokio::test]
